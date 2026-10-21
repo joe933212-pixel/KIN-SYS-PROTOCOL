@@ -70,8 +70,16 @@ class InstitutionalWorkflow:
                 superseded_event_id TEXT NOT NULL,
                 correction_authority_id TEXT NOT NULL,
                 correction_basis TEXT NOT NULL,
+                proposal_event_id TEXT NOT NULL,
+                FOREIGN KEY(proposal_event_id) REFERENCES stage_events(event_id),
                 FOREIGN KEY(correction_event_id) REFERENCES stage_events(event_id),
                 FOREIGN KEY(superseded_event_id) REFERENCES stage_events(event_id)
+            );
+            CREATE TABLE IF NOT EXISTS correction_proposals (
+                proposal_event_id TEXT PRIMARY KEY, consignment_id TEXT NOT NULL, stage TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL, proposed_decision TEXT NOT NULL, rule_version TEXT NOT NULL,
+                superseded_event_id TEXT NOT NULL, correction_basis TEXT NOT NULL,
+                FOREIGN KEY(proposal_event_id) REFERENCES stage_events(event_id)
             );
         """)
         self.db.commit()
@@ -182,7 +190,7 @@ class InstitutionalWorkflow:
     def correct_decision(self, *, event_id: str, consignment_id: str, stage: str,
                         actor_id: str, replacement_decision: str, rule_version: str,
                         supersedes_event_id: str, correction_basis: str) -> dict[str, Any]:
-        """Record a linked correction without deleting the superseded decision."""
+        """Submit a correction proposal; this method never changes the stage outcome."""
         if stage not in {"ORIGIN", "DESTINATION"}:
             raise ValueError("UNKNOWN_STAGE")
         if replacement_decision not in {"APPROVE", "REJECT"}:
@@ -196,18 +204,15 @@ class InstitutionalWorkflow:
         digest = self._digest(payload)
         self.db.execute("BEGIN IMMEDIATE")
         try:
-            prior = self.db.execute("SELECT * FROM stage_events WHERE event_id=?", (event_id,)).fetchone()
-            if prior:
-                if prior["digest"] != digest:
+            old = self.db.execute("SELECT * FROM stage_events WHERE event_id=?", (event_id,)).fetchone()
+            if old:
+                if old["digest"] != digest:
                     raise WorkflowConflict("OPERATION_ID_CONFLICT")
                 self.db.commit()
-                return {"status": prior["status"], "reason": prior["reason"], "duplicate": True}
-            case = self.db.execute("SELECT reviewer_authority_id FROM consignments WHERE consignment_id=?",
-                                   (consignment_id,)).fetchone()
-            row = self.db.execute("SELECT * FROM stage_state WHERE consignment_id=? AND stage=?",
-                                  (consignment_id, stage)).fetchone()
-            original = self.db.execute("SELECT * FROM stage_history WHERE event_id=? AND consignment_id=? AND stage=?",
-                                       (supersedes_event_id, consignment_id, stage)).fetchone()
+                return {"status": old["status"], "reason": old["reason"], "duplicate": True}
+            case = self.db.execute("SELECT reviewer_authority_id FROM consignments WHERE consignment_id=?", (consignment_id,)).fetchone()
+            row = self.db.execute("SELECT * FROM stage_state WHERE consignment_id=? AND stage=?", (consignment_id, stage)).fetchone()
+            original = self.db.execute("SELECT * FROM stage_history WHERE event_id=? AND consignment_id=? AND stage=?", (supersedes_event_id, consignment_id, stage)).fetchone()
             if case is None or row is None:
                 raise KeyError("CASE_OR_STAGE_NOT_FOUND")
             reason = None
@@ -224,17 +229,68 @@ class InstitutionalWorkflow:
             status = "REJECTED" if reason else "ACCEPTED"
             self.db.execute("INSERT INTO stage_events(event_id, consignment_id, stage, digest, actor_id, requested_decision, status, reason) VALUES (?,?,?,?,?,?,?,?)",
                             (event_id, consignment_id, stage, digest, actor_id, replacement_decision, status, reason))
+            if not reason:
+                self.db.execute("INSERT INTO correction_proposals(proposal_event_id, consignment_id, stage, reviewer_id, proposed_decision, rule_version, superseded_event_id, correction_basis) VALUES (?,?,?,?,?,?,?,?)",
+                                (event_id, consignment_id, stage, actor_id, replacement_decision, rule_version, supersedes_event_id, correction_basis))
+            self.db.commit()
+            return {"status": status, "reason": reason, "duplicate": False}
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def authorize_correction(self, *, event_id: str, consignment_id: str, stage: str,
+                             actor_id: str, rule_version: str, proposal_event_id: str) -> dict[str, Any]:
+        """Apply a proposal only with the active authority of the affected institution."""
+        vals = (event_id, consignment_id, stage, actor_id, rule_version, proposal_event_id)
+        if any(not isinstance(v, str) or not v for v in vals):
+            raise ValueError("INVALID_FIELD")
+        if stage not in {"ORIGIN", "DESTINATION"}:
+            raise ValueError("UNKNOWN_STAGE")
+        digest = self._digest({"event_id": event_id, "consignment_id": consignment_id,
+            "stage": stage, "actor_id": actor_id, "rule_version": rule_version,
+            "proposal_event_id": proposal_event_id})
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            old = self.db.execute("SELECT * FROM stage_events WHERE event_id=?", (event_id,)).fetchone()
+            if old:
+                if old["digest"] != digest:
+                    raise WorkflowConflict("OPERATION_ID_CONFLICT")
+                self.db.commit()
+                return {"status": old["status"], "reason": old["reason"], "duplicate": True}
+            row = self.db.execute("SELECT * FROM stage_state WHERE consignment_id=? AND stage=?", (consignment_id, stage)).fetchone()
+            proposal = self.db.execute("SELECT * FROM correction_proposals WHERE proposal_event_id=? AND consignment_id=? AND stage=?", (proposal_event_id, consignment_id, stage)).fetchone()
+            if row is None:
+                raise KeyError("CASE_OR_STAGE_NOT_FOUND")
+            reason = None
+            original = None
+            if actor_id != row["authority_id"]:
+                reason = "AUTHORITY_MISMATCH"
+            elif not row["authority_active"]:
+                reason = "AUTHORITY_REVOKED"
+            elif rule_version != row["rule_version"]:
+                reason = "RULE_VERSION_MISMATCH"
+            elif proposal is None:
+                reason = "CORRECTION_PROPOSAL_NOT_FOUND"
+            elif proposal["rule_version"] != rule_version:
+                reason = "RULE_VERSION_MISMATCH"
+            else:
+                original = self.db.execute("SELECT new_outcome FROM stage_history WHERE event_id=? AND consignment_id=? AND stage=?", (proposal["superseded_event_id"], consignment_id, stage)).fetchone()
+                if original is None or row["outcome"] != original["new_outcome"]:
+                    reason = "DECISION_NO_LONGER_CURRENT"
+            status = "REJECTED" if reason else "ACCEPTED"
+            self.db.execute("INSERT INTO stage_events(event_id, consignment_id, stage, digest, actor_id, requested_decision, status, reason) VALUES (?,?,?,?,?,?,?,?)",
+                (event_id, consignment_id, stage, digest, actor_id, proposal["proposed_decision"] if proposal else "CORRECTION", status, reason))
             if reason:
                 self.db.commit()
                 return {"status": status, "reason": reason, "duplicate": False}
-            self.db.execute("INSERT INTO stage_corrections(correction_event_id, superseded_event_id, correction_authority_id, correction_basis) VALUES (?,?,?,?)",
-                            (event_id, supersedes_event_id, actor_id, correction_basis))
+            self.db.execute("INSERT INTO stage_corrections(correction_event_id, superseded_event_id, correction_authority_id, correction_basis, proposal_event_id) VALUES (?,?,?,?,?)",
+                (event_id, proposal["superseded_event_id"], actor_id, proposal["correction_basis"], proposal_event_id))
             changed = self.db.execute("UPDATE stage_state SET outcome=?, version=version+1 WHERE consignment_id=? AND stage=? AND outcome=?",
-                                      (replacement_decision, consignment_id, stage, row["outcome"])).rowcount
+                (proposal["proposed_decision"], consignment_id, stage, row["outcome"])).rowcount
             if changed != 1:
                 raise RuntimeError("STAGE_CHANGED_DURING_CORRECTION")
             self.db.execute("INSERT INTO stage_history(event_id, consignment_id, stage, actor_id, authority_id, rule_version, prior_outcome, new_outcome) VALUES (?,?,?,?,?,?,?,?)",
-                            (event_id, consignment_id, stage, actor_id, actor_id, rule_version, row["outcome"], replacement_decision))
+                (event_id, consignment_id, stage, actor_id, row["authority_id"], rule_version, row["outcome"], proposal["proposed_decision"]))
             self.db.commit()
             return {"status": status, "reason": None, "duplicate": False}
         except Exception:
