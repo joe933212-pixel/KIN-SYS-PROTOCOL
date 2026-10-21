@@ -5,7 +5,9 @@ own schema and internal execution path.
 """
 from __future__ import annotations
 
+import json
 import os
+import sys
 import tempfile
 from typing import Any, Callable
 
@@ -162,3 +164,22 @@ def compare_scenario(scenario: str) -> dict[str, Any]:
         "differences": differences,
         "results": {"kin_sys": left, "conventional": right},
     }
+
+
+def run_all_scenarios() -> dict[str, Any]:
+    scenarios = (
+        "accepted", "duplicate", "conflicting-id", "wrong-authority",
+        "rule-version-mismatch", "precommit-failure",
+    )
+    comparisons = [compare_scenario(scenario) for scenario in scenarios]
+    return {
+        "schema_version": "0.1",
+        "all_equivalent_on_observed_fields": all(
+            result["equivalent_on_observed_fields"] for result in comparisons
+        ),
+        "comparisons": comparisons,
+    }
+
+
+if __name__ == "__main__":
+    print(json.dumps(run_all_scenarios(), sort_keys=True, indent=2))
