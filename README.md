@@ -43,13 +43,16 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 
 1. [Protocol specification](SPECIFICATION.md)
 2. [Architecture and trust boundaries](ARCHITECTURE.md)
-3. [Research evidence register](RESEARCH_EVIDENCE.md)
-4. [Threat model](THREAT_MODEL.md)
-5. [Use cases](USE_CASES.md)
-6. [Protocol invariants](INVARIANTS.md)
-7. [Test strategy](TEST_STRATEGY.md)
-8. [Implementation status](IMPLEMENTATION_STATUS.md)
-9. [Initial architecture decision](DECISIONS/0001-protocol-scope.md)
+3. [Source crosswalk: CRS, CISA, IVM, CEE and prior art](docs/SOURCE_CROSSWALK.md)
+4. [Minimal transition contract](docs/TRANSITION_CONTRACT.md)
+5. [Local reference prototype and tests](protocol-reference/README.md)
+6. [Research evidence register](RESEARCH_EVIDENCE.md)
+7. [Threat model](THREAT_MODEL.md)
+8. [Use cases](USE_CASES.md)
+9. [Protocol invariants](INVARIANTS.md)
+10. [Test strategy](TEST_STRATEGY.md)
+11. [Implementation status](IMPLEMENTATION_STATUS.md)
+12. [Initial architecture decision](DECISIONS/0001-protocol-scope.md)
 
 ## Engineering principle
 
