@@ -10,7 +10,7 @@
 | [Published IVM research record, Zenodo DOI 10.5281/zenodo.22011725](https://doi.org/10.5281/zenodo.22011725) | Published research lineage and citation anchor | Use for provenance; map claims to the actual version and artifacts supporting them. |
 | [KIN-SYS-v2](https://github.com/joe933212-pixel/KIN-SYS-v2) | Earlier concepts and prototype artifacts | Legacy source only. Documents, mock interfaces, generated values, and placeholder logic do not prove operational guarantees. |
 | [KIN-SYS Protocol v2.1](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL-v2.1) | Earlier protocol/application concepts and integration notes | Legacy source only. Application setup instructions and example integrations are not adopted as the new specification without verification. |
-| CRS, CISA, IVM, and CEE artifacts in the IVM research programme | Potential foundations and interfaces | Exact source documents, versions, and protocol mappings must be recorded before claiming dependency or conformance. |
+| CRS → CISA → IVM → CEE research lineage | Potential foundations for institutional semantics and execution | See [LITERATURE.md](LITERATURE.md). Trace exact source documents, versions, interfaces, and conformance evidence before adopting dependencies. |
 | [Kagoro DSL](https://github.com/joe933212-pixel/Kagoro-DSL) | Independent compiler/language research potentially relevant to institutional authoring | Independent project; not a mandatory KIN-SYS dependency. |
 
 ## 2. IVM evidence reported by the research archive
@@ -36,8 +36,8 @@ Every high-impact claim must identify the exact claim, source and version, envir
 
 ## 5. Open evidence work
 
-- Trace exact CRS, CISA, and CEE source documents and versions.
-- Map the agreed literature and prior-art sources to protocol claims.
+- Trace exact source versions and roles for CRS, CISA, IVM, and CEE.
+- Reconcile the agreed literature and prior-art sources against the original literature analysis; see [LITERATURE.md](LITERATURE.md).
 - Link each adopted IVM property to precise experiment and test artifacts.
 - Audit legacy KIN-SYS claims against actual code and test evidence.
 - Record external review and independent replication separately from author-run results.
