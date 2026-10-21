@@ -65,7 +65,7 @@ The KIN-SYS reference slice uses a file-backed SQLite database in its persistenc
 
 The latest GitHub Actions run reports 15 passing tests: [test run](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39593633670).
 
-This is a larger local persistence/failure test surface than the five tests in the Experiment 005 conventional comparator, but **test count is not a measure of architectural superiority**. The two implementations currently differ in storage, failure model, event-content checks, and tested scenarios. Results must not be compared as though they were already equivalent implementations.
+This is a larger local persistence/failure test surface than the five tests in the Experiment 005 conventional comparator, but **test count is not a measure of architectural superiority**. The two implementations differ in storage, failure model, event-content checks, and tested scenarios. Results must not be compared as though they were already equivalent implementations.
 
 The local crash tests do not establish sudden power-loss durability, filesystem or device failure guarantees, network behaviour, multi-host correctness, distributed finality, Byzantine fault tolerance, or whole-system institutional coordination.
 
@@ -79,15 +79,15 @@ Its documented test terminates a worker at defined phases and uses a fresh proce
 
 A fair follow-on experiment should include the exact IVM v0.4 source revision and executable recovery harness, if those artifacts are available and reproducible. The current KIN-SYS SQLite transaction model should not be silently described as implementing the IVM journal, nor should the two be merged into one comparison target.
 
-## 6. Proposed fair comparison design
+## 6. Fair comparison design and current implementation status
 
-Create three separately identified implementations:
+Three comparison targets are now identified:
 
-- **A — KIN-SYS SQLite slice:** current reference implementation at a pinned commit.
-- **B — conventional durable baseline:** a separately implemented, ordinary transactional state machine using SQLite (or another explicitly justified standard persistence mechanism), with no KIN-SYS-specific assumptions.
-- **C — IVM v0.4 journal experiment:** exact source revision and its documented journal/recovery contract, included only after its setup and test command are independently reproducible.
+- **A — KIN-SYS SQLite slice:** current reference implementation in `protocol-reference/transition.py`.
+- **B — conventional durable baseline:** initial independent implementation in `protocol-reference/comparators/conventional_sqlite.py`, using ordinary SQLite transactions and a separate schema. Its tests are in `protocol-reference/tests/test_conventional_baseline.py`.
+- **C — IVM v0.4 journal experiment:** exact source revision and its documented journal/recovery contract, to be included after its setup and test command are independently reproducible.
 
-The existing in-memory Experiment 005 comparator remains useful as a fourth, semantic-only baseline, but it must be labelled as in-memory and must not be treated as equivalent to A or B for persistence/fault claims.
+The existing in-memory Experiment 005 comparator remains useful as a fourth, semantic-only baseline, but it must be labelled as in-memory and must not be treated as equivalent to A or B for persistence/fault claims. The current GitHub Actions run executes 21 tests across A and B and passes; this is an initial local baseline result, not yet a complete paired comparison. See [successful run](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39594018826).
 
 All applicable implementations must receive the same logical initial state, event fields, rule fixtures, authority state, duplicate/conflicting requests, and injected fault points. Where one implementation cannot express a case, record it as unsupported and explain why; do not silently omit it from aggregate scores.
 
@@ -119,9 +119,9 @@ If no such difference is observed, record that result. A fair experiment is valu
 
 1. Pin the source revision for each implementation.
 2. Define a shared fixture file and adapter contract from [Observable Result Vector](OBSERVABLE_RESULT_VECTOR.md).
-3. Add the conventional **durable** baseline without importing KIN-SYS implementation logic into it.
-4. Run paired semantic tests before fault injection.
-5. Run paired pre-commit and post-commit process-death cases.
+3. **Initial conventional durable baseline added:** the separate SQLite implementation and its first six tests now pass alongside the 15 tests for the KIN-SYS slice.
+4. Add paired crash/restart tests to the conventional baseline and use a shared fixture/adapter to run the same scenario set against both implementations.
+5. Run paired pre-commit and post-commit process-death cases, including lost acknowledgement and concurrent duplicate submission.
 6. Publish raw results, normalized vectors, test commands, environment, limitations, and any divergent outputs.
 
 Until these steps are completed, the evidence supports a tested local KIN-SYS slice and an existing IVM comparator experiment—not a claim of superiority, novelty, or end-to-end coordination capability.
