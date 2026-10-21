@@ -20,7 +20,7 @@
 | Protocol purpose and scope | Specified in draft | External review and scope decision |
 | Trust boundaries | Specified in draft | Threat-model review against target deployments |
 | Identity and authority interfaces | Requirements identified | Credential, policy, revocation, and key-lifecycle specification |
-| Deterministic transition semantics | Research input exists in IVM archive | Stable implementation-independent conformance contract |
+| Deterministic transition semantics | Narrow local contract and SQLite prototype committed; not yet cleanly verified | Compare against full IVM/CEE source semantics and Experiment 005 result vector |
 | State/history commitment and recovery | Prototype evidence reported in IVM archive | Re-verify artifacts; test concurrency, storage failures, and multi-node cases |
 | Offline edge behaviour | Requirements identified | Offline authority model and reconciliation tests |
 | Cross-institution trust | Open design | Trust federation, governance, and dispute model |
