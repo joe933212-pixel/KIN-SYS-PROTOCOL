@@ -33,12 +33,13 @@ Every in-scope invariant has an automated test; faults before and after commitme
 
 Production readiness requires more than unit tests: threat-model review, independent security review, realistic storage/network tests, deployment and incident procedures, key lifecycle, backup/recovery, monitoring, governance controls, privacy and legal assessment for the target jurisdiction, and independently reproducible results.
 
-
 ## 6. Integrated system validation
 
 The local transition slice is not the end-to-end system test. The first candidate cross-institution scenario is documented in [Integrated Cross-Border Trade Coordination](docs/INTEGRATED_USE_CASE.md). It is a research scenario, not a claim of deployment or legal applicability.
 
 For that scenario, run the same fixtures against the KIN-SYS candidate and a fair conventional workflow/API baseline. Keep separate results for component validity, interface/failure validity, and system-level usefulness. Include authority separation, revocation, privacy scope, external evidence, payment uncertainty, duplicate delivery, offline limits, dispute handling, and recovery after commitment but before notification.
+
+Record outcomes using the [Common Observable Result Vector](docs/OBSERVABLE_RESULT_VECTOR.md). The vector standardizes externally observable decisions and state effects without requiring implementations to share internal designs. Publish the exact fixtures, source revisions, raw outputs, normalized results, failure cases, and measurement method. Unsupported fields must remain explicitly unknown rather than being treated as satisfied.
 
 MINAH AI, $KIN, privacy-preserving proofs, and Nexus Pods must each have an explicit testable purpose and a baseline comparison. Their inclusion is not a success criterion by itself; omitting a component may be the correct result for a particular use case. Development partners may convene or fund a pilot but do not gain institutional decision authority by virtue of funding.
 
