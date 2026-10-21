@@ -227,6 +227,67 @@ while True:
                     store.authorize_correction(**dict(auth, proposal_event_id="OTHER"))
                 self.assertEqual(len(store.history("C-001")), 2)
 
+    def test_institutional_refusal_and_reviewer_dispute_preserve_original_decision(self):
+        for implementation in IMPLEMENTATIONS:
+            with self.subTest(implementation=implementation.__name__):
+                store = self.make_store(implementation)
+                self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                self.assertEqual(self._propose(store)["status"], "ACCEPTED")
+                refusal = store.refuse_correction(
+                    event_id="R-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="ORIGIN-A", rule_version="1.0", proposal_event_id="P-1",
+                    refusal_basis="Required certificate remains unverified")
+                self.assertEqual(refusal["status"], "ACCEPTED")
+                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome", store.stage("C-001", "ORIGIN").get("result")), "REJECT")
+                dispute = store.dispute_correction_refusal(
+                    event_id="D-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="REVIEWER", proposal_event_id="P-1",
+                    dispute_basis="Additional evidence was submitted")
+                self.assertEqual(dispute["status"], "ACCEPTED")
+                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome", store.stage("C-001", "ORIGIN").get("result")), "REJECT")
+                self.assertEqual(len(store.history("C-001")), 1)
+                if implementation is InstitutionalWorkflow:
+                    record = store.db.execute("SELECT proposal_event_id, response_event_id, response, response_basis FROM correction_responses").fetchone()
+                    challenge = store.db.execute("SELECT proposal_event_id, refusal_event_id, reviewer_id, dispute_basis FROM correction_disputes").fetchone()
+                else:
+                    record = store.db.execute("SELECT proposal_operation, response_operation, response, basis FROM correction_responses").fetchone()
+                    challenge = store.db.execute("SELECT proposal_operation, refusal_operation, reviewer, basis FROM correction_disputes").fetchone()
+                self.assertEqual(tuple(record), ("P-1", "R-1", "REFUSED", "Required certificate remains unverified"))
+                self.assertEqual(tuple(challenge), ("P-1", "R-1", "REVIEWER", "Additional evidence was submitted"))
+
+    def test_unauthorised_refusal_and_dispute_are_rejected(self):
+        for implementation in IMPLEMENTATIONS:
+            with self.subTest(implementation=implementation.__name__):
+                store = self.make_store(implementation)
+                self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                self._propose(store)
+                refusal = store.refuse_correction(
+                    event_id="R-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="COORDINATOR", rule_version="1.0", proposal_event_id="P-1",
+                    refusal_basis="Not authorised")
+                self.assertEqual(refusal["reason"], "AUTHORITY_MISMATCH")
+                challenge = store.dispute_correction_refusal(
+                    event_id="D-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="COORDINATOR", proposal_event_id="P-1", dispute_basis="Not authorised")
+                self.assertEqual(challenge["reason"], "CORRECTION_AUTHORITY_MISMATCH")
+                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome", store.stage("C-001", "ORIGIN").get("result")), "REJECT")
+                self.assertEqual(len(store.history("C-001")), 1)
+
+    def test_refused_proposal_cannot_be_applied_without_new_proposal(self):
+        for implementation in IMPLEMENTATIONS:
+            with self.subTest(implementation=implementation.__name__):
+                store = self.make_store(implementation)
+                self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                self._propose(store)
+                store.refuse_correction(event_id="R-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="ORIGIN-A", rule_version="1.0", proposal_event_id="P-1",
+                    refusal_basis="Evidence insufficient")
+                result = self._authorize(store, event_id="A-1", actor="ORIGIN-A", proposal="P-1")
+                self.assertEqual(result["status"], "REJECTED")
+                self.assertEqual(result["reason"], "PROPOSAL_ALREADY_RESPONDED")
+                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome", store.stage("C-001", "ORIGIN").get("result")), "REJECT")
+                self.assertEqual(len(store.history("C-001")), 1)
+
     def test_file_reopen_preserves_each_institution_decision(self):
         for implementation in IMPLEMENTATIONS:
             with self.subTest(implementation=implementation.__name__):
