@@ -65,7 +65,7 @@ The KIN-SYS reference slice uses a file-backed SQLite database in its persistenc
 - child-process termination while a transaction has uncommitted state/event changes;
 - child-process termination after local commit but before the test simulates acknowledgement delivery.
 
-The latest GitHub Actions run reports 15 passing tests: [test run](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39593633670).
+The original isolated KIN-SYS slice run reported 15 passing tests ([historical run](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39593633670)); the current combined suite reports 30 passing tests in the paired research workflow ([current run](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39597545904)).
 
 This is a larger local persistence/failure test surface than the five tests in the Experiment 005 conventional comparator, but **test count is not a measure of architectural superiority**. The two implementations differ in storage, failure model, event-content checks, and tested scenarios. Results must not be compared as though they were already equivalent implementations.
 
