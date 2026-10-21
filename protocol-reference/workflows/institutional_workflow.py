@@ -273,6 +273,8 @@ class InstitutionalWorkflow:
                 reason = "CORRECTION_PROPOSAL_NOT_FOUND"
             elif proposal["rule_version"] != rule_version:
                 reason = "RULE_VERSION_MISMATCH"
+            elif self.db.execute("SELECT 1 FROM correction_responses WHERE proposal_event_id=?", (proposal_event_id,)).fetchone():
+                reason = "PROPOSAL_ALREADY_RESPONDED"
             else:
                 original = self.db.execute("SELECT new_outcome FROM stage_history WHERE event_id=? AND consignment_id=? AND stage=?", (proposal["superseded_event_id"], consignment_id, stage)).fetchone()
                 if original is None or row["outcome"] != original["new_outcome"]:
