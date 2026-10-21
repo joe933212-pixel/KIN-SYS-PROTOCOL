@@ -1,5 +1,7 @@
 import concurrent.futures
 import os
+import subprocess
+import time
 import sys
 import tempfile
 import threading
@@ -172,6 +174,111 @@ class TransitionContractTests(unittest.TestCase):
                 self.assertEqual(verify.event("E-001")["outcome"], "ACCEPTED")
             finally:
                 verify.close()
+
+
+    def _terminate_child_at_marker(self, script, database, marker, exit_code):
+        child = subprocess.Popen(
+            [sys.executable, "-c", script, str(Path(__file__).resolve().parents[1]), database, marker],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 8
+        try:
+            while time.monotonic() < deadline and not os.path.exists(marker):
+                if child.poll() is not None:
+                    stdout, stderr = child.communicate(timeout=1)
+                    self.fail(f"Child exited before crash marker: {child.returncode}; stdout={stdout}; stderr={stderr}")
+                time.sleep(0.01)
+            self.assertTrue(os.path.exists(marker), "Child did not reach the intended crash point")
+            child.terminate()
+            child.wait(timeout=5)
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+
+    def test_process_termination_before_commit_recovers_without_partial_effect(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "protocol.sqlite")
+            marker = os.path.join(directory, "before-commit.marker")
+            setup = ProtocolStore(database=database)
+            setup.create_process(process_id="P-001")
+            setup.close()
+
+            script = r"""
+import os, sys, time
+sys.path.insert(0, sys.argv[1])
+from transition import ProtocolStore
+store = ProtocolStore(database=sys.argv[2])
+def pause_at_crash_point():
+    with open(sys.argv[3], "w", encoding="utf-8") as marker:
+        marker.write("inside transaction before history insert")
+    while True:
+        time.sleep(0.05)
+store.db.create_function("pause_at_crash_point", 0, pause_at_crash_point)
+store.db.execute(
+    "CREATE TRIGGER pause_before_history BEFORE INSERT ON transition_history "
+    "BEGIN SELECT pause_at_crash_point(); END"
+)
+store.db.commit()
+store.execute({
+    "event_id": "E-001", "process_id": "P-001",
+    "actor_id": "AUTHORITY-001", "event_type": "ACTIVATE",
+    "rule_set": "LICENCE-RULES", "rule_version": "1.0"
+})
+"""
+            self._terminate_child_at_marker(script, database, marker, -15)
+
+            reopened = ProtocolStore(database=database)
+            try:
+                self.assertEqual(reopened.process("P-001")["state"], "PENDING")
+                self.assertEqual(reopened.process("P-001")["state_version"], 0)
+                self.assertIsNone(reopened.event("E-001"))
+                self.assertEqual(reopened.history("P-001"), [])
+            finally:
+                reopened.close()
+
+    def test_process_termination_after_commit_before_ack_retry_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "protocol.sqlite")
+            marker = os.path.join(directory, "after-commit.marker")
+            setup = ProtocolStore(database=database)
+            setup.create_process(process_id="P-001")
+            setup.close()
+
+            script = r"""
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from transition import ProtocolStore
+store = ProtocolStore(database=sys.argv[2])
+store.execute({
+    "event_id": "E-001", "process_id": "P-001",
+    "actor_id": "AUTHORITY-001", "event_type": "ACTIVATE",
+    "rule_set": "LICENCE-RULES", "rule_version": "1.0"
+})
+with open(sys.argv[3], "w", encoding="utf-8") as marker:
+    marker.write("committed but no acknowledgement delivered")
+while True:
+    time.sleep(0.05)
+"""
+            self._terminate_child_at_marker(script, database, marker, -15)
+
+            reopened = ProtocolStore(database=database)
+            try:
+                self.assertEqual(reopened.process("P-001")["state"], "ACTIVE")
+                self.assertEqual(reopened.process("P-001")["state_version"], 1)
+                self.assertEqual(len(reopened.history("P-001")), 1)
+                retry = reopened.execute({
+                    "event_id": "E-001", "process_id": "P-001",
+                    "actor_id": "AUTHORITY-001", "event_type": "ACTIVATE",
+                    "rule_set": "LICENCE-RULES", "rule_version": "1.0"
+                })
+                self.assertTrue(retry.duplicate)
+                self.assertEqual(reopened.process("P-001")["state_version"], 1)
+                self.assertEqual(len(reopened.history("P-001")), 1)
+            finally:
+                reopened.close()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
