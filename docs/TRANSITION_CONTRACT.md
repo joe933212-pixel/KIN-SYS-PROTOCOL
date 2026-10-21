@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # KIN-SYS Protocol — Minimal Institutional Transition Contract
 
 **Status:** Draft 0.1 — proposed protocol contract, not a claim of full CISA/IVM/CEE conformance.
