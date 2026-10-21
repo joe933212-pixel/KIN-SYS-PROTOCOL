@@ -10,7 +10,7 @@
 - `protocol-reference/tests/test_transition.py` — tests for acceptance, duplicates, conflicting event IDs, authority rejection/revocation, rule rejection/version pinning, undefined transitions, and rollback before commit.
 - `protocol-reference/README.md` — run instructions and scope limitations.
 
-## Source gaps found during inspection
+## Source inventory and remaining reconciliation
 
 - CRS draft DOCX exists at `ivm-research/specifications/crs/CRS_Draft_2026-08-06.docx`, but the GitHub text-fetch path cannot decode the binary DOCX; it has not been text-reviewed in this pass.
 - CISA Draft 0.1 extracted Markdown is available, but its original DOCX remains the authoritative source.
