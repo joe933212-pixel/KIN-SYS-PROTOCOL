@@ -1,0 +1,25 @@
+name: Protocol conformance slice
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "protocol-reference/**"
+      - "docs/TRANSITION_CONTRACT.md"
+      - ".github/workflows/protocol-conformance.yml"
+  pull_request:
+    paths:
+      - "protocol-reference/**"
+      - "docs/TRANSITION_CONTRACT.md"
+      - ".github/workflows/protocol-conformance.yml"
+
+jobs:
+  local-transition-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run transition contract tests
+        run: python -m unittest discover -s protocol-reference/tests -v
