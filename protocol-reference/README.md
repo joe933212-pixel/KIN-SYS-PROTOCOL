@@ -14,6 +14,16 @@ python -m unittest discover -s protocol-reference/tests -v
 
 No third-party packages are required.
 
+## Paired comparison report
+
+Run the shared six-scenario comparison from the repository root:
+
+```sh
+PYTHONPATH=protocol-reference python -m comparators.paired_harness
+```
+
+The command prints a JSON report containing normalized results from the KIN-SYS SQLite slice and the independent conventional SQLite baseline. It compares accepted transitions, identical retries, conflicting identifiers, wrong authority, rule-version mismatch, and pre-commit failure. The report is a local semantic comparison only; crash/restart tests currently run in the test suite and are not yet included in this six-scenario JSON output.
+
 ## Scope warning
 
 This is a research conformance slice, not a production runtime. It uses a single local SQLite database, a deliberately small example transition, and caller-supplied actor/rule context. It does not implement cryptographic authentication, networking, distributed consensus, or full CISA/IVM/CEE conformance.
