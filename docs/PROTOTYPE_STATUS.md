@@ -1,23 +1,38 @@
 # Transition Slice Status
 
 **Date:** 2026-10-21  
-**Status:** Prototype source committed; clean test execution has not yet been independently verified in this repository session.
+**Status:** Prototype source committed; expanded tests committed; clean test execution and CI result are not yet verified.
 
 ## Added artifacts
 
-- `docs/TRANSITION_CONTRACT.md` — defines the narrow local contract and explicitly separates it from full CISA/IVM/CEE conformance.
+- `docs/TRANSITION_CONTRACT.md` — narrow local contract, explicitly not full CISA/IVM/CEE conformance.
+- `docs/CEE_CONFORMANCE_TRACE.md` — clause/area mapping based on the complete 335-page CEE 1.0 Draft in the user's Library, including the lifecycle, commitment, history, recovery, and conformance boundaries.
 - `protocol-reference/transition.py` — Python standard-library SQLite reference slice.
-- `protocol-reference/tests/test_transition.py` — tests for acceptance, duplicates, conflicting event IDs, authority rejection/revocation, rule rejection/version pinning, undefined transitions, and rollback before commit.
+- `protocol-reference/tests/test_transition.py` — tests for acceptance, duplicates, conflicting event IDs, authority rejection/revocation, rule rejection/version pinning, undefined transitions, rollback before commit, and file-backed store reopen behaviour.
 - `protocol-reference/README.md` — run instructions and scope limitations.
+- `.github/workflows/protocol-conformance.yml` — GitHub Actions workflow for the local transition tests.
 
 ## Source inventory and remaining reconciliation
 
-- CRS draft DOCX exists at `ivm-research/specifications/crs/CRS_Draft_2026-08-06.docx`, but the GitHub text-fetch path cannot decode the binary DOCX; it has not been text-reviewed in this pass.
-- CISA Draft 0.1 extracted Markdown is available, but its original DOCX remains the authoritative source.
-- The available IVM 1.0 artefact is front matter only; the repository itself says the full specification has not been added.
-- The inspected tree did not expose a separate complete CEE specification. CISA is labelled as a CEE volume, which is not equivalent to possessing the full CEE specification.
-- The full prior-art/literature analysis remains incomplete in the source archive, with its documented continuation point at Section 54.
+- **CEE:** The complete Library document `CEE(2).docx`, CAS-CEE-1.0, Version 1.0 Draft, 335 pages, has been consulted directly for the new CEE conformance trace. It must remain the source for exact quotations and clause references; short extracts are not a substitute.
+- **CRS:** The public IVM archive includes `specifications/crs/CRS_Draft_2026-08-06.docx`; the Library also contains a fuller CRS draft. Their exact version lineage must be reconciled before treating them as identical.
+- **CISA:** Draft 0.1 extracted Markdown is available, but the original DOCX remains authoritative. Confirm whether a later source version supersedes it.
+- **IVM:** The full IVM 1.0 Draft is available in the user's Library; the public repository currently contains only front matter for that version. Reconcile exact semantics against the full source before expanding the contract.
+- **Prior art:** The complete 75-page literature/prior-art analysis is available in the Library. Its complete content and the source versions used in the comparative experiments still need a traceable repository record.
+
+## Current test scope
+
+The two additional tests use a file-backed SQLite database and an orderly close/reopen sequence. They check that a committed state/history pair and duplicate outcome survive reopening, and that a deliberately injected pre-commit rollback remains absent after reopening.
+
+These tests do **not** simulate abrupt process death, power loss, storage-controller failure, or distributed recovery. They do not prove arbitrary durability guarantees, full CEE recovery, or system-level KIN-SYS operation.
+
+The test commit is:
+https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/commit/2f87bb2e8579b9cc0841a91b5214979426b4083c
+
+The GitHub commit-status endpoint returned no status entries when checked, and the available workflow-run lookup did not expose a run for this commit. Therefore the suite must not yet be described as passing.
 
 ## Interpretation
 
-The new code is a local prototype. Until the exact committed test suite has been run cleanly, it must not be described as passing. Even after it passes, its evidence would cover only the local cases listed in the test suite—not cryptographic authentication, distributed commitment, replication, production readiness, or novelty.
+Even if the tests pass, they establish only the tested local properties. They do not establish cryptographic authentication, the full CEE lifecycle, phase-by-phase crash recovery, concurrent multi-process correctness, distributed commitment, multi-institution trust, production readiness, novelty, or commercial superiority.
+
+The next gate is a verified clean test run, followed by comparison against the IVM runtime and the conventional state-machine comparator using the same observable result vector.
