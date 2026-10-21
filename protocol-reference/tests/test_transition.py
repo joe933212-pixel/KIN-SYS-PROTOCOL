@@ -1,6 +1,9 @@
+import sys
 import unittest
+from pathlib import Path
 
-from protocol_reference.transition import EventIdConflict, ProtocolStore
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from transition import EventIdConflict, ProtocolStore
 
 
 class TransitionContractTests(unittest.TestCase):
