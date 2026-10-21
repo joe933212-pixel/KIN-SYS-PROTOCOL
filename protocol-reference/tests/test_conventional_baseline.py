@@ -52,7 +52,7 @@ class ConventionalSQLiteBaselineTests(unittest.TestCase):
     def test_wrong_authority_and_rule_mismatch_do_not_transition(self):
         result = self.store.execute(self.request(actor_id="OTHER-ACTOR"))
         self.assertEqual(result["reason"], "AUTHORITY_MISMATCH")
-        result = self.store.execute(self.request(rule_version="0.9"))
+        result = self.store.execute(self.request(event_id="E-002", rule_version="0.9"))
         self.assertEqual(result["reason"], "RULE_VERSION_MISMATCH")
         self.assertEqual(self.store.object("P-001")["state"], "PENDING")
         self.assertEqual(self.store.history("P-001"), [])
