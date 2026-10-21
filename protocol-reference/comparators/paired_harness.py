@@ -173,7 +173,7 @@ def run_scenario(implementation: str, scenario: str) -> dict[str, Any]:
                 marker = os.path.join(directory, "crash-point.marker")
                 child_script = r"""
 import os, sys, time
-sys.path.insert(0, os.getcwd())
+sys.path.insert(0, os.path.join(os.getcwd(), 'protocol-reference'))
 from comparators.paired_harness import ADAPTERS, _request
 implementation, database, marker, mode = sys.argv[1:5]
 store = ADAPTERS[implementation](database, initialize=False)
