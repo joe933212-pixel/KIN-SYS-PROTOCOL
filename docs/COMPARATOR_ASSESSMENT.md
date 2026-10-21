@@ -87,7 +87,7 @@ Three comparison targets are now identified:
 - **B — conventional durable baseline:** initial independent implementation in `protocol-reference/comparators/conventional_sqlite.py`, using ordinary SQLite transactions and a separate schema. Its tests are in `protocol-reference/tests/test_conventional_baseline.py`.
 - **C — IVM v0.4 journal experiment:** exact source revision and its documented journal/recovery contract, to be included after its setup and test command are independently reproducible.
 
-The existing in-memory Experiment 005 comparator remains useful as a fourth, semantic-only baseline, but it must be labelled as in-memory and must not be treated as equivalent to A or B for persistence/fault claims. The current GitHub Actions run executes 23 tests across A and B and passes, including matched pre-commit and post-commit process-termination cases for both local SQLite implementations. See [successful run](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39594136701). This is still not a complete paired comparison because the implementations are exercised by separate test classes rather than one shared adapter/fixture harness.
+The existing in-memory Experiment 005 comparator remains useful as a fourth, semantic-only baseline, but it must be labelled as in-memory and must not be treated as equivalent to A or B for persistence/fault claims. The current GitHub Actions run executes 27 tests and passes. It includes matched pre-commit and post-commit process-termination cases for both local SQLite implementations, plus a shared six-scenario harness that reports equivalent normalized outcomes for the tested cases. See [successful run](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39594405421). This is still an initial paired comparison: the shared harness does not yet include abrupt termination, concurrent requests, or full post-commit retry scenarios, which remain covered by separate implementation-specific tests.
 
 All applicable implementations must receive the same logical initial state, event fields, rule fixtures, authority state, duplicate/conflicting requests, and injected fault points. Where one implementation cannot express a case, record it as unsupported and explain why; do not silently omit it from aggregate scores.
 
@@ -120,8 +120,8 @@ If no such difference is observed, record that result. A fair experiment is valu
 1. Pin the source revision for each implementation.
 2. Define a shared fixture file and adapter contract from [Observable Result Vector](OBSERVABLE_RESULT_VECTOR.md).
 3. **Initial conventional durable baseline added:** the independent SQLite implementation and its eight tests now pass alongside the 15 tests for the KIN-SYS slice.
-4. Build a shared fixture/adapter harness that sends the same scenario definitions to both implementations and emits the common observable result vector.
-5. Extend paired tests to authority/rule edge cases, conflicting identifier reuse, concurrent submissions, and post-commit retry under the same fixture definitions.
-6. Publish raw results, normalized vectors, test commands, environment, limitations, and any divergent outputs.
+4. **Shared harness implemented:** `protocol-reference/comparators/paired_harness.py` runs six common scenarios and emits JSON normalized outcomes for both implementations.
+5. Extend the shared harness to abrupt termination, concurrent requests, and post-commit retry under identical fixture definitions; preserve raw artifacts and source revisions.
+6. Publish the JSON report as a versioned CI artifact and add performance measurements only after semantic coverage is matched.
 
 Until these steps are completed, the evidence supports a tested local KIN-SYS slice and an existing IVM comparator experiment—not a claim of superiority, novelty, or end-to-end coordination capability.
