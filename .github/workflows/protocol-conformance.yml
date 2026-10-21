@@ -28,3 +28,14 @@ jobs:
           python-version: "3.12"
       - name: Run transition contract tests
         run: python -m unittest discover -s protocol-reference/tests -v
+      - name: Generate paired comparison report
+        run: PYTHONPATH=protocol-reference python -m comparators.paired_harness > comparison-results.json
+      - name: Verify paired comparison report
+        run: python -c "import json; r=json.load(open('comparison-results.json', encoding='utf-8')); assert r['all_equivalent_on_observed_fields'], r"
+      - name: Upload normalized comparison report
+        uses: actions/upload-artifact@v4
+        with:
+          name: paired-comparison-results
+          path: comparison-results.json
+          if-no-files-found: error
+          retention-days: 30
