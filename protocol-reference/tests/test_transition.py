@@ -1,6 +1,8 @@
+import concurrent.futures
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -137,6 +139,39 @@ class TransitionContractTests(unittest.TestCase):
             finally:
                 reopened.close()
 
+
+
+    def test_concurrent_identical_requests_from_separate_connections_commit_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "protocol.sqlite")
+            setup = ProtocolStore(database=database)
+            setup.create_process(process_id="P-001")
+            setup.close()
+
+            barrier = threading.Barrier(2)
+
+            def submit():
+                store = ProtocolStore(database=database)
+                try:
+                    barrier.wait(timeout=5)
+                    return store.execute(self.event())
+                finally:
+                    store.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _: submit(), range(2)))
+
+            self.assertEqual(sorted(result.status for result in results), ["ACCEPTED", "ACCEPTED"])
+            self.assertEqual(sum(result.duplicate for result in results), 1)
+
+            verify = ProtocolStore(database=database)
+            try:
+                self.assertEqual(verify.process("P-001")["state"], "ACTIVE")
+                self.assertEqual(verify.process("P-001")["state_version"], 1)
+                self.assertEqual(len(verify.history("P-001")), 1)
+                self.assertEqual(verify.event("E-001")["outcome"], "ACCEPTED")
+            finally:
+                verify.close()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
