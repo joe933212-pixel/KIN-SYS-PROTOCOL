@@ -30,7 +30,7 @@ The JSON report compares the original KIN-SYS SQLite slice with the independent 
 
 The experimental KIN-SYS research model is in `protocol-reference/workflows/institutional_workflow.py`; its independently implemented conventional baseline is `protocol-reference/comparators/conventional_workflow.py`. Matched contract tests are in `protocol-reference/tests/test_institutional_workflow.py`.
 
-The model currently covers two independent decision stages, stage-specific actor and rule checks, retained outcomes, duplicate/conflict handling, and file-backed reopen. It is not yet an end-to-end consignment workflow: payment reconciliation, inter-institution message delivery, disputes/corrections, notification retries, and process-death fault injection between stages remain out of scope. Its tests compare a limited observable result vector and do not demonstrate a KIN-SYS advantage; the conventional baseline is expected to meet the same contract.
+The model currently covers two independent decision stages, stage-specific actor and rule checks, retained outcomes, duplicate/conflict handling, and file-backed reopen. It is not yet an end-to-end consignment workflow: payment reconciliation, inter-institution message delivery, full disputes/appeals, payment reconciliation, notification retries, and process-death fault injection during correction handling remain out of scope. Its tests compare a limited observable result vector and do not demonstrate a KIN-SYS advantage; the conventional baseline is expected to meet the same contract.
 
 ## Scope warning
 
