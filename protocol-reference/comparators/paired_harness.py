@@ -186,7 +186,7 @@ def compare_scenario(scenario: str) -> dict[str, Any]:
     fields = ("status", "reason", "duplicate", "state", "version", "history_count", "event_outcome", "accepted_count", "duplicate_count")
     differences = {
         field: {"kin_sys": left[field], "conventional": right[field]}
-        for field in fields if left[field] != right[field]
+        for field in fields if left.get(field) != right.get(field)
     }
     return {
         "scenario": scenario,
@@ -199,7 +199,7 @@ def compare_scenario(scenario: str) -> dict[str, Any]:
 def run_all_scenarios() -> dict[str, Any]:
     scenarios = (
         "accepted", "duplicate", "conflicting-id", "wrong-authority",
-        "rule-version-mismatch", "precommit-failure",
+        "rule-version-mismatch", "precommit-failure", "concurrent-identical",
     )
     comparisons = [compare_scenario(scenario) for scenario in scenarios]
     return {
