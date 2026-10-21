@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # KIN-SYS Protocol
 
 **A sovereign distributed protocol architecture for verifiable execution, institutional coordination, and interoperable edge infrastructure.**
@@ -62,4 +64,4 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 
 Every important guarantee must name its assumptions, failure conditions, and verification method. A diagram, proposal, pseudocode function, mock, or cryptographic label is not evidence of a working guarantee. Evidence must distinguish documented intention, an implemented prototype, a reproduced test result, independent evaluation, and production deployment.
 
-Technical criticism, prior-art identification, alternative designs, reproducibility attempts, and falsification are welcome. The repository is licensed under Apache License 2.0; see [LICENSE](LICENSE). The licence does not grant trademark rights in the KIN-SYS name or branding.
+Technical criticism, prior-art identification, alternative designs, reproducibility attempts, and falsification are welcome. Original repository materials are attributed to Joel Kagoro; see [COPYRIGHT](COPYRIGHT.md) and [NOTICE](NOTICE). The repository is licensed under Apache License 2.0; see [LICENSE](LICENSE). The licence does not grant trademark rights in the KIN-SYS name or branding.
