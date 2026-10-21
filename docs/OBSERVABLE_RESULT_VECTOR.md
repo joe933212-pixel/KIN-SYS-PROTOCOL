@@ -69,7 +69,7 @@ At minimum, run and report these scenarios for each implementation:
 - **S09 — rule/authority change during request:** define the ordering boundary and verify which version/authority governs the decision.
 - **S10 — external dependency uncertain:** for the integrated scenario, payment or external approval timeouts must not be silently converted into success or failure without evidence.
 
-The current SQLite prototype has tests for a subset of S01–S06 under limited local conditions. Its orderly close/reopen tests are not a substitute for abrupt process termination, power-loss testing, concurrent-node testing, or network partition experiments.
+The current SQLite prototype has tests for a subset of S01–S09 under limited local conditions, including concurrent duplicate submissions from separate SQLite connections, forced process termination before local commit, and termination after commit but before a simulated acknowledgement. These tests exercise a local file-backed SQLite database on the CI runner; they do not establish hardware power-loss durability, storage-device fault behaviour, distributed-node correctness, or network-partition recovery.
 
 ## 6. Comparison metrics
 
