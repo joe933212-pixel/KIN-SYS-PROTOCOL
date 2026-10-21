@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # KIN-SYS Protocol Reference Slice
 
 This is a small executable reference for the local institutional transition contract in [`docs/TRANSITION_CONTRACT.md`](../docs/TRANSITION_CONTRACT.md).
