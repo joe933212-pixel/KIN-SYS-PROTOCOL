@@ -268,6 +268,8 @@ class ConventionalWorkflow:
                 failure = "CORRECTION_PROPOSAL_NOT_FOUND"
             elif proposal["rule_id"] != rule_version:
                 failure = "RULE_VERSION_MISMATCH"
+            elif self.db.execute("SELECT 1 FROM correction_responses WHERE proposal_operation=?", (proposal_event_id,)).fetchone():
+                failure = "PROPOSAL_ALREADY_RESPONDED"
             else:
                 original = self.db.execute("SELECT result_after FROM workflow_audit WHERE operation_key=? AND case_key=? AND step_key=?", (proposal["replaces_operation"], consignment_id, stage)).fetchone()
                 if original is None or step["result"] != original["result_after"]:
