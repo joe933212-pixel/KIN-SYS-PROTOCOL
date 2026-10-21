@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import time
 import concurrent.futures
 import threading
 from typing import Any, Callable
@@ -108,6 +110,7 @@ def run_scenario(implementation: str, scenario: str) -> dict[str, Any]:
     if scenario not in {
         "accepted", "duplicate", "conflicting-id", "wrong-authority",
         "rule-version-mismatch", "precommit-failure", "concurrent-identical",
+        "process-death-before-commit", "postcommit-before-ack",
     }:
         raise ValueError(f"UNKNOWN_SCENARIO:{scenario}")
 
@@ -165,6 +168,71 @@ def run_scenario(implementation: str, scenario: str) -> dict[str, Any]:
                     if "INJECTED_FAILURE_BEFORE_COMMIT" not in str(error):
                         raise
                     outcome = {"status": "INTERRUPTED", "reason": "PRECOMMIT_FAILURE", "duplicate": False}
+            elif scenario in {"process-death-before-commit", "postcommit-before-ack"}:
+                adapter.close()
+                marker = os.path.join(directory, "crash-point.marker")
+                child_script = r"""
+import os, sys, time
+sys.path.insert(0, os.getcwd())
+from comparators.paired_harness import ADAPTERS, _request
+implementation, database, marker, mode = sys.argv[1:5]
+store = ADAPTERS[implementation](database, initialize=False)
+if mode == "before":
+    trigger_table = "transition_history" if implementation == "kin-sys-sqlite" else "baseline_audit"
+    def pause_at_shared_crash_point():
+        with open(marker, "w", encoding="utf-8") as handle:
+            handle.write("inside transaction before history/audit insert")
+        time.sleep(60)
+    store.store.db.create_function("pause_at_shared_crash_point", 0, pause_at_shared_crash_point)
+    store.store.db.execute(
+        f"CREATE TRIGGER shared_pause_before_history BEFORE INSERT ON {trigger_table} "
+        "BEGIN SELECT pause_at_shared_crash_point(); END"
+    )
+    store.store.db.commit()
+    store.execute(_request())
+else:
+    store.execute(_request())
+    with open(marker, "w", encoding="utf-8") as handle:
+        handle.write("committed; acknowledgement withheld")
+    time.sleep(60)
+"""
+                mode = "before" if scenario == "process-death-before-commit" else "after"
+                child = subprocess.Popen(
+                    [sys.executable, "-c", child_script, implementation, database, marker, mode],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                deadline = time.monotonic() + 8
+                try:
+                    while time.monotonic() < deadline and not os.path.exists(marker):
+                        if child.poll() is not None:
+                            raise RuntimeError(
+                                f"CHILD_EXITED_BEFORE_CRASH_MARKER:{implementation}:{child.returncode}"
+                            )
+                        time.sleep(0.01)
+                    if not os.path.exists(marker):
+                        raise RuntimeError(f"CRASH_MARKER_TIMEOUT:{implementation}:{scenario}")
+                    child.terminate()
+                    child.wait(timeout=5)
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait(timeout=5)
+                adapter = ADAPTERS[implementation](database, initialize=False)
+                if mode == "before":
+                    outcome = {"status": "INTERRUPTED", "reason": "PROCESS_TERMINATED_BEFORE_COMMIT", "duplicate": False}
+                else:
+                    retry_result = adapter.execute(request)
+                    retry_duplicate = (
+                        retry_result.duplicate if hasattr(retry_result, "duplicate")
+                        else retry_result["duplicate"]
+                    )
+                    outcome = {
+                        "status": "COMMITTED_ACK_LOST",
+                        "reason": "POSTCOMMIT_RETRY",
+                        "duplicate": False,
+                        "retry_duplicate": bool(retry_duplicate),
+                    }
             else:
                 outcome = adapter.execute(request)
 
@@ -184,7 +252,7 @@ def compare_scenario(scenario: str) -> dict[str, Any]:
     """Return both normalized vectors and their externally visible differences."""
     left = run_scenario("kin-sys-sqlite", scenario)
     right = run_scenario("conventional-sqlite", scenario)
-    fields = ("status", "reason", "duplicate", "state", "version", "history_count", "event_outcome", "accepted_count", "duplicate_count")
+    fields = ("status", "reason", "duplicate", "retry_duplicate", "state", "version", "history_count", "event_outcome", "accepted_count", "duplicate_count")
     differences = {
         field: {"kin_sys": left[field], "conventional": right[field]}
         for field in fields if left.get(field) != right.get(field)
@@ -201,6 +269,7 @@ def run_all_scenarios() -> dict[str, Any]:
     scenarios = (
         "accepted", "duplicate", "conflicting-id", "wrong-authority",
         "rule-version-mismatch", "precommit-failure", "concurrent-identical",
+        "process-death-before-commit", "postcommit-before-ack",
     )
     comparisons = [compare_scenario(scenario) for scenario in scenarios]
     return {
