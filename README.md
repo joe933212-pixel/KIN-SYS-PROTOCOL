@@ -43,8 +43,8 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 
 1. [Protocol specification](SPECIFICATION.md)
 2. [Architecture and trust boundaries](ARCHITECTURE.md)
-3. [Integrated architecture and component responsibilities](ARCHITECTURE.md)
-4. [Source crosswalk: CRS, CISA, IVM, CEE and prior art](docs/SOURCE_CROSSWALK.md)
+3. [Source crosswalk: CRS, CISA, IVM, CEE and prior art](docs/SOURCE_CROSSWALK.md)
+4. [Full-source CEE 1.0 conformance trace](docs/CEE_CONFORMANCE_TRACE.md)
 5. [Minimal transition contract](docs/TRANSITION_CONTRACT.md)
 6. [Local reference prototype and tests](protocol-reference/README.md)
 7. [Research evidence register](RESEARCH_EVIDENCE.md)
