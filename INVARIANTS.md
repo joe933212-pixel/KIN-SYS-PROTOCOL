@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # KIN-SYS Protocol Invariants
 
 These are proposed acceptance conditions, not proven properties. Each implementation profile must map applicable invariants to tests and identify unsupported cases.
