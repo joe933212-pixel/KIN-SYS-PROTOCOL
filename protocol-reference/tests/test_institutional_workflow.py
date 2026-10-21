@@ -1,7 +1,10 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Paired contract tests for separate institutional decisions."""
+import os
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -116,6 +119,53 @@ class InstitutionalWorkflowContractTests(unittest.TestCase):
                 ],
             })
         self.assertEqual(vectors[0], vectors[1])
+
+    def test_process_death_between_institutions_preserves_committed_origin_only(self):
+        for implementation in IMPLEMENTATIONS:
+            with self.subTest(implementation=implementation.__name__):
+                with tempfile.TemporaryDirectory() as directory:
+                    database = str(Path(directory) / "workflow.sqlite")
+                    marker = str(Path(directory) / "origin-committed.marker")
+                    module = ("workflows.institutional_workflow", "InstitutionalWorkflow") if implementation is InstitutionalWorkflow else ("comparators.conventional_workflow", "ConventionalWorkflow")
+                    child_script = r"""
+import importlib, sys, time
+sys.path.insert(0, sys.argv[1])
+module = importlib.import_module(sys.argv[4])
+store = getattr(module, sys.argv[5])(sys.argv[2])
+store.create_case("C-001", origin_authority="ORIGIN-A", destination_authority="DESTINATION-B")
+store.decide(event_id="O-1", consignment_id="C-001", stage="ORIGIN",
+             actor_id="ORIGIN-A", decision="APPROVE", rule_version="1.0")
+with open(sys.argv[3], "w", encoding="utf-8") as handle:
+    handle.write("origin committed; destination not yet attempted")
+while True:
+    time.sleep(0.05)
+"""
+                    child = subprocess.Popen(
+                        [sys.executable, "-c", child_script, str(ROOT), database, marker, module[0], module[1]],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                    deadline = time.monotonic() + 8
+                    try:
+                        while time.monotonic() < deadline and not os.path.exists(marker):
+                            if child.poll() is not None:
+                                self.fail(f"Workflow child exited before marker: {child.returncode}")
+                            time.sleep(0.01)
+                        self.assertTrue(os.path.exists(marker), "Child did not reach post-origin commit point")
+                        child.terminate()
+                        child.wait(timeout=5)
+                    finally:
+                        if child.poll() is None:
+                            child.kill()
+                            child.wait(timeout=5)
+                    reopened = implementation(database)
+                    try:
+                        origin = reopened.stage("C-001", "ORIGIN")
+                        destination = reopened.stage("C-001", "DESTINATION")
+                        self.assertEqual(origin.get("outcome", origin.get("result")), "APPROVE")
+                        self.assertEqual(destination.get("outcome", destination.get("result")), "PENDING")
+                        self.assertEqual(len(reopened.history("C-001")), 1)
+                    finally:
+                        reopened.close()
 
     def test_file_reopen_preserves_each_institution_decision(self):
         for implementation in IMPLEMENTATIONS:
