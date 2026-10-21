@@ -4,7 +4,7 @@
 
 KIN-SYS is a protocol architecture for coordinating computation, identity, authority, governance, economic accounting, and distributed edge systems. It is not defined as a single user-facing application, nor does it assume one blockchain, cloud provider, or implementation language.
 
-The objective is to specify a system in which independently operated components coordinate under explicit rules, with verifiable state transitions and defined behaviour during disconnection, failure, dispute, and recovery.
+The objective is to specify a system in which independently operated components coordinate under explicit rules, with verifiable state transitions and defined behaviour during disconnection, failure, dispute, and recovery. KIN-SYS research treats the protocol, CEE/IVM execution layers, AI assistance, economic mechanisms such as the proposed $KIN, Nexus Pods/edge infrastructure, institutional authority, governance, identity, and privacy as complementary parts of one system. Component-level work is essential, but system-level claims require integrated evidence.
 
 ## Status
 
@@ -43,16 +43,17 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 
 1. [Protocol specification](SPECIFICATION.md)
 2. [Architecture and trust boundaries](ARCHITECTURE.md)
-3. [Source crosswalk: CRS, CISA, IVM, CEE and prior art](docs/SOURCE_CROSSWALK.md)
-4. [Minimal transition contract](docs/TRANSITION_CONTRACT.md)
-5. [Local reference prototype and tests](protocol-reference/README.md)
-6. [Research evidence register](RESEARCH_EVIDENCE.md)
-7. [Threat model](THREAT_MODEL.md)
-8. [Use cases](USE_CASES.md)
-9. [Protocol invariants](INVARIANTS.md)
-10. [Test strategy](TEST_STRATEGY.md)
-11. [Implementation status](IMPLEMENTATION_STATUS.md)
-12. [Initial architecture decision](DECISIONS/0001-protocol-scope.md)
+3. [Integrated architecture and component responsibilities](ARCHITECTURE.md)
+4. [Source crosswalk: CRS, CISA, IVM, CEE and prior art](docs/SOURCE_CROSSWALK.md)
+5. [Minimal transition contract](docs/TRANSITION_CONTRACT.md)
+6. [Local reference prototype and tests](protocol-reference/README.md)
+7. [Research evidence register](RESEARCH_EVIDENCE.md)
+8. [Threat model](THREAT_MODEL.md)
+9. [Use cases](USE_CASES.md)
+10. [Protocol invariants](INVARIANTS.md)
+11. [Test strategy](TEST_STRATEGY.md)
+12. [Implementation status](IMPLEMENTATION_STATUS.md)
+13. [Initial architecture decision](DECISIONS/0001-protocol-scope.md)
 
 ## Engineering principle
 
