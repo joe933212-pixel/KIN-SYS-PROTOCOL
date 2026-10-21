@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # Decision 0001 — Protocol scope and evidence discipline
 
 - **Status:** Accepted as the initial working baseline; revisable through a documented decision.
