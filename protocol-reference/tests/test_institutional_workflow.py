@@ -191,7 +191,7 @@ while True:
                 store = self.make_store(implementation)
                 self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
                 self.assertEqual(self._propose(store)["status"], "ACCEPTED")
-                denied = self._authorize(store, actor="COORDINATOR")
+                denied = self._authorize(store, event_id="A-DENY", actor="COORDINATOR")
                 self.assertEqual(denied["reason"], "AUTHORITY_MISMATCH")
                 self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome", store.stage("C-001", "ORIGIN").get("result")), "REJECT")
                 applied = self._authorize(store)
