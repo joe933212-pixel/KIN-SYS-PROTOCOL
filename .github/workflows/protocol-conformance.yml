@@ -1,6 +1,7 @@
 name: Protocol conformance slice
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -13,9 +14,13 @@ on:
       - "docs/TRANSITION_CONTRACT.md"
       - ".github/workflows/protocol-conformance.yml"
 
+permissions:
+  contents: read
+
 jobs:
   local-transition-contract:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
