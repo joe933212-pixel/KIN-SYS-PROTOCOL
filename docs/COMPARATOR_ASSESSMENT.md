@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # Comparator Assessment: IVM Experiment 005 and the KIN-SYS Transition Slice
 
 **Status:** Research assessment, draft 0.1  
