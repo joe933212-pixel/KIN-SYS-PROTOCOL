@@ -1,4 +1,6 @@
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -95,6 +97,45 @@ class TransitionContractTests(unittest.TestCase):
         self.assertEqual(result.reason, "UNDEFINED_TRANSITION")
         self.assertEqual(self.store.process("P-001")["state"], "PENDING")
         self.assertIsNotNone(self.store.event("E-001"))
+
+    def test_committed_state_history_and_duplicate_outcome_survive_reopen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "protocol.sqlite")
+            store = ProtocolStore(database=database)
+            store.create_process(process_id="P-001")
+            first = store.execute(self.event())
+            self.assertEqual(first.status, "ACCEPTED")
+            store.close()
+
+            reopened = ProtocolStore(database=database)
+            try:
+                self.assertEqual(reopened.process("P-001")["state"], "ACTIVE")
+                self.assertEqual(reopened.process("P-001")["state_version"], 1)
+                self.assertEqual(len(reopened.history("P-001")), 1)
+                retry = reopened.execute(self.event())
+                self.assertTrue(retry.duplicate)
+                self.assertEqual(reopened.process("P-001")["state_version"], 1)
+                self.assertEqual(len(reopened.history("P-001")), 1)
+            finally:
+                reopened.close()
+
+    def test_precommit_rollback_remains_absent_after_reopen(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "protocol.sqlite")
+            store = ProtocolStore(database=database)
+            store.create_process(process_id="P-001")
+            with self.assertRaisesRegex(RuntimeError, "INJECTED_FAILURE_BEFORE_COMMIT"):
+                store.execute(self.event(), fail_before_commit=True)
+            store.close()
+
+            reopened = ProtocolStore(database=database)
+            try:
+                self.assertEqual(reopened.process("P-001")["state"], "PENDING")
+                self.assertEqual(reopened.process("P-001")["state_version"], 0)
+                self.assertIsNone(reopened.event("E-001"))
+                self.assertEqual(reopened.history("P-001"), [])
+            finally:
+                reopened.close()
 
 
 if __name__ == "__main__":
