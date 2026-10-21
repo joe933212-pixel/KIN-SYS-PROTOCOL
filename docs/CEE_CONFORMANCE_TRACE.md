@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # CEE 1.0 Full-Source Conformance Trace for KIN-SYS
 
 **Status:** Working research trace, 2026-10-21. This is not a claim of CEE conformance.
