@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # Research Evidence Register
 
 **Purpose:** Trace protocol decisions to sources and distinguish evidence from design intention. A link to a source is not itself validation of every claim in that source.
