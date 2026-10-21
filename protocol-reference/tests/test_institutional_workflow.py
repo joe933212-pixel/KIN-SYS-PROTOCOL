@@ -85,6 +85,38 @@ class InstitutionalWorkflowContractTests(unittest.TestCase):
                 self.assertEqual(store.stage("C-001", "DESTINATION").get("outcome",
                                  store.stage("C-001", "DESTINATION").get("result")), "PENDING")
 
+    def test_paired_result_vector_matches_for_independent_institution_decisions(self):
+        vectors = []
+        for implementation in IMPLEMENTATIONS:
+            store = self.make_store(implementation)
+            origin_result = self.decide(store, event_id="O-1", stage="ORIGIN",
+                                        actor_id="ORIGIN-A", decision="APPROVE")
+            destination_result = self.decide(store, event_id="D-1", stage="DESTINATION",
+                                             actor_id="DESTINATION-B", decision="REJECT")
+            origin = store.stage("C-001", "ORIGIN")
+            destination = store.stage("C-001", "DESTINATION")
+            history = store.history("C-001")
+            vectors.append({
+                "statuses": [origin_result["status"], destination_result["status"]],
+                "stage_outcomes": [
+                    origin.get("outcome", origin.get("result")),
+                    destination.get("outcome", destination.get("result")),
+                ],
+                "stage_versions": [
+                    origin.get("version", origin.get("revision")),
+                    destination.get("version", destination.get("revision")),
+                ],
+                "history": [
+                    (item.get("stage", item.get("step_key")),
+                     item.get("actor_id", item.get("decided_by")),
+                     item.get("rule_version", item.get("rule_id")),
+                     item.get("prior_outcome", item.get("result_before")),
+                     item.get("new_outcome", item.get("result_after")))
+                    for item in history
+                ],
+            })
+        self.assertEqual(vectors[0], vectors[1])
+
     def test_file_reopen_preserves_each_institution_decision(self):
         for implementation in IMPLEMENTATIONS:
             with self.subTest(implementation=implementation.__name__):
