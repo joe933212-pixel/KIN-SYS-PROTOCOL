@@ -18,10 +18,11 @@ IMPLEMENTATIONS = (InstitutionalWorkflow, ConventionalWorkflow)
 
 
 class InstitutionalWorkflowContractTests(unittest.TestCase):
-    def make_store(self, implementation):
+    def make_store(self, implementation, appeal_authority=None):
         store = implementation()
         store.create_case("C-001", origin_authority="ORIGIN-A",
-                          destination_authority="DESTINATION-B")
+                          destination_authority="DESTINATION-B",
+                          appeal_authority=appeal_authority)
         self.addCleanup(store.close)
         return store
 
@@ -287,6 +288,82 @@ while True:
                 self.assertEqual(result["reason"], "PROPOSAL_ALREADY_RESPONDED")
                 self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome", store.stage("C-001", "ORIGIN").get("result")), "REJECT")
                 self.assertEqual(len(store.history("C-001")), 1)
+
+    def test_designated_appeal_authority_can_uphold_or_remand_without_overriding_decision(self):
+        for implementation in IMPLEMENTATIONS:
+            for disposition in ("UPHOLD_REFUSAL", "REMAND_FOR_RECONSIDERATION"):
+                with self.subTest(implementation=implementation.__name__, disposition=disposition):
+                    store = self.make_store(implementation, appeal_authority="APPEAL-BOARD")
+                    self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                    self._propose(store)
+                    store.refuse_correction(event_id="R-1", consignment_id="C-001", stage="ORIGIN",
+                        actor_id="ORIGIN-A", rule_version="1.0", proposal_event_id="P-1",
+                        refusal_basis="Evidence remains insufficient")
+                    store.dispute_correction_refusal(event_id="D-1", consignment_id="C-001", stage="ORIGIN",
+                        actor_id="REVIEWER", proposal_event_id="P-1", dispute_basis="New evidence was provided")
+                    request = dict(event_id="AP-1", consignment_id="C-001", stage="ORIGIN",
+                        actor_id="APPEAL-BOARD", rule_version="1.0", dispute_event_id="D-1",
+                        disposition=disposition, disposition_basis="Reasoned appeal disposition")
+                    self.assertEqual(store.resolve_correction_dispute(**request)["status"], "ACCEPTED")
+                    self.assertTrue(store.resolve_correction_dispute(**request)["duplicate"])
+                    self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome",
+                                     store.stage("C-001", "ORIGIN").get("result")), "REJECT")
+                    self.assertEqual(len(store.history("C-001")), 1)
+                    if implementation is InstitutionalWorkflow:
+                        row = store.db.execute("SELECT dispute_event_id, proposal_event_id, refusal_event_id, appeal_authority_id, disposition, disposition_basis FROM appeal_dispositions").fetchone()
+                    else:
+                        row = store.db.execute("SELECT dispute_operation, proposal_operation, refusal_operation, deciding_actor, disposition, rationale FROM appeal_dispositions").fetchone()
+                    self.assertEqual(tuple(row), ("D-1", "P-1", "R-1", "APPEAL-BOARD", disposition, "Reasoned appeal disposition"))
+
+    def test_unauthorised_or_revoked_appeal_authority_cannot_resolve_dispute(self):
+        for implementation in IMPLEMENTATIONS:
+            with self.subTest(implementation=implementation.__name__):
+                store = self.make_store(implementation, appeal_authority="APPEAL-BOARD")
+                self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                self._propose(store)
+                store.refuse_correction(event_id="R-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="ORIGIN-A", rule_version="1.0", proposal_event_id="P-1",
+                    refusal_basis="Evidence remains insufficient")
+                store.dispute_correction_refusal(event_id="D-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="REVIEWER", proposal_event_id="P-1", dispute_basis="New evidence was provided")
+                base = dict(consignment_id="C-001", stage="ORIGIN", rule_version="1.0",
+                    dispute_event_id="D-1", disposition="REMAND_FOR_RECONSIDERATION",
+                    disposition_basis="Review")
+                unauthorized = store.resolve_correction_dispute(event_id="AP-X", actor_id="COORDINATOR", **base)
+                self.assertEqual(unauthorized["reason"], "APPEAL_AUTHORITY_MISMATCH")
+                store.set_appeal_authority_active("C-001", False)
+                revoked = store.resolve_correction_dispute(event_id="AP-Y", actor_id="APPEAL-BOARD", **base)
+                self.assertEqual(revoked["reason"], "APPEAL_AUTHORITY_REVOKED")
+                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome",
+                                 store.stage("C-001", "ORIGIN").get("result")), "REJECT")
+                self.assertEqual(len(store.history("C-001")), 1)
+
+    def test_appeal_authority_requires_current_rule_and_is_not_implicitly_created(self):
+        for implementation in IMPLEMENTATIONS:
+            with self.subTest(implementation=implementation.__name__):
+                store = self.make_store(implementation)
+                self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                self._propose(store)
+                store.refuse_correction(event_id="R-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="ORIGIN-A", rule_version="1.0", proposal_event_id="P-1",
+                    refusal_basis="Evidence remains insufficient")
+                store.dispute_correction_refusal(event_id="D-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="REVIEWER", proposal_event_id="P-1", dispute_basis="New evidence was provided")
+                base = dict(consignment_id="C-001", stage="ORIGIN", actor_id="APPEAL-BOARD",
+                    dispute_event_id="D-1", disposition="UPHOLD_REFUSAL", disposition_basis="Review")
+                missing = store.resolve_correction_dispute(event_id="AP-1", rule_version="1.0", **base)
+                self.assertEqual(missing["reason"], "APPEAL_AUTHORITY_NOT_CONFIGURED")
+                configured = self.make_store(implementation, appeal_authority="APPEAL-BOARD")
+                self.decide(configured, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                self._propose(configured)
+                configured.refuse_correction(event_id="R-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="ORIGIN-A", rule_version="1.0", proposal_event_id="P-1",
+                    refusal_basis="Evidence remains insufficient")
+                configured.dispute_correction_refusal(event_id="D-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="REVIEWER", proposal_event_id="P-1", dispute_basis="New evidence was provided")
+                configured.set_appeal_rule_version("C-001", "2.0")
+                stale = configured.resolve_correction_dispute(event_id="AP-2", rule_version="1.0", **base)
+                self.assertEqual(stale["reason"], "RULE_VERSION_MISMATCH")
 
     def test_file_reopen_preserves_each_institution_decision(self):
         for implementation in IMPLEMENTATIONS:
