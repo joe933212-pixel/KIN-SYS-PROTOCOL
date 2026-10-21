@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # KIN-SYS Observable Result Vector
 
 **Status:** Research test contract, draft 0.1. This document defines comparison fields; it does not claim that KIN-SYS, IVM, or a conventional comparator already emits this format.
