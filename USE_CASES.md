@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # KIN-SYS Protocol Use Cases
 
 These protocol-level scenarios support requirements discovery. They are not claims of deployed functionality. Each must become an executable end-to-end test with positive, negative, and recovery paths.
