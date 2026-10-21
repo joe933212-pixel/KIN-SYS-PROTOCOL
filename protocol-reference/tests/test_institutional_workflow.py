@@ -167,64 +167,64 @@ while True:
                     finally:
                         reopened.close()
 
-    def test_authorised_correction_is_linked_and_prior_history_remains(self):
+    def _propose(self, store, event_id="P-1", actor="REVIEWER"):
+        return store.correct_decision(event_id=event_id, consignment_id="C-001", stage="ORIGIN",
+            actor_id=actor, replacement_decision="APPROVE", rule_version="1.0",
+            supersedes_event_id="O-1", correction_basis="Verified missing certificate")
+
+    def _authorize(self, store, event_id="A-1", actor="ORIGIN-A", proposal="P-1"):
+        return store.authorize_correction(event_id=event_id, consignment_id="C-001",
+            stage="ORIGIN", actor_id=actor, rule_version="1.0", proposal_event_id=proposal)
+
+    def test_reviewer_proposal_does_not_change_institutional_decision(self):
         for implementation in IMPLEMENTATIONS:
             with self.subTest(implementation=implementation.__name__):
                 store = self.make_store(implementation)
-                self.decide(store, event_id="O-1", stage="ORIGIN",
-                            actor_id="ORIGIN-A", decision="REJECT")
-                result = store.correct_decision(
-                    event_id="COR-1", consignment_id="C-001", stage="ORIGIN",
-                    actor_id="REVIEWER", replacement_decision="APPROVE",
-                    rule_version="1.0", supersedes_event_id="O-1",
-                    correction_basis="Verified missing certificate")
-                self.assertEqual(result["status"], "ACCEPTED")
-                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome",
-                                 store.stage("C-001", "ORIGIN").get("result")), "APPROVE")
+                self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                self.assertEqual(self._propose(store)["status"], "ACCEPTED")
+                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome", store.stage("C-001", "ORIGIN").get("result")), "REJECT")
+                self.assertEqual(len(store.history("C-001")), 1)
+
+    def test_only_institution_can_apply_linked_correction(self):
+        for implementation in IMPLEMENTATIONS:
+            with self.subTest(implementation=implementation.__name__):
+                store = self.make_store(implementation)
+                self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                self.assertEqual(self._propose(store)["status"], "ACCEPTED")
+                denied = self._authorize(store, actor="COORDINATOR")
+                self.assertEqual(denied["reason"], "AUTHORITY_MISMATCH")
+                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome", store.stage("C-001", "ORIGIN").get("result")), "REJECT")
+                applied = self._authorize(store)
+                self.assertEqual(applied["status"], "ACCEPTED")
                 history = store.history("C-001")
                 self.assertEqual(len(history), 2)
                 self.assertEqual(history[0].get("new_outcome", history[0].get("result_after")), "REJECT")
-                self.assertEqual(history[1].get("prior_outcome", history[1].get("result_before")), "REJECT")
                 self.assertEqual(history[1].get("new_outcome", history[1].get("result_after")), "APPROVE")
                 if implementation is InstitutionalWorkflow:
-                    link = store.db.execute("SELECT superseded_event_id, correction_authority_id, correction_basis FROM stage_corrections WHERE correction_event_id='COR-1'").fetchone()
+                    link = store.db.execute("SELECT superseded_event_id, correction_authority_id, correction_basis, proposal_event_id FROM stage_corrections WHERE correction_event_id='A-1'").fetchone()
                 else:
-                    link = store.db.execute("SELECT replaces_operation, reviewer, rationale FROM correction_log WHERE correction_key='COR-1'").fetchone()
-                self.assertEqual(tuple(link), ("O-1", "REVIEWER", "Verified missing certificate"))
+                    link = store.db.execute("SELECT replaces_operation, reviewer, rationale, proposal_operation FROM correction_log WHERE correction_key='A-1'").fetchone()
+                self.assertEqual(tuple(link), ("O-1", "ORIGIN-A", "Verified missing certificate", "P-1"))
 
-    def test_unauthorised_correction_cannot_change_decision_or_history(self):
+    def test_correction_proposal_and_authorisation_replays_are_idempotent(self):
         for implementation in IMPLEMENTATIONS:
             with self.subTest(implementation=implementation.__name__):
                 store = self.make_store(implementation)
-                self.decide(store, event_id="O-1", stage="ORIGIN",
-                            actor_id="ORIGIN-A", decision="REJECT")
-                result = store.correct_decision(
-                    event_id="COR-1", consignment_id="C-001", stage="ORIGIN",
-                    actor_id="COORDINATOR", replacement_decision="APPROVE",
-                    rule_version="1.0", supersedes_event_id="O-1",
-                    correction_basis="Coordinator request")
-                self.assertEqual(result["status"], "REJECTED")
-                self.assertEqual(result["reason"], "CORRECTION_AUTHORITY_MISMATCH")
-                self.assertEqual(store.stage("C-001", "ORIGIN").get("outcome",
-                                 store.stage("C-001", "ORIGIN").get("result")), "REJECT")
-                self.assertEqual(len(store.history("C-001")), 1)
-
-    def test_correction_replay_is_idempotent_and_conflict_is_rejected(self):
-        for implementation in IMPLEMENTATIONS:
-            with self.subTest(implementation=implementation.__name__):
-                store = self.make_store(implementation)
-                self.decide(store, event_id="O-1", stage="ORIGIN",
-                            actor_id="ORIGIN-A", decision="REJECT")
-                request = dict(event_id="COR-1", consignment_id="C-001", stage="ORIGIN",
-                               actor_id="REVIEWER", replacement_decision="APPROVE",
-                               rule_version="1.0", supersedes_event_id="O-1",
-                               correction_basis="Verified missing certificate")
+                self.decide(store, event_id="O-1", stage="ORIGIN", actor_id="ORIGIN-A", decision="REJECT")
+                request = dict(event_id="P-1", consignment_id="C-001", stage="ORIGIN", actor_id="REVIEWER",
+                    replacement_decision="APPROVE", rule_version="1.0", supersedes_event_id="O-1",
+                    correction_basis="Verified missing certificate")
                 self.assertFalse(store.correct_decision(**request)["duplicate"])
                 self.assertTrue(store.correct_decision(**request)["duplicate"])
-                conflict = dict(request, correction_basis="Different basis")
                 error = WorkflowConflict if implementation is InstitutionalWorkflow else ValueError
                 with self.assertRaises(error):
-                    store.correct_decision(**conflict)
+                    store.correct_decision(**dict(request, correction_basis="Different basis"))
+                auth = dict(event_id="A-1", consignment_id="C-001", stage="ORIGIN",
+                    actor_id="ORIGIN-A", rule_version="1.0", proposal_event_id="P-1")
+                self.assertFalse(store.authorize_correction(**auth)["duplicate"])
+                self.assertTrue(store.authorize_correction(**auth)["duplicate"])
+                with self.assertRaises(error):
+                    store.authorize_correction(**dict(auth, proposal_event_id="OTHER"))
                 self.assertEqual(len(store.history("C-001")), 2)
 
     def test_file_reopen_preserves_each_institution_decision(self):
