@@ -1,3 +1,4 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Conventional durable baseline for matched local transition experiments.
 
 This implementation intentionally uses ordinary SQLite transactions and a
