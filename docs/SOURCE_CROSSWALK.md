@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # Source Crosswalk — CRS, CISA, IVM, CEE and KIN-SYS
 
 **Status:** Working research map, 2026-10-21. It is not a conformance declaration.
