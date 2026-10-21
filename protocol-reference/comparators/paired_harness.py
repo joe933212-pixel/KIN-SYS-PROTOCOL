@@ -1,3 +1,4 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Shared scenario harness for the KIN-SYS slice and conventional SQLite baseline.
 
 The harness normalizes observable results only; each implementation keeps its
