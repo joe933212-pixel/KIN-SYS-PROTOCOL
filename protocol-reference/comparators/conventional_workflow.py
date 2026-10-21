@@ -87,6 +87,20 @@ class ConventionalWorkflow:
                 FOREIGN KEY(proposal_operation) REFERENCES correction_proposals(proposal_operation),
                 FOREIGN KEY(refusal_operation) REFERENCES workflow_operations(operation_key)
             );
+            CREATE TABLE IF NOT EXISTS appeal_authorities (
+                case_key TEXT PRIMARY KEY, designated_actor TEXT NOT NULL,
+                enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), active_rule TEXT NOT NULL,
+                FOREIGN KEY(case_key) REFERENCES workflow_cases(case_key)
+            );
+            CREATE TABLE IF NOT EXISTS appeal_dispositions (
+                disposition_operation TEXT PRIMARY KEY, dispute_operation TEXT NOT NULL UNIQUE,
+                proposal_operation TEXT NOT NULL, refusal_operation TEXT NOT NULL,
+                deciding_actor TEXT NOT NULL, disposition TEXT NOT NULL, rationale TEXT NOT NULL,
+                FOREIGN KEY(disposition_operation) REFERENCES workflow_operations(operation_key),
+                FOREIGN KEY(dispute_operation) REFERENCES correction_disputes(dispute_operation),
+                FOREIGN KEY(proposal_operation) REFERENCES correction_proposals(proposal_operation),
+                FOREIGN KEY(refusal_operation) REFERENCES workflow_operations(operation_key)
+            );
 
         """)
         self.db.commit()
@@ -96,7 +110,8 @@ class ConventionalWorkflow:
 
     def create_case(self, case_key: str, *, origin_authority: str,
                     destination_authority: str, origin_rule_version: str = "1.0",
-                    destination_rule_version: str = "1.0", reviewer_authority: str = "REVIEWER") -> None:
+                    destination_rule_version: str = "1.0", reviewer_authority: str = "REVIEWER",
+                    appeal_authority: str | None = None, appeal_rule_version: str = "1.0") -> None:
         if not reviewer_authority:
             raise ValueError("INVALID_REVIEWER_AUTHORITY")
         self.db.execute("INSERT INTO workflow_cases(case_key, correction_reviewer) VALUES (?, ?)", (case_key, reviewer_authority))
@@ -107,6 +122,27 @@ class ConventionalWorkflow:
             [(case_key, "ORIGIN", origin_authority, origin_rule_version),
              (case_key, "DESTINATION", destination_authority, destination_rule_version)],
         )
+        if appeal_authority is not None:
+            if not appeal_authority or not appeal_rule_version:
+                raise ValueError("INVALID_APPEAL_AUTHORITY")
+            self.db.execute(
+                "INSERT INTO appeal_authorities(case_key, designated_actor, enabled, active_rule) VALUES (?, ?, 1, ?)",
+                (case_key, appeal_authority, appeal_rule_version),
+            )
+        self.db.commit()
+
+    def set_appeal_authority_active(self, case_key: str, active: bool) -> None:
+        changed = self.db.execute("UPDATE appeal_authorities SET enabled=? WHERE case_key=?",
+                                  (int(active), case_key)).rowcount
+        if changed != 1:
+            raise KeyError("APPEAL_AUTHORITY_NOT_CONFIGURED")
+        self.db.commit()
+
+    def set_appeal_rule_version(self, case_key: str, version: str) -> None:
+        changed = self.db.execute("UPDATE appeal_authorities SET active_rule=? WHERE case_key=?",
+                                  (version, case_key)).rowcount
+        if changed != 1:
+            raise KeyError("APPEAL_AUTHORITY_NOT_CONFIGURED")
         self.db.commit()
 
     def set_authority_active(self, case_key: str, stage: str, active: bool) -> None:
@@ -375,6 +411,53 @@ class ConventionalWorkflow:
                 (event_id, consignment_id, stage, digest, actor_id, "DISPUTE_CORRECTION_REFUSAL", status, failure))
             if not failure:
                 self.db.execute("INSERT INTO correction_disputes VALUES (?,?,?,?,?)", (event_id, proposal_event_id, response["response_operation"], actor_id, dispute_basis))
+            self.db.commit()
+            return {"status": status, "reason": failure, "duplicate": False}
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def resolve_correction_dispute(self, *, event_id: str, consignment_id: str, stage: str,
+                                    actor_id: str, rule_version: str, dispute_event_id: str,
+                                    disposition: str, disposition_basis: str) -> dict[str, Any]:
+        """Record an appeal disposition without directly changing the institutional result."""
+        if stage not in {"ORIGIN", "DESTINATION"}:
+            raise ValueError("UNKNOWN_STAGE")
+        if disposition not in {"UPHOLD_REFUSAL", "REMAND_FOR_RECONSIDERATION"}:
+            raise ValueError("UNKNOWN_APPEAL_DISPOSITION")
+        vals = (event_id, consignment_id, actor_id, rule_version, dispute_event_id, disposition, disposition_basis)
+        if any(not isinstance(v, str) or not v for v in vals):
+            raise ValueError("INVALID_FIELD")
+        digest = self._hash({"event_id": event_id, "consignment_id": consignment_id, "stage": stage,
+            "actor_id": actor_id, "rule_version": rule_version, "dispute_event_id": dispute_event_id,
+            "disposition": disposition, "disposition_basis": disposition_basis})
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            old = self.db.execute("SELECT * FROM workflow_operations WHERE operation_key=?", (event_id,)).fetchone()
+            if old:
+                if old["payload_hash"] != digest:
+                    raise ValueError("OPERATION_ID_CONFLICT")
+                self.db.commit()
+                return {"status": old["result_status"], "reason": old["rejection_code"], "duplicate": True}
+            authority = self.db.execute("SELECT * FROM appeal_authorities WHERE case_key=?", (consignment_id,)).fetchone()
+            dispute = self.db.execute("SELECT * FROM correction_disputes WHERE dispute_operation=?", (dispute_event_id,)).fetchone()
+            proposal = self.db.execute("SELECT * FROM correction_proposals WHERE proposal_operation=? AND case_key=? AND step_key=?",
+                (dispute["proposal_operation"], consignment_id, stage)).fetchone() if dispute else None
+            failure = None
+            if authority is None: failure = "APPEAL_AUTHORITY_NOT_CONFIGURED"
+            elif actor_id != authority["designated_actor"]: failure = "APPEAL_AUTHORITY_MISMATCH"
+            elif not authority["enabled"]: failure = "APPEAL_AUTHORITY_REVOKED"
+            elif rule_version != authority["active_rule"]: failure = "RULE_VERSION_MISMATCH"
+            elif dispute is None or proposal is None: failure = "DISPUTE_NOT_FOUND"
+            elif self.db.execute("SELECT 1 FROM appeal_dispositions WHERE dispute_operation=?", (dispute_event_id,)).fetchone():
+                failure = "DISPUTE_ALREADY_RESOLVED"
+            status = "REJECTED" if failure else "ACCEPTED"
+            self.db.execute("INSERT INTO workflow_operations(operation_key, case_key, step_key, payload_hash, actor, requested_result, result_status, rejection_code) VALUES (?,?,?,?,?,?,?,?)",
+                (event_id, consignment_id, stage, digest, actor_id, disposition, status, failure))
+            if not failure:
+                self.db.execute("INSERT INTO appeal_dispositions VALUES (?,?,?,?,?,?,?)",
+                    (event_id, dispute_event_id, dispute["proposal_operation"], dispute["refusal_operation"],
+                     actor_id, disposition, disposition_basis))
             self.db.commit()
             return {"status": status, "reason": failure, "duplicate": False}
         except Exception:
