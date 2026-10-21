@@ -4,7 +4,11 @@
 
 ## 1. Architectural model
 
-KIN-SYS is a protocol spanning independently operated nodes and institutional domains. It is not synonymous with a frontend, backend service, blockchain, AI model, or edge appliance.
+KIN-SYS is a coordinated protocol architecture and ecosystem spanning independently operated nodes, institutions, economic actors, and physical infrastructure. It is not synonymous with a frontend, backend service, blockchain, AI model, execution runtime, or edge appliance.
+
+**System-level research rule:** KIN-SYS must be evaluated as an integrated whole. CEE and IVM address the execution environment and execution semantics that can enable the protocol to run; they do not, by themselves, constitute the complete KIN-SYS system. MINAH AI, $KIN, Nexus Pods, identity and authority, governance, privacy mechanisms, institutional actors, and external interfaces are complementary parts whose interactions must be specified and tested together. Component-level experiments remain necessary, but they are not sufficient to establish system-level feasibility or value.
+
+This framing follows the original coordination problem raised in the FITSPA discussion about an African Single Digital Market: government, private sector, and development partners may each have distinct mandates, yet a functioning cross-sector market also needs a way to coordinate actions, authority, rules, resources, evidence, and remedies across those mandates. KIN-SYS is being investigated as a possible system-level response to that coordination problem—not as a claim that the market problem is already solved.
 
 The logical architecture separates:
 
@@ -54,12 +58,25 @@ MINAH AI is a proposed assistance layer, not an independent root of authority. I
 
 $KIN is a proposed economic component whose function and rules remain unresolved in this foundation. Before implementation, define any relationship to fees, incentives, governance, access, or settlement, along with issuance, custody, accounting, duplicate protection, disputes, and failure behaviour. A token does not by itself establish legal title.
 
-## 7. Research interfaces
+## 7. Integrated system roles and research interfaces
 
-- **IVM:** potential source of transition semantics, authority/rule evaluation, commitment/history handling, and recovery evidence. Integration requires a stable conformance contract and explicit limits.
-- **CRS / CISA / CEE:** research artifacts whose precise protocol roles and interfaces must be traced to source specifications before adoption.
+These roles describe the intended division of responsibility, not proof that each component is implemented or that the interfaces are settled.
+
+- **KIN-SYS protocol architecture:** coordinates the actors, rules, authority, messages, transitions, evidence, governance and inter-domain interactions that give the wider system its behaviour.
+- **CEE and IVM:** execution-enabling research and runtime layers. CEE defines an operational execution environment and lifecycle; IVM defines an abstract execution architecture. They must be mapped to the protocol contract, but neither should be treated as the whole KIN-SYS system.
+- **MINAH AI:** proposed cognitive/assistance layer for interpretation, analysis or recommendations under bounded permissions. Its outputs must enter the governed protocol flow; it must not silently replace institutional authority or deterministic validation.
+- **$KIN:** proposed economic/accounting component. Its role—if any—in fees, incentives, access, governance or settlement must be evaluated together with institutional rules, accounting, duplicate-effect protection, legal context and dispute handling. Its utility or necessity is not assumed.
+- **Nexus Pods:** proposed physical edge deployment form. Research must connect hardware, connectivity, local execution, key custody, data handling, offline limits, synchronisation and operational governance to the protocol's actual requirements. The existence of the concept is not evidence of deployed infrastructure.
+- **Identity, authority, governance, privacy, external facts and institutional participation:** cross-cutting capabilities and accountable actors. These determine who can act, what can be disclosed, which rules apply, how real-world claims are established, and how decisions are challenged or reversed.
+- **CRS / CISA / CEE / IVM:** distinct research artifacts whose source versions, requirements and interfaces must be traced. Do not collapse their names or treat them as interchangeable.
 - **Kagoro DSL:** independent language/compiler project, not a required KIN-SYS component. Any future integration must be optional and use a stable, implementation-independent interface.
 
-## 8. Deployment profiles
+## 8. System-level research method
+
+Research must preserve both component-level falsifiability and system-level integration. For each important use case, identify the participating institutions and actors; the role of the protocol; the required CEE/IVM execution behaviour; whether and how MINAH AI participates; whether $KIN has a necessary, justified economic role; what the Nexus Pod/edge deployment must provide; the identity, authority, governance and privacy controls; and the observable evidence of success or failure.
+
+Evaluate at least three questions separately: (1) does each component work within its declared scope; (2) do the interfaces and failure semantics work when components interact; and (3) does the integrated system solve a real coordination problem better than simpler institutional or technical alternatives? A component's success must not be presented as proof of the whole system. A component may also prove unnecessary for a particular use case; integrated research must be allowed to discover that.
+
+## 9. Deployment profiles
 
 Define separate profiles for a single-operator laboratory, institution-operated node, intermittently connected edge node, multi-institution coordination, and high-assurance/regulated deployment. Each profile must state assumptions, supported guarantees, and conformance tests.
