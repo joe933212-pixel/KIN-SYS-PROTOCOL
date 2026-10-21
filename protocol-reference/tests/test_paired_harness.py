@@ -15,6 +15,7 @@ class PairedHarnessTests(unittest.TestCase):
             "wrong-authority",
             "rule-version-mismatch",
             "precommit-failure",
+            "concurrent-identical",
         ):
             with self.subTest(scenario=scenario):
                 comparison = compare_scenario(scenario)
@@ -34,7 +35,16 @@ class PairedHarnessTests(unittest.TestCase):
     def test_run_all_scenarios_reports_equivalence(self):
         report = run_all_scenarios()
         self.assertTrue(report["all_equivalent_on_observed_fields"])
-        self.assertEqual(len(report["comparisons"]), 6)
+        self.assertEqual(len(report["comparisons"]), 7)
+
+    def test_concurrent_identical_requests_match(self):
+        comparison = compare_scenario("concurrent-identical")
+        self.assertTrue(comparison["equivalent_on_observed_fields"], comparison["differences"])
+        result = comparison["results"]["kin_sys"]
+        self.assertEqual(result["accepted_count"], 2)
+        self.assertEqual(result["duplicate_count"], 1)
+        self.assertEqual(result["version"], 1)
+        self.assertEqual(result["history_count"], 1)
 
     def test_unknown_scenario_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "UNKNOWN_SCENARIO"):
