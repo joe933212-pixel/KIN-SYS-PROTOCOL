@@ -12,17 +12,18 @@ The first conformance slice is deliberately local and single-process. It is not 
 
 The current source record supports the following limited mapping:
 
-- **CRS:** a source document exists at `ivm-research/specifications/crs/CRS_Draft_2026-08-06.docx`. It has not yet been text-verified in this protocol workstream, so no detailed CRS semantics are asserted here.
+- **CRS:** the public IVM archive includes `specifications/crs/CRS_Draft_2026-08-06.docx`; the user's Library also contains a fuller `CRS.docx` draft with extractable text. The exact relationship/version lineage between these copies must be reconciled before treating them as identical.
 - **CISA Draft 0.1:** the extracted source defines deterministic transitions, actor/authority checks, deterministic side-effect-free rules, immutable events, explicit transitions, and a prescribed execution order. The original DOCX remains authoritative over the machine-extracted Markdown.
-- **IVM:** the available specification artefact is front matter for IVM 1.0 Draft, identifying IVM as the execution architecture responsible for implementing CISA. The complete IVM 1.0 specification is not present in the source archive.
-- **CEE:** the CISA document is labelled as part of a CEE volume and describes CEE as the runtime, but a separate complete CEE specification was not located in the source tree inspected. Do not infer missing CEE requirements.
+- **IVM:** the public IVM archive inspected earlier includes front matter only, but the user's Library contains a full IVM 1.0 Draft. The complete document must be used to reconcile the exact execution semantics; the public archive's front matter alone is insufficient.
+- **CEE:** a full 335-page CEE 1.0 Draft is available in the user's Library. It defines the operational environment and a lifecycle `REQUESTED → ADMITTED → CONTEXT_ESTABLISHED → AUTHORITY_EVALUATED → EXECUTING → PREPARED → COMMITTING → COMMITTED → FINALIZED`. The public IVM archive inspected earlier does not contain this full CEE document, so the contract must be reconciled against the Library source before being considered settled.
 - **IVM runtime experiments:** the v0.3/v0.4 artifacts document a local State/History commitment gap and a recovery-oriented journal with phases `PREPARED → STATE_COMMITTED → HISTORY_ATTACHED → FINALIZED`. Experiment 004A reports process-death recovery under its documented test conditions.
+- **Prior-art analysis:** the complete 75-page literature analysis is available in the user's Library and continues beyond Section 53 through the comparative experimental programme. The public repository's literature package notes the continuation point at Section 54 because that full document was not imported there.
 - **Experiment 005:** the available conventional deterministic state-machine comparator passes five tests for its current semantic contract. This is evidence against assuming that the abstraction is inherently unique or that conventional implementations cannot satisfy it.
 
 Source repository: https://github.com/joe933212-pixel/ivm-research  
 Published IVM research record: https://doi.org/10.5281/zenodo.22011725
 
-This contract is a KIN-SYS research proposal informed by these sources. It is not a replacement for the source specifications and does not retroactively make the experiments KIN-SYS implementations.
+This contract is a KIN-SYS research proposal informed by these sources. It is not a replacement for the source specifications and does not retroactively make the experiments KIN-SYS implementations. The local prototype below covers only a narrow subset of the CEE lifecycle and is not a CEE implementation.
 
 ## 3. Operation model
 
