@@ -1,3 +1,4 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Local reference implementation for the KIN-SYS transition contract.
 
 Research prototype only. This module is not a network protocol or a
