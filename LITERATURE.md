@@ -1,3 +1,5 @@
+> **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
+
 # Literature and Prior-Art Map
 
 **Purpose:** Preserve the agreed research lineage and prior-art comparison set, and map each source to a question KIN-SYS must answer. Listing a source does not imply endorsement, novelty, or proof of a KIN-SYS property.
