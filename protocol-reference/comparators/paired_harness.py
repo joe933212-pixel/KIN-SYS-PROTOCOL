@@ -9,6 +9,8 @@ import json
 import os
 import sys
 import tempfile
+import concurrent.futures
+import threading
 from typing import Any, Callable
 
 from transition import EventIdConflict, ProtocolStore
@@ -29,9 +31,10 @@ def _request(**overrides: Any) -> dict[str, str]:
 
 
 class _KinAdapter:
-    def __init__(self, database: str):
+    def __init__(self, database: str, *, initialize: bool = True):
         self.store = ProtocolStore(database=database)
-        self.store.create_process(process_id="P-001")
+        if initialize:
+            self.store.create_process(process_id="P-001")
 
     def execute(self, request: dict[str, str], *, fail_before_commit: bool = False):
         result = self.store.execute(request, fail_before_commit=fail_before_commit)
@@ -61,9 +64,10 @@ class _KinAdapter:
 
 
 class _ConventionalAdapter:
-    def __init__(self, database: str):
+    def __init__(self, database: str, *, initialize: bool = True):
         self.store = ConventionalSQLiteBaseline(database=database)
-        self.store.create_object("P-001")
+        if initialize:
+            self.store.create_object("P-001")
 
     def execute(self, request: dict[str, str], *, fail_before_commit: bool = False):
         result = self.store.execute(request, fail_before_commit=fail_before_commit)
@@ -102,7 +106,7 @@ def run_scenario(implementation: str, scenario: str) -> dict[str, Any]:
         raise ValueError(f"UNKNOWN_IMPLEMENTATION:{implementation}")
     if scenario not in {
         "accepted", "duplicate", "conflicting-id", "wrong-authority",
-        "rule-version-mismatch", "precommit-failure",
+        "rule-version-mismatch", "precommit-failure", "concurrent-identical",
     }:
         raise ValueError(f"UNKNOWN_SCENARIO:{scenario}")
 
@@ -126,6 +130,32 @@ def run_scenario(implementation: str, scenario: str) -> dict[str, Any]:
                 outcome = adapter.execute(_request(actor_id="OTHER-ACTOR"))
             elif scenario == "rule-version-mismatch":
                 outcome = adapter.execute(_request(rule_version="0.9"))
+            elif scenario == "concurrent-identical":
+                adapter.close()
+                barrier = threading.Barrier(2)
+
+                def submit():
+                    worker = ADAPTERS[implementation](database, initialize=False)
+                    try:
+                        barrier.wait(timeout=5)
+                        result = worker.execute(request)
+                        return {
+                            "status": result.status if hasattr(result, "status") else result["status"],
+                            "duplicate": result.duplicate if hasattr(result, "duplicate") else result["duplicate"],
+                        }
+                    finally:
+                        worker.close()
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    concurrent_results = list(pool.map(lambda _: submit(), range(2)))
+                outcome = {
+                    "status": "ACCEPTED" if all(item["status"] == "ACCEPTED" for item in concurrent_results) else "DIVERGENT",
+                    "reason": None,
+                    "duplicate": sum(bool(item["duplicate"]) for item in concurrent_results) == 1,
+                    "accepted_count": sum(item["status"] == "ACCEPTED" for item in concurrent_results),
+                    "duplicate_count": sum(bool(item["duplicate"]) for item in concurrent_results),
+                }
+                adapter = ADAPTERS[implementation](database, initialize=False)
             elif scenario == "precommit-failure":
                 try:
                     adapter.execute(request, fail_before_commit=True)
@@ -153,7 +183,7 @@ def compare_scenario(scenario: str) -> dict[str, Any]:
     """Return both normalized vectors and their externally visible differences."""
     left = run_scenario("kin-sys-sqlite", scenario)
     right = run_scenario("conventional-sqlite", scenario)
-    fields = ("status", "reason", "duplicate", "state", "version", "history_count", "event_outcome")
+    fields = ("status", "reason", "duplicate", "state", "version", "history_count", "event_outcome", "accepted_count", "duplicate_count")
     differences = {
         field: {"kin_sys": left[field], "conventional": right[field]}
         for field in fields if left[field] != right[field]
