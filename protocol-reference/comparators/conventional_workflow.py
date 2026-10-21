@@ -63,8 +63,16 @@ class ConventionalWorkflow:
                 replaces_operation TEXT NOT NULL,
                 reviewer TEXT NOT NULL,
                 rationale TEXT NOT NULL,
+                proposal_operation TEXT NOT NULL,
+                FOREIGN KEY(proposal_operation) REFERENCES workflow_operations(operation_key),
                 FOREIGN KEY(correction_key) REFERENCES workflow_operations(operation_key),
                 FOREIGN KEY(replaces_operation) REFERENCES workflow_operations(operation_key)
+            );
+            CREATE TABLE IF NOT EXISTS correction_proposals (
+                proposal_operation TEXT PRIMARY KEY, case_key TEXT NOT NULL, step_key TEXT NOT NULL,
+                reviewer TEXT NOT NULL, proposed_result TEXT NOT NULL, rule_id TEXT NOT NULL,
+                replaces_operation TEXT NOT NULL, rationale TEXT NOT NULL,
+                FOREIGN KEY(proposal_operation) REFERENCES workflow_operations(operation_key)
             );
         """)
         self.db.commit()
@@ -178,13 +186,13 @@ class ConventionalWorkflow:
     def correct_decision(self, *, event_id: str, consignment_id: str, stage: str,
                         actor_id: str, replacement_decision: str, rule_version: str,
                         supersedes_event_id: str, correction_basis: str) -> dict[str, Any]:
-        """Record a linked correction in the conventional audit model."""
+        """Submit a correction proposal without mutating institutional state."""
         if stage not in {"ORIGIN", "DESTINATION"}:
             raise ValueError("UNKNOWN_STAGE")
         if replacement_decision not in {"APPROVE", "REJECT"}:
             raise ValueError("UNKNOWN_DECISION")
-        values = (event_id, consignment_id, actor_id, rule_version, supersedes_event_id, correction_basis)
-        if any(not isinstance(v, str) or not v for v in values):
+        vals = (event_id, consignment_id, actor_id, rule_version, supersedes_event_id, correction_basis)
+        if any(not isinstance(v, str) or not v for v in vals):
             raise ValueError("INVALID_FIELD")
         request = {"event_id": event_id, "consignment_id": consignment_id, "stage": stage,
                    "actor_id": actor_id, "decision": replacement_decision, "rule_version": rule_version,
@@ -192,16 +200,15 @@ class ConventionalWorkflow:
         digest = self._hash(request)
         self.db.execute("BEGIN IMMEDIATE")
         try:
-            prior = self.db.execute("SELECT * FROM workflow_operations WHERE operation_key=?", (event_id,)).fetchone()
-            if prior:
-                if prior["payload_hash"] != digest:
+            old = self.db.execute("SELECT * FROM workflow_operations WHERE operation_key=?", (event_id,)).fetchone()
+            if old:
+                if old["payload_hash"] != digest:
                     raise ValueError("OPERATION_ID_CONFLICT")
                 self.db.commit()
-                return {"status": prior["result_status"], "reason": prior["rejection_code"], "duplicate": True}
+                return {"status": old["result_status"], "reason": old["rejection_code"], "duplicate": True}
             case = self.db.execute("SELECT correction_reviewer FROM workflow_cases WHERE case_key=?", (consignment_id,)).fetchone()
             step = self.db.execute("SELECT * FROM institutional_steps WHERE case_key=? AND step_key=?", (consignment_id, stage)).fetchone()
-            original = self.db.execute("SELECT * FROM workflow_audit WHERE operation_key=? AND case_key=? AND step_key=?",
-                                       (supersedes_event_id, consignment_id, stage)).fetchone()
+            original = self.db.execute("SELECT * FROM workflow_audit WHERE operation_key=? AND case_key=? AND step_key=?", (supersedes_event_id, consignment_id, stage)).fetchone()
             if case is None or step is None:
                 raise KeyError("CASE_OR_STAGE_NOT_FOUND")
             failure = None
@@ -217,18 +224,68 @@ class ConventionalWorkflow:
                 failure = "CORRECTION_HAS_NO_EFFECT"
             status = "REJECTED" if failure else "ACCEPTED"
             self.db.execute("INSERT INTO workflow_operations(operation_key, case_key, step_key, payload_hash, actor, requested_result, result_status, rejection_code) VALUES (?,?,?,?,?,?,?,?)",
-                            (event_id, consignment_id, stage, digest, actor_id, replacement_decision, status, failure))
+                (event_id, consignment_id, stage, digest, actor_id, replacement_decision, status, failure))
+            if not failure:
+                self.db.execute("INSERT INTO correction_proposals(proposal_operation, case_key, step_key, reviewer, proposed_result, rule_id, replaces_operation, rationale) VALUES (?,?,?,?,?,?,?,?)",
+                    (event_id, consignment_id, stage, actor_id, replacement_decision, rule_version, supersedes_event_id, correction_basis))
+            self.db.commit()
+            return {"status": status, "reason": failure, "duplicate": False}
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def authorize_correction(self, *, event_id: str, consignment_id: str, stage: str,
+                             actor_id: str, rule_version: str, proposal_event_id: str) -> dict[str, Any]:
+        """Apply a proposal only when the institution's own active authority agrees."""
+        vals = (event_id, consignment_id, stage, actor_id, rule_version, proposal_event_id)
+        if any(not isinstance(v, str) or not v for v in vals):
+            raise ValueError("INVALID_FIELD")
+        if stage not in {"ORIGIN", "DESTINATION"}:
+            raise ValueError("UNKNOWN_STAGE")
+        digest = self._hash({"event_id": event_id, "consignment_id": consignment_id,
+            "stage": stage, "actor_id": actor_id, "rule_version": rule_version,
+            "proposal_event_id": proposal_event_id})
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            old = self.db.execute("SELECT * FROM workflow_operations WHERE operation_key=?", (event_id,)).fetchone()
+            if old:
+                if old["payload_hash"] != digest:
+                    raise ValueError("OPERATION_ID_CONFLICT")
+                self.db.commit()
+                return {"status": old["result_status"], "reason": old["rejection_code"], "duplicate": True}
+            step = self.db.execute("SELECT * FROM institutional_steps WHERE case_key=? AND step_key=?", (consignment_id, stage)).fetchone()
+            proposal = self.db.execute("SELECT * FROM correction_proposals WHERE proposal_operation=? AND case_key=? AND step_key=?", (proposal_event_id, consignment_id, stage)).fetchone()
+            if step is None:
+                raise KeyError("CASE_OR_STAGE_NOT_FOUND")
+            failure = None
+            if actor_id != step["mandated_actor"]:
+                failure = "AUTHORITY_MISMATCH"
+            elif not step["enabled"]:
+                failure = "AUTHORITY_REVOKED"
+            elif rule_version != step["active_rule"]:
+                failure = "RULE_VERSION_MISMATCH"
+            elif proposal is None:
+                failure = "CORRECTION_PROPOSAL_NOT_FOUND"
+            elif proposal["rule_id"] != rule_version:
+                failure = "RULE_VERSION_MISMATCH"
+            else:
+                original = self.db.execute("SELECT result_after FROM workflow_audit WHERE operation_key=? AND case_key=? AND step_key=?", (proposal["replaces_operation"], consignment_id, stage)).fetchone()
+                if original is None or step["result"] != original["result_after"]:
+                    failure = "DECISION_NO_LONGER_CURRENT"
+            status = "REJECTED" if failure else "ACCEPTED"
+            self.db.execute("INSERT INTO workflow_operations(operation_key, case_key, step_key, payload_hash, actor, requested_result, result_status, rejection_code) VALUES (?,?,?,?,?,?,?,?)",
+                (event_id, consignment_id, stage, digest, actor_id, proposal["proposed_result"] if proposal else "CORRECTION", status, failure))
             if failure:
                 self.db.commit()
                 return {"status": status, "reason": failure, "duplicate": False}
-            self.db.execute("INSERT INTO correction_log(correction_key, replaces_operation, reviewer, rationale) VALUES (?,?,?,?)",
-                            (event_id, supersedes_event_id, actor_id, correction_basis))
+            self.db.execute("INSERT INTO correction_log(correction_key, replaces_operation, reviewer, rationale, proposal_operation) VALUES (?,?,?,?,?)",
+                (event_id, proposal["replaces_operation"], actor_id, proposal["rationale"], proposal_event_id))
             changed = self.db.execute("UPDATE institutional_steps SET result=?, revision=revision+1 WHERE case_key=? AND step_key=? AND result=?",
-                                      (replacement_decision, consignment_id, stage, step["result"])).rowcount
+                (proposal["proposed_result"], consignment_id, stage, step["result"])).rowcount
             if changed != 1:
                 raise RuntimeError("CONCURRENT_STEP_CHANGE")
             self.db.execute("INSERT INTO workflow_audit(operation_key, case_key, step_key, decided_by, mandated_actor, rule_id, result_before, result_after) VALUES (?,?,?,?,?,?,?,?)",
-                            (event_id, consignment_id, stage, actor_id, actor_id, rule_version, step["result"], replacement_decision))
+                (event_id, consignment_id, stage, actor_id, step["mandated_actor"], rule_version, step["result"], proposal["proposed_result"]))
             self.db.commit()
             return {"status": status, "reason": None, "duplicate": False}
         except Exception:
