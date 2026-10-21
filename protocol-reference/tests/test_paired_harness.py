@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from comparators.paired_harness import compare_scenario, run_scenario
+from comparators.paired_harness import compare_scenario, run_all_scenarios, run_scenario
 
 
 class PairedHarnessTests(unittest.TestCase):
@@ -30,6 +30,11 @@ class PairedHarnessTests(unittest.TestCase):
         self.assertEqual(result["version"], 1)
         self.assertEqual(result["history_count"], 1)
         self.assertEqual(result["event_outcome"], "ACCEPTED")
+
+    def test_run_all_scenarios_reports_equivalence(self):
+        report = run_all_scenarios()
+        self.assertTrue(report["all_equivalent_on_observed_fields"])
+        self.assertEqual(len(report["comparisons"]), 6)
 
     def test_unknown_scenario_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "UNKNOWN_SCENARIO"):
