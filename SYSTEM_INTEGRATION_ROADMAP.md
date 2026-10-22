@@ -186,10 +186,12 @@ Invite institutions, implementers, security reviewers, and researchers to challe
 
 ## 11. Immediate engineering work
 
-The next implementation step is not another isolated component enhancement. It is to audit the current `integrated_demo.py` against this whole-system contract and refactor the demonstrator so that:
+The first alignment step is now committed: `protocol-reference/system_model.py` inventories 19 logical responsibilities with explicit status/dependencies/limitations, both central and disconnected-edge outputs expose that inventory, and the demonstrator emits a validated case-linked trace for selected components. The trace validator checks structure and case linkage only; the trace is not persisted, distributed, or independently verified. The 116-test suite passes in [run 39753822785](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39753822785).
+
+The next implementation step is to audit the current `integrated_demo.py` against this whole-system contract and refactor the demonstrator so that:
 - each logical component has a typed/versioned adapter boundary, even when backed by a mock;
 - the orchestration layer depends only on contract responses;
-- all major components appear in a machine-readable system trace with status, provenance, versions and limitations;
+- all major components appear in a machine-readable system trace with status, provenance, versions and limitations; (a first partial trace exists; broaden and validate it as contracts mature)
 - missing, stale, contradictory or unavailable component responses propagate to a defined case outcome;
 - cross-component invariants are exercised in the same tests;
 - the conventional baseline is compared on the same external contract and observable outcomes.
