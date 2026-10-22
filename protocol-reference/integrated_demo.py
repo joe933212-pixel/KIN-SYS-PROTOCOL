@@ -218,11 +218,35 @@ class IntegratedDemonstrator:
                 "duplicate": False,
             }
         destination = self.workflow.stage(consignment_id, "DESTINATION")
+        # A replayed historical operation may still report ACCEPTED after its
+        # authority has been revoked or its rule version has changed. Downstream
+        # obligations require current authority/rule state plus matching approval
+        # history, not merely the original operation's idempotent replay result.
+        history = self.workflow.history(consignment_id)
+
+        def current_approval_is_valid(stage_name: str, stage_state: dict[str, Any]) -> bool:
+            matching_history = [
+                event for event in history
+                if event["stage"] == stage_name
+                and event["new_outcome"] == "APPROVE"
+                and event["rule_version"] == DEMO_RULE_VERSION
+                and event["authority_id"] == stage_state["authority_id"]
+                and event["actor_id"] == stage_state["authority_id"]
+            ]
+            return (
+                stage_state["authority_active"] == 1
+                and stage_state["rule_version"] == DEMO_RULE_VERSION
+                and stage_state["outcome"] == "APPROVE"
+                and bool(matching_history)
+            )
+
+        origin_currently_valid = current_approval_is_valid("ORIGIN", origin)
+        destination_currently_valid = current_approval_is_valid("DESTINATION", destination)
         institutions_approved = (
             origin_result["status"] == "ACCEPTED"
             and destination_result["status"] == "ACCEPTED"
-            and origin.get("outcome") == "APPROVE"
-            and destination.get("outcome") == "APPROVE"
+            and origin_currently_valid
+            and destination_currently_valid
         )
         tax = self.tax_rules.assess(declared_value_ugx, exempt=exempt) if institutions_approved else None
         payment = None
