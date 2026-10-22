@@ -56,6 +56,32 @@ class PaymentLifecycleTests(unittest.TestCase):
             )
         self.assertNotEqual(self.payments.get_payment("PAY-1")["status"], "SETTLED")
 
+    def test_settlement_rejects_payment_relinked_to_another_obligation(self):
+        self.payments.create_obligation("OBL-OTHER", 50000, "UGX", "OTHER-ASSESSMENT")
+        self.payments.db.execute(
+            "UPDATE payments SET obligation_id='OBL-OTHER' WHERE payment_id='PAY-1'"
+        )
+        self.payments.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "PAYMENT_RECORD_INTEGRITY_MISMATCH"):
+            self.payments.record_settlement(
+                "PAY-1", "EV-SETTLE-RELINKED", "SET-RELINKED",
+                amount_minor=50000, currency="UGX",
+            )
+        self.assertNotEqual(self.payments.get_payment("PAY-1")["status"], "SETTLED")
+        self.assertNotIn(
+            "EV-SETTLE-RELINKED",
+            [event["event_id"] for event in self.payments.history("PAY-1")],
+        )
+        original = self.payments.db.execute(
+            "SELECT status FROM obligations WHERE obligation_id='OBL-1'"
+        ).fetchone()
+        alternate = self.payments.db.execute(
+            "SELECT status FROM obligations WHERE obligation_id='OBL-OTHER'"
+        ).fetchone()
+        self.assertEqual(original["status"], "PAYMENT_INSTRUCTED")
+        self.assertEqual(alternate["status"], "RECORDED")
+
     def test_settlement_rejects_obligation_record_changed_after_instruction(self):
         # Simulate stored-record corruption or an inconsistent downstream update.
         self.payments.db.execute(
