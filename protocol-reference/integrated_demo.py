@@ -13,6 +13,7 @@ from workflows.institutional_workflow import InstitutionalWorkflow
 from payment_lifecycle import PaymentLifecycle
 from edge_queue import EdgeOperationQueue
 from system_model import make_trace_event, system_manifest, validate_system_trace
+from component_contracts import accepted_data, make_component_response, validate_component_response
 
 
 DEMO_RULE_VERSION = "UG-SYNTHETIC-1.0"
@@ -139,7 +140,21 @@ class IntegratedDemonstrator:
         destination_rule_version_override: str | None = None,
     ) -> dict[str, Any]:
         trace: list[dict[str, Any]] = []
-        if not self.identity.permits("EXPORTER-TEST", "SUBMIT_CONSIGNMENT"):
+        component_responses: list[dict[str, Any]] = []
+        identity_operation_id = f"{consignment_id}:IDENTITY:SUBMIT:1"
+        identity_raw = make_component_response(
+            component_id="identity_authority",
+            operation_id=identity_operation_id,
+            component_version="synthetic-identity-gate-0.1",
+            status="ACCEPTED",
+            data={"permitted": self.identity.permits("EXPORTER-TEST", "SUBMIT_CONSIGNMENT")},
+        )
+        identity_response = validate_component_response(
+            identity_raw, expected_component_id="identity_authority",
+            expected_operation_id=identity_operation_id,
+        )
+        component_responses.append(identity_response)
+        if not accepted_data(identity_response)["permitted"]:
             raise PermissionError("EXPORTER_NOT_AUTHORISED")
         trace.append(make_trace_event(
             case_id=consignment_id,
@@ -157,7 +172,20 @@ class IntegratedDemonstrator:
             "destination": "BORDER-DEMO",
             "rule_refs": ["SYNTHETIC-RULE-PACK-1"],
         }
-        advisory = self.minah.review(evidence)
+        minah_operation_id = f"{consignment_id}:MINAH:REVIEW:1"
+        minah_raw = make_component_response(
+            component_id="minah_ai",
+            operation_id=minah_operation_id,
+            component_version=self.minah.version,
+            status="ACCEPTED",
+            data=self.minah.review(evidence),
+        )
+        minah_response = validate_component_response(
+            minah_raw, expected_component_id="minah_ai",
+            expected_operation_id=minah_operation_id,
+        )
+        component_responses.append(minah_response)
+        advisory = accepted_data(minah_response)
         trace.append(make_trace_event(
             case_id=consignment_id,
             operation_id=f"{consignment_id}:MINAH:REVIEW:1",
@@ -224,6 +252,7 @@ class IntegratedDemonstrator:
                 "system_model": system_manifest(),
                 "system_trace": trace,
                 "system_trace_valid": validate_system_trace(trace, case_id=consignment_id),
+                "component_responses": component_responses,
                 "status": "PENDING",
                 "reason": (
                     "READY_FOR_CENTRAL_REVIEW_NOT_INSTITUTIONAL_APPROVAL"
@@ -318,7 +347,22 @@ class IntegratedDemonstrator:
             and origin_currently_valid
             and destination_currently_valid
         )
-        tax = self.tax_rules.assess(declared_value_ugx, exempt=exempt) if institutions_approved else None
+        tax = None
+        if institutions_approved:
+            tax_operation_id = f"{consignment_id}:TAX:ASSESS:1"
+            tax_raw = make_component_response(
+                component_id="rules_and_statutory_policy",
+                operation_id=tax_operation_id,
+                component_version=self.tax_rules.version,
+                status="ACCEPTED",
+                data=self.tax_rules.assess(declared_value_ugx, exempt=exempt),
+            )
+            tax_response = validate_component_response(
+                tax_raw, expected_component_id="rules_and_statutory_policy",
+                expected_operation_id=tax_operation_id,
+            )
+            component_responses.append(tax_response)
+            tax = accepted_data(tax_response)
         trace.append(make_trace_event(
             case_id=consignment_id,
             operation_id=f"{consignment_id}:TAX:ASSESS:1",
@@ -339,7 +383,20 @@ class IntegratedDemonstrator:
                 obligation_id, amount, "UGX", f"{consignment_id}:SYNTHETIC-ASSESSMENT:1"
             )
             instruction = self.payment_lifecycle.create_instruction(payment_id, obligation_id)
-            payment = self.payment.submit(payment_id, amount, outcome=payment_outcome)
+            payment_operation_id = f"{consignment_id}:PAYMENT:SUBMIT:1"
+            payment_raw = make_component_response(
+                component_id="external_adapters",
+                operation_id=payment_operation_id,
+                component_version="simulated-payment-provider-0.1",
+                status="ACCEPTED",
+                data=self.payment.submit(payment_id, amount, outcome=payment_outcome),
+            )
+            payment_response = validate_component_response(
+                payment_raw, expected_component_id="external_adapters",
+                expected_operation_id=payment_operation_id,
+            )
+            component_responses.append(payment_response)
+            payment = accepted_data(payment_response)
             ack = {
                 "CONFIRMED": "ACCEPTED",
                 "DECLINED": "DECLINED",
@@ -443,6 +500,7 @@ class IntegratedDemonstrator:
             "system_model": system_manifest(),
             "system_trace": trace,
             "system_trace_valid": validate_system_trace(trace, case_id=consignment_id),
+            "component_responses": component_responses,
             "status": final_status,
             "identity_mode": "SYNTHETIC_TEST_IDENTITIES",
             "minah_advisory": advisory,
