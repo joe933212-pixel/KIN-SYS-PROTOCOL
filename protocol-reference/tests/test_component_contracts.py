@@ -64,6 +64,15 @@ class ComponentResponseContractTests(unittest.TestCase):
                 expected_operation_id="CASE-1:MINAH:REVIEW:1",
             )
 
+    def test_non_string_status_is_rejected_as_contract_violation(self):
+        response = self.make_response()
+        response["status"] = ["ACCEPTED"]
+        with self.assertRaisesRegex(ContractViolation, "INVALID_COMPONENT_RESPONSE_STATUS"):
+            validate_component_response(
+                response, expected_component_id="minah_ai",
+                expected_operation_id="CASE-1:MINAH:REVIEW:1",
+            )
+
     def test_nonaccepted_response_requires_failure_code_and_cannot_be_consumed_as_success(self):
         response = self.make_response(
             status="DEFERRED", data=None, failure_code="SOURCE_UNAVAILABLE"
