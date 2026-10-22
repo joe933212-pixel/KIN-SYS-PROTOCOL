@@ -69,6 +69,7 @@ def _normalise_candidate(result: dict[str, Any]) -> dict[str, Any]:
         "obligation_amount_minor": tax["assessed_amount_ugx"] if tax else None,
         "payment_status": payment.get("status") if payment else None,
         "payment_lifecycle_status": lifecycle.get("status") if lifecycle else None,
+        "edge_queue_status": (result.get("edge_queue") or {}).get("status"),
         "minah_may_authorise": result["minah_advisory"]["may_authorise"],
         "funds_moved": bool((payment or {}).get("funds_moved", False) or (lifecycle or {}).get("funds_moved", False)),
     }
@@ -85,7 +86,8 @@ def _conventional(scenario: str) -> dict[str, Any]:
                 "origin_reason": None, "destination_result": None,
                 "destination_operation_status": None, "destination_reason": None,
                 "obligation_amount_minor": None, "payment_status": None,
-                "payment_lifecycle_status": None, "minah_may_authorise": False, "funds_moved": False,
+                "payment_lifecycle_status": None, "edge_queue_status": "QUEUED_OFFLINE",
+                "minah_may_authorise": False, "funds_moved": False,
             }
 
         origin_rule = "SYNTHETIC-OLD-RULE" if scenario == "origin_rule_drift" else DEMO_RULE_VERSION
@@ -177,6 +179,7 @@ def _conventional(scenario: str) -> dict[str, Any]:
             "obligation_amount_minor": tax["amount"] if tax else None,
             "payment_status": payment["status"] if payment else None,
             "payment_lifecycle_status": lifecycle_status,
+            "edge_queue_status": None,
             "minah_may_authorise": False,
             "funds_moved": False,
         }
