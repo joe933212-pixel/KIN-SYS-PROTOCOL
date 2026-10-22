@@ -305,15 +305,12 @@ class IntegratedDemonstrator:
                 "funds_moved": False,
             }
 
-        if (
-            origin_result["status"] == "REJECTED"
-            or destination_result["status"] == "REJECTED"
-            or not origin_currently_valid
-            or not destination_currently_valid
-        ):
+        if origin_result["status"] == "REJECTED" or destination_result["status"] == "REJECTED":
             final_status = "REJECTED_AUTHORITY_ACTION_INVALID"
         elif origin.get("outcome") == "REJECT" or destination.get("outcome") == "REJECT":
             final_status = "INSTITUTIONAL_DECISION_REJECTED"
+        elif not origin_currently_valid or not destination_currently_valid:
+            final_status = "REJECTED_AUTHORITY_ACTION_INVALID"
         elif not institutions_approved:
             final_status = "INSTITUTIONAL_DECISION_PENDING"
         elif payment and payment["status"] == "SIMULATED_CONFIRMED":
