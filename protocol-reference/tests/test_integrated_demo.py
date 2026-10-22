@@ -1,6 +1,9 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """End-to-end synthetic KIN-SYS demonstrator tests; no real services or funds."""
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -136,6 +139,65 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["statutory_obligation"]["assessed_amount_ugx"], 0)
         self.assertEqual(result["payment"]["status"], "NOT_REQUIRED_EXEMPT")
         self.assertEqual(result["payment_lifecycle"]["status"], "NOT_REQUIRED_EXEMPT")
+
+    def test_restart_after_obligation_commit_resumes_workflow_without_duplicate_effects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = str(Path(tmp) / "kin-sys-recovery")
+            script = r"""
+import os
+import sys
+from integrated_demo import IntegratedDemonstrator
+from payment_lifecycle import PaymentLifecycle
+original = PaymentLifecycle.create_instruction
+def crash_before_instruction(self, payment_id, obligation_id):
+    if payment_id.startswith("RECOVERY-CASE:"):
+        os._exit(82)
+    return original(self, payment_id, obligation_id)
+PaymentLifecycle.create_instruction = crash_before_instruction
+demo = IntegratedDemonstrator(database_prefix=sys.argv[1])
+demo.run_case(consignment_id="RECOVERY-CASE")
+"""
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(ROOT)
+            child = subprocess.run(
+                [sys.executable, "-c", script, prefix],
+                env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(child.returncode, 82, child.stderr)
+
+            resumed = IntegratedDemonstrator(database_prefix=prefix)
+            self.addCleanup(resumed.close)
+            result = resumed.run_case(consignment_id="RECOVERY-CASE")
+
+            self.assertEqual(result["status"], "DEMO_READY_AFTER_SIMULATED_REMITTANCE")
+            self.assertEqual(result["institutional_decisions"]["origin"]["operation"]["status"], "ACCEPTED")
+            self.assertEqual(result["institutional_decisions"]["destination"]["operation"]["status"], "ACCEPTED")
+            self.assertEqual(result["payment_lifecycle"]["recorded_status"], "SETTLED")
+            self.assertFalse(result["payment_lifecycle"]["funds_moved"])
+            self.assertEqual(len(result["history"]), 2)
+            self.assertEqual(len(result["payment_lifecycle"]["history"]), 3)
+            obligations = resumed.payment_lifecycle.db.execute(
+                "SELECT COUNT(*) FROM obligations WHERE obligation_id='RECOVERY-CASE:OBL:TAX:1'"
+            ).fetchone()[0]
+            payments = resumed.payment_lifecycle.db.execute(
+                "SELECT COUNT(*) FROM payments WHERE obligation_id='RECOVERY-CASE:OBL:TAX:1'"
+            ).fetchone()[0]
+            self.assertEqual(obligations, 1)
+            self.assertEqual(payments, 1)
+
+    def test_reusing_consignment_id_with_different_authority_is_rejected(self):
+        from workflows.institutional_workflow import InstitutionalWorkflow, WorkflowConflict
+        workflow = InstitutionalWorkflow()
+        self.addCleanup(workflow.close)
+        workflow.create_case(
+            "CASE-CONFLICT", origin_authority="ORIGIN-A",
+            destination_authority="DESTINATION-B",
+        )
+        with self.assertRaisesRegex(WorkflowConflict, "CASE_ID_CONFLICT"):
+            workflow.create_case(
+                "CASE-CONFLICT", origin_authority="ORIGIN-CHANGED",
+                destination_authority="DESTINATION-B",
+            )
 
     def test_tax_calculator_rejects_negative_or_non_integer_amounts(self):
         rules = SyntheticTaxRules()
