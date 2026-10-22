@@ -12,7 +12,7 @@ from typing import Any
 from workflows.institutional_workflow import InstitutionalWorkflow
 from payment_lifecycle import PaymentLifecycle
 from edge_queue import EdgeOperationQueue
-from system_model import system_manifest
+from system_model import make_trace_event, system_manifest, validate_system_trace
 
 
 DEMO_RULE_VERSION = "UG-SYNTHETIC-1.0"
@@ -138,8 +138,18 @@ class IntegratedDemonstrator:
         origin_rule_version_override: str | None = None,
         destination_rule_version_override: str | None = None,
     ) -> dict[str, Any]:
+        trace: list[dict[str, Any]] = []
         if not self.identity.permits("EXPORTER-TEST", "SUBMIT_CONSIGNMENT"):
             raise PermissionError("EXPORTER_NOT_AUTHORISED")
+        trace.append(make_trace_event(
+            case_id=consignment_id,
+            operation_id=f"{consignment_id}:IDENTITY:SUBMIT:1",
+            component_id="identity_authority",
+            status="ACCEPTED",
+            mode="SYNTHETIC_IDENTITIES",
+            component_version="synthetic-identity-gate-0.1",
+            reason="SYNTHETIC_PRINCIPAL_PERMITTED",
+        ))
         evidence = minah_evidence or {
             "consignment_id": consignment_id,
             "commodity": "SYNTHETIC_MAIZE",
@@ -148,6 +158,16 @@ class IntegratedDemonstrator:
             "rule_refs": ["SYNTHETIC-RULE-PACK-1"],
         }
         advisory = self.minah.review(evidence)
+        trace.append(make_trace_event(
+            case_id=consignment_id,
+            operation_id=f"{consignment_id}:MINAH:REVIEW:1",
+            component_id="minah_ai",
+            status=advisory["status"],
+            mode="DETERMINISTIC_MOCK",
+            component_version=advisory["model_version"],
+            evidence_refs=advisory["source_refs"],
+            reason="ADVISORY_ONLY_NO_AUTHORITY",
+        ))
         self.workflow.create_case(
             consignment_id,
             origin_authority="ORIGIN-A",
@@ -155,6 +175,15 @@ class IntegratedDemonstrator:
             origin_rule_version=origin_rule_version_override or DEMO_RULE_VERSION,
             destination_rule_version=destination_rule_version_override or DEMO_RULE_VERSION,
         )
+        trace.append(make_trace_event(
+            case_id=consignment_id,
+            operation_id=f"{consignment_id}:CASE:CREATE:1",
+            component_id="protocol_orchestration",
+            status="ACCEPTED",
+            mode="LOCAL_SQLITE",
+            component_version="institutional-workflow-0.1",
+            reason="CASE_CONTEXT_CREATED_OR_REUSED",
+        ))
         if not edge_connected:
             # Queue a request for later central review; never decide institutionally offline.
             queued = self.edge_queue.enqueue(
@@ -170,10 +199,31 @@ class IntegratedDemonstrator:
                     current_rule_version=edge_current_rule_version,
                     authority_active=edge_authority_active,
                 )
+            trace.append(make_trace_event(
+                case_id=consignment_id,
+                operation_id=queued["operation_id"],
+                component_id="edge_operation",
+                status=queued["status"],
+                mode="LOCAL_SQLITE_EDGE_PROFILE",
+                component_version="edge-queue-sqlite-0.1",
+                evidence_refs=[queued.get("evidence_version", "SYNTHETIC-EVIDENCE-1")],
+                reason=queued.get("replay_reason") or "CENTRAL_REVIEW_REQUIRED",
+            ))
+            trace.append(make_trace_event(
+                case_id=consignment_id,
+                operation_id=f"{consignment_id}:CASE:OUTCOME:1",
+                component_id="protocol_orchestration",
+                status="PENDING",
+                mode="SIMULATED_EDGE",
+                component_version="kin-sys-system-model-0.1",
+                reason="OFFLINE_SUBMISSION_DOES_NOT_GRANT_INSTITUTIONAL_APPROVAL",
+            ))
             return {
                 "case_id": consignment_id,
                 "profile": "SIMULATED_EDGE_RECONNECTED" if edge_reconnect else "SIMULATED_EDGE_DISCONNECTED",
                 "system_model": system_manifest(),
+                "system_trace": trace,
+                "system_trace_valid": validate_system_trace(trace, case_id=consignment_id),
                 "status": "PENDING",
                 "reason": (
                     "READY_FOR_CENTRAL_REVIEW_NOT_INSTITUTIONAL_APPROVAL"
@@ -204,6 +254,15 @@ class IntegratedDemonstrator:
             rule_version=DEMO_RULE_VERSION,
         )
         origin = self.workflow.stage(consignment_id, "ORIGIN")
+        trace.append(make_trace_event(
+            case_id=consignment_id,
+            operation_id=f"{consignment_id}:ORIGIN:1",
+            component_id="institutional_coordination",
+            status=origin_result["status"],
+            mode="TWO_INSTITUTION_SYNTHETIC_WORKFLOW",
+            component_version="institutional-workflow-0.1",
+            reason=origin_result.get("reason"),
+        ))
         if origin_result["status"] == "ACCEPTED" and origin.get("outcome") == "APPROVE":
             destination_result = self.workflow.decide(
                 event_id=f"{consignment_id}:DESTINATION:1",
@@ -220,6 +279,15 @@ class IntegratedDemonstrator:
                 "duplicate": False,
             }
         destination = self.workflow.stage(consignment_id, "DESTINATION")
+        trace.append(make_trace_event(
+            case_id=consignment_id,
+            operation_id=f"{consignment_id}:DESTINATION:1",
+            component_id="institutional_coordination",
+            status=destination_result["status"],
+            mode="TWO_INSTITUTION_SYNTHETIC_WORKFLOW",
+            component_version="institutional-workflow-0.1",
+            reason=destination_result.get("reason"),
+        ))
         # A replayed historical operation may still report ACCEPTED after its
         # authority has been revoked or its rule version has changed. Downstream
         # obligations require current authority/rule state plus matching approval
@@ -251,6 +319,16 @@ class IntegratedDemonstrator:
             and destination_currently_valid
         )
         tax = self.tax_rules.assess(declared_value_ugx, exempt=exempt) if institutions_approved else None
+        trace.append(make_trace_event(
+            case_id=consignment_id,
+            operation_id=f"{consignment_id}:TAX:ASSESS:1",
+            component_id="rules_and_statutory_policy",
+            status=tax["status"] if tax else "NOT_ATTEMPTED",
+            mode="FICTIONAL_RULES" if tax else "PREREQUISITE_BLOCKED",
+            component_version=DEMO_RULE_VERSION,
+            evidence_refs=[f"{consignment_id}:ORIGIN:1", f"{consignment_id}:DESTINATION:1"] if tax else [],
+            reason=tax["legal_status"] if tax else "REQUIRED_INSTITUTIONAL_APPROVALS_NOT_VALID",
+        ))
         payment = None
         payment_lifecycle_result = None
         if tax and tax["assessed_amount_ugx"] > 0:
@@ -326,10 +404,21 @@ class IntegratedDemonstrator:
         else:
             final_status = "PENDING"
 
+        trace.append(make_trace_event(
+            case_id=consignment_id,
+            operation_id=f"{consignment_id}:CASE:OUTCOME:1",
+            component_id="protocol_orchestration",
+            status=final_status,
+            mode="LOCAL_SYNTHETIC",
+            component_version="kin-sys-system-model-0.1",
+            reason="WHOLE_CASE_OUTCOME",
+        ))
         return {
             "case_id": consignment_id,
             "profile": "CENTRAL_DEMO_ONLINE",
             "system_model": system_manifest(),
+            "system_trace": trace,
+            "system_trace_valid": validate_system_trace(trace, case_id=consignment_id),
             "status": final_status,
             "identity_mode": "SYNTHETIC_TEST_IDENTITIES",
             "minah_advisory": advisory,
