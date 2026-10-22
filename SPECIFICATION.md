@@ -61,9 +61,15 @@ No token, reward, fee, or balance-changing operation is conformant unless it has
 
 The semantics and role of $KIN remain an open design decision. This specification does not define a supply, allocation, exchange rate, or financial promise.
 
-## 7. AI-assisted components
+## 7. MINAH: jurisprudential oracle and sovereignty gatekeeper
 
-MINAH is intended as the jurisprudential oracle and sovereignty gatekeeper for a configured jurisdiction or governing domain. She evaluates applicable law and institutional rules against case evidence and produces a traceable disposition. Jurisdiction-specific training/adaptation, authoritative source provenance, effective-date handling, conflict and uncertainty treatment, and acceptance evaluation must be specified. The protocol must not rely on MINAH's voluntary compliance to prevent bypass: IVM/CEE-informed execution and the wider KIN-SYS controls must enforce mandatory transition and authority constraints even if MINAH returns an incorrect or malicious result. MINAH cannot rewrite her own governing rules, grant herself authority, or directly commit protected state. Decisions reserved by law to an independent institution or official must remain with that authority.
+MINAH is KIN-SYS's jurisprudential oracle and gatekeeper of national sovereignty, not merely a general-purpose assistant or commentary service. She evaluates a case against the law and governing rules of an explicitly declared jurisdiction or governing domain and returns a reasoned, traceable jurisprudential disposition. Each jurisdiction/domain requires a versioned profile with authoritative source provenance, effective dates, applicable institutional mandates, conflict and uncertainty handling, and a qualified evaluation record.
+
+MINAH accesses external legal databases, registries, and institutional systems only through governed APIs or declared adapters. API responses are not automatically true, current, authoritative, or legally sufficient. Her output must identify the relevant jurisdiction, source/rule versions, citations, uncertainty, evidence gaps, and any conditions or required escalation. Missing, stale, conflicting, malformed, or unverified inputs must trigger the defined reject/defer/review path rather than being silently treated as permission.
+
+MINAH's disposition can have consequential downstream effects, but it is not a privileged command. She cannot rewrite her own governing rules, grant authority to herself or another principal, bypass mandatory checks, or directly commit protected state. IVM/CEE-informed execution and KIN-SYS controls must enforce mandatory authority and transition constraints even if MINAH is wrong, manipulated, compromised, or unavailable. Where law reserves a decision to an independent institution or official, MINAH must defer or route the case to that authority.
+
+The current synthetic demonstrator's MINAH stand-in is only an orchestration/test adapter; it is not the full MINAH and does not demonstrate authoritative, jurisdiction-specific legal reasoning. The detailed contract and acceptance criteria are defined in [MINAH — Jurisprudential Oracle and Sovereignty Gatekeeper](docs/MINAH_JURISPRUDENTIAL_ORACLE.md).
 
 ## 8. Governance and upgrades
 

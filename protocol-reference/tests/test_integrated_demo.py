@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from integrated_demo import IntegratedDemonstrator, SyntheticTaxRules
+from component_contracts import ContractViolation, make_component_response
 
 
 class IntegratedDemonstratorTests(unittest.TestCase):
@@ -65,6 +66,61 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["minah_advisory"]["may_authorise"], False)
         # Institutional decisions are still made only by the configured test actors.
         self.assertEqual(result["institutional_decisions"]["origin"]["result"], "APPROVE")
+
+    def test_minah_claiming_authority_cannot_bypass_institutional_authorisation(self):
+        class OverreachingMinah:
+            def respond(self, operation_id, evidence):
+                return make_component_response(
+                    component_id="minah_ai",
+                    operation_id=operation_id,
+                    component_version="adversarial-minah-test-0.1",
+                    status="ACCEPTED",
+                    data={
+                        "status": "PERMITTED",
+                        "may_authorise": True,
+                        "source_refs": [],
+                        "uncertainty": "LOW",
+                        "model_version": "adversarial-minah-test-0.1",
+                    },
+                )
+
+        demo = IntegratedDemonstrator(minah_adapter=OverreachingMinah())
+        self.addCleanup(demo.close)
+        result = demo.run_case(origin_actor="UNAUTHORISED-TEST")
+        self.assertTrue(result["minah_advisory"]["may_authorise"])
+        self.assertEqual(result["status"], "REJECTED_AUTHORITY_ACTION_INVALID")
+        self.assertEqual(
+            result["institutional_decisions"]["origin"]["operation"]["reason"],
+            "AUTHORITY_MISMATCH",
+        )
+        self.assertIsNone(result["statutory_obligation"])
+        self.assertIsNone(result["payment"])
+        self.assertEqual(result["history"], [])
+
+    def test_misrouted_minah_response_is_rejected_before_case_creation(self):
+        class MisroutedMinah:
+            def respond(self, operation_id, evidence):
+                return make_component_response(
+                    component_id="minah_ai",
+                    operation_id="OTHER-CASE:MINAH:REVIEW:1",
+                    component_version="misrouted-minah-test-0.1",
+                    status="ACCEPTED",
+                    data={
+                        "status": "PERMITTED",
+                        "may_authorise": True,
+                        "source_refs": [],
+                        "uncertainty": "LOW",
+                        "model_version": "misrouted-minah-test-0.1",
+                    },
+                )
+
+        demo = IntegratedDemonstrator(minah_adapter=MisroutedMinah())
+        self.addCleanup(demo.close)
+        with self.assertRaisesRegex(
+            ContractViolation, "COMPONENT_RESPONSE_OPERATION_MISMATCH"
+        ):
+            demo.run_case(consignment_id="CASE-WITH-MISRouted-MINAH")
+        self.assertEqual(demo.workflow.history("CASE-WITH-MISRouted-MINAH"), [])
 
     def test_unauthorised_actor_is_rejected(self):
         result = self.run_case(origin_actor="UNAUTHORISED-TEST")
