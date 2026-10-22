@@ -47,4 +47,4 @@ The transition tests exercise local state/history properties using SQLite. The t
 
 Even if tests pass, they establish only the local properties exercised. They do not establish cryptographic authentication, the full CEE lifecycle, phase-by-phase crash recovery, concurrent multi-process correctness, distributed commitment, multi-institution trust, production readiness, novelty, or commercial superiority.
 
-Next engineering gates: extend paired payment tests to file-backed reopen and process-interruption cases; expand integrated comparisons with stale/corrupted evidence, recovery, and edge queue/reconnect scenarios; then refine the serialised adapter contracts and add independent review.
+Next engineering gates: add edge reconnect scenarios to the paired whole-flow comparison, including stale evidence, rule drift, and revoked authority; extend payment and queue tests to process interruption and additional recovery boundaries; then refine serialised adapter contracts and arrange independent review.
