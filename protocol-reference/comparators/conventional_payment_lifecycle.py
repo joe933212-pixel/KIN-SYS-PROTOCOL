@@ -133,6 +133,15 @@ class ConventionalPaymentLifecycle:
             raise ValueError("SETTLEMENT_REFERENCE_REQUIRED")
         if amount_minor != transfer["value_minor"] or currency != transfer["unit"]:
             raise ValueError("SETTLEMENT_AMOUNT_OR_CURRENCY_MISMATCH")
+        liability = self.connection.execute(
+            "SELECT value_minor, unit FROM liabilities WHERE liability_key=?",
+            (transfer["liability_key"],),
+        ).fetchone()
+        if liability is None or (
+            liability["value_minor"] != transfer["value_minor"]
+            or liability["unit"] != transfer["unit"]
+        ):
+            raise ValueError("OBLIGATION_PAYMENT_MISMATCH")
         record = {"settlement_reference": settlement_reference,
                   "amount_minor": amount_minor, "currency": currency}
         self._append(event_id, payment_id, "SETTLEMENT_EVIDENCE", record)
