@@ -2,7 +2,7 @@
 
 # Implementation Status
 
-**Last updated:** 2026-10-21  
+**Last updated:** 2026-10-22  
 **Baseline:** Protocol foundation 0.1-draft  
 **Overall status:** Specification foundation in progress; not production-ready.
 
@@ -26,9 +26,10 @@
 | State/history commitment and recovery | Prototype evidence reported in IVM archive | Re-verify artifacts; test concurrency, storage failures, and multi-node cases |
 | Offline edge behaviour | Requirements identified | Offline authority model and reconciliation tests |
 | Cross-institution trust | Open design | Trust federation, governance, and dispute model |
-| Economic accounting / $KIN | Open design | Purpose, accounting rules, abuse model, and legal/economic review |
-| MINAH AI boundary | Conceptual boundary documented | Permission model, evaluation, threat tests, and audit policy |
-| Nexus Pods | Conceptual deployment form | Hardware profile, power/network assumptions, security, maintenance, and field testing |
+| Statutory remittance | Integrated demonstrator requirement specified; not implemented | Authoritative rule pack, obligation calculation, payment evidence contract, exemptions/deferments, reconciliation, legal and fiscal review |
+| Economic accounting / $KIN | Open design; not assumed necessary for statutory remittance | Purpose, accounting rules, abuse model, and legal/economic review |
+| MINAH AI boundary | Conceptual boundary documented; integrated adapter specified in demonstrator plan | Implement deterministic adapter first; test uncertainty, source citation, model/version changes, and authority separation |
+| Nexus Pods / edge deployment | Conceptual deployment form; simulated edge profile specified | Offline action policy, resource bounds, key custody, update/maintenance profile, hardware and field testing |
 | Privacy-preserving proofs | Not established here | Define the claim and threat model before selecting a mechanism |
 | Production deployment | Not established | Complete profile-specific security and operational gates |
 | Independent validation | Not yet recorded here | Independent review/reproduction report |
@@ -39,8 +40,9 @@ A legacy codebase or document describing a feature does not mark it implemented 
 
 ## Immediate next steps
 
-1. Trace source versions for CRS, CISA, IVM, and CEE.
-2. Complete the literature-to-requirement crosswalk using the agreed literature record and prior-art analysis.
-3. Freeze the first narrow transition contract and invariants.
-4. Build the smallest end-to-end conformance slice.
-5. Run tests and publish reproducible artifacts before expanding scope.
+1. Use [the integrated demonstrator blueprint](docs/INTEGRATED_DEMONSTRATOR_BLUEPRINT.md) to freeze the case schema, state/result vocabulary, synthetic rule pack, and explicit simulation boundaries.
+2. Build one reproducible end-to-end software slice connecting synthetic identity/authority, origin and destination decisions, a deterministic MINAH AI adapter, statutory-obligation calculation, a simulated payment provider, and an auditable case result.
+3. Add the challenge scenarios from the blueprint before describing the integrated slice as demonstrated.
+4. Run the same cases against a fair conventional workflow and publish reproducible results, including equivalences and failures.
+5. Continue source-version reconciliation for CRS, CISA, IVM, and CEE alongside this integration work; do not treat those artifacts as the whole KIN-SYS system.
+6. Add a simulated edge/Nexus Pod deployment profile after the integrated software contract is stable; physical hardware and institutional integrations remain separate validation gates.
