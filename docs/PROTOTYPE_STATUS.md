@@ -41,7 +41,7 @@ The transition tests exercise local state/history properties using SQLite. The t
 - Instruction IDs are stable and request fingerprints reject conflicting reuse; the same instruction retry returns the existing local record rather than calling a provider. Provider acceptance does not mean settlement. Unknown outcomes remain unresolved; reconciliation does not submit payments. Settlement requires a reference and matching amount/currency.
 - `protocol-reference/tests/test_payment_lifecycle.py` adds tests for instruction retry, one-instruction-per-obligation, acceptance-versus-settlement, unknown/reconciliation, mismatched settlement, settlement updates, duplicate settlement, ID conflicts, event conflicts, and file-backed reopen.
 - This module is a separate reference model, not yet wired into `integrated_demo.py`. No live provider is called and no funds move. Local idempotency does not prove provider-side idempotency or prevent duplicate effects in a real distributed payment network.
-- **Verification pending:** the latest successful run above predates these tests. The next CI run must validate the added lifecycle tests before they are described as passing.
+- GitHub Actions run [39736722973](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39736722973) passed on 2026-10-22 after correcting a test expectation for the retained instruction-plus-settlement history: 67 repository tests passed; the paired comparison and integrated demo reports were generated, checked, and uploaded. This validates the tested local reference contracts only, not live provider behaviour or production guarantees.
 
 ## Interpretation
 
