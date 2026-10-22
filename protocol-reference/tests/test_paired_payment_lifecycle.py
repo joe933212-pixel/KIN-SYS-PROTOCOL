@@ -91,6 +91,30 @@ class PairedPaymentLifecycleTests(unittest.TestCase):
         self.assert_pair_equal(systems)
         self.assertNotEqual(self.vector(systems[0])["status"], "SETTLED")
 
+    def test_duplicate_settlement_retry_does_not_duplicate_history(self):
+        systems = self.make_pair()
+        for system in systems:
+            system.record_settlement("PAY-1", "SET-1", "SETTLEMENT-REF",
+                                     amount_minor=50000, currency="UGX")
+            system.record_settlement("PAY-1", "SET-1", "SETTLEMENT-REF",
+                                     amount_minor=50000, currency="UGX")
+        self.assert_pair_equal(systems)
+        self.assertEqual(self.vector(systems[0])["history_types"],
+                         ["INSTRUCTION_CREATED", "SETTLEMENT_EVIDENCE"])
+
+    def test_conflicting_event_id_reuse_is_rejected_by_both(self):
+        systems = self.make_pair()
+        errors = []
+        for system in systems:
+            system.record_provider_ack("PAY-1", "ACK-1", "UNKNOWN")
+            try:
+                system.record_provider_ack("PAY-1", "ACK-1", "ACCEPTED", "PROVIDER-REF")
+            except ValueError as exc:
+                errors.append(str(exc))
+        self.assertEqual(errors, ["EVENT_ID_CONFLICT"] * 2)
+        self.assert_pair_equal(systems)
+        self.assertEqual(self.vector(systems[0])["status"], "UNKNOWN_PENDING_RECONCILIATION")
+
 
 if __name__ == "__main__":
     unittest.main()
