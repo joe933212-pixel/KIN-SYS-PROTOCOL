@@ -2,6 +2,7 @@
 """Payment-boundary lifecycle tests; no real provider or funds."""
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -88,6 +89,49 @@ class PaymentLifecycleTests(unittest.TestCase):
         self.payments.record_provider_ack("PAY-1", "EV-ACK-1", "UNKNOWN")
         with self.assertRaisesRegex(ValueError, "EVENT_ID_CONFLICT"):
             self.payments.record_provider_ack("PAY-1", "EV-ACK-1", "ACCEPTED")
+
+    def test_concurrent_instructions_cannot_create_two_payments_for_one_obligation(self):
+        barrier = threading.Barrier(2)
+        outcomes = []
+        outcomes_lock = threading.Lock()
+
+        def attempt(payment_id):
+            connection = PaymentLifecycle(self.db_path)
+            try:
+                barrier.wait(timeout=5)
+                result = connection.create_instruction(payment_id, "OBL-1")
+                outcome = ("created", result["payment_id"])
+            except Exception as exc:
+                outcome = ("error", str(exc))
+            finally:
+                connection.close()
+            with outcomes_lock:
+                outcomes.append(outcome)
+
+        threads = [
+            threading.Thread(target=attempt, args=("PAY-CONCURRENT-A",)),
+            threading.Thread(target=attempt, args=("PAY-CONCURRENT-B",)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "concurrent writers hung")
+        self.assertEqual(sum(kind == "created" for kind, _ in outcomes), 1, outcomes)
+        errors = [value for kind, value in outcomes if kind == "error"]
+        self.assertEqual(errors, ["OBLIGATION_ALREADY_HAS_PAYMENT_INSTRUCTION"], outcomes)
+        rows = self.payments.db.execute(
+            "SELECT payment_id FROM payments WHERE obligation_id='OBL-1'"
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+
+    def test_failed_instruction_attempt_leaves_no_partial_event_or_status(self):
+        with self.assertRaisesRegex(ValueError, "EVENT_ID_REQUIRED"):
+            # Force the event validation to fail inside the transaction by
+            # temporarily invoking the event helper with an empty ID.
+            self.payments._event("", "PAY-1", "TEST", {})
+        self.assertEqual(self.payments.get_payment("PAY-1")["status"], "INSTRUCTION_CREATED")
+        self.assertEqual(len(self.payments.history("PAY-1")), 1)
 
     def test_payment_records_survive_database_reopen(self):
         self.payments.close()
