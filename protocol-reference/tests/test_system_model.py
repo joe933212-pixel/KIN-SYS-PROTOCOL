@@ -2,6 +2,7 @@
 import unittest
 
 from integrated_demo import IntegratedDemonstrator
+from component_contracts import ContractViolation, make_component_response
 from system_model import SYSTEM_MODEL_VERSION, system_manifest, validate_system_trace
 
 
@@ -101,6 +102,38 @@ class WholeSystemModelTests(unittest.TestCase):
             self.assertEqual(decisions[1]["data"]["status"], "NOT_ATTEMPTED")
             self.assertIsNone(result["statutory_obligation"])
             self.assertIsNone(result["payment"])
+        finally:
+            demo.close()
+
+    def test_misrouted_minah_response_stops_case_before_downstream_effects(self):
+        class MisroutedMinah:
+            version = "test-minah-0.1"
+
+            def respond(self, operation_id, evidence):
+                return make_component_response(
+                    component_id="minah_ai",
+                    operation_id="SOME-OTHER-CASE:MINAH:REVIEW:1",
+                    component_version=self.version,
+                    status="ACCEPTED",
+                    data={
+                        "status": "ADVISORY_ONLY",
+                        "missing_fields": [],
+                        "source_refs": [],
+                        "uncertainty": "LOW",
+                        "may_authorise": False,
+                        "model_version": self.version,
+                    },
+                )
+
+        demo = IntegratedDemonstrator(minah_adapter=MisroutedMinah())
+        try:
+            with self.assertRaisesRegex(ContractViolation, "COMPONENT_RESPONSE_OPERATION_MISMATCH"):
+                demo.run_case(consignment_id="MINAH-MISROUTED-CASE")
+            self.assertEqual(demo.workflow.history("MINAH-MISROUTED-CASE"), [])
+            self.assertEqual(
+                demo.payment_lifecycle.db.execute("SELECT COUNT(*) FROM obligations").fetchone()[0],
+                0,
+            )
         finally:
             demo.close()
 
