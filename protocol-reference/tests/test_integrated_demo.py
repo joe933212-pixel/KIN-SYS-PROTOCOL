@@ -30,7 +30,7 @@ class IntegratedDemonstratorTests(unittest.TestCase):
 
     def test_destination_rejection_cannot_be_overridden_by_origin_approval(self):
         result = self.run_case(destination_decision="REJECT")
-        self.assertEqual(result["status"], "REJECTED_OR_AUTHORITY_ACTION_INVALID")
+        self.assertEqual(result["status"], "INSTITUTIONAL_DECISION_REJECTED")
         self.assertEqual(result["institutional_decisions"]["origin"]["result"], "APPROVE")
         self.assertEqual(result["institutional_decisions"]["destination"]["result"], "REJECT")
         self.assertIsNone(result["statutory_obligation"])
