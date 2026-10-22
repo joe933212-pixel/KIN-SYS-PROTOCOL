@@ -144,9 +144,14 @@ class PaymentLifecycle:
         try:
             payment = self._payment(payment_id)
             evidence = {"acknowledgement": acknowledgement, "provider_reference": provider_reference}
-            self._event(event_id, payment_id, "PROVIDER_ACKNOWLEDGEMENT", evidence)
+            duplicate = self._event(event_id, payment_id, "PROVIDER_ACKNOWLEDGEMENT", evidence)
             if payment["status"] == "SETTLED":
                 raise ValueError("PAYMENT_ALREADY_SETTLED")
+            if duplicate:
+                # A retry must return current durable state, not replay an old
+                # acknowledgement over a later reconciliation outcome.
+                self.db.commit()
+                return self.get_payment(payment_id)
             if acknowledgement == "ACCEPTED":
                 status = "PROVIDER_ACCEPTED_SETTLEMENT_UNCONFIRMED"
             elif acknowledgement == "DECLINED":
@@ -235,7 +240,12 @@ class PaymentLifecycle:
         try:
             payment = self._payment(payment_id)
             evidence = {"finding": finding, "provider_reference": provider_reference}
-            self._event(event_id, payment_id, "RECONCILIATION", evidence)
+            duplicate = self._event(event_id, payment_id, "RECONCILIATION", evidence)
+            if duplicate:
+                # Do not let a delayed retry of an older reconciliation finding
+                # overwrite a newer result already recorded for this payment.
+                self.db.commit()
+                return self.get_payment(payment_id)
             if finding == "SETTLED" and payment["status"] != "SETTLED":
                 raise ValueError("SETTLEMENT_EVIDENCE_REQUIRED")
             if payment["status"] == "SETTLED" and finding != "SETTLED":
@@ -275,7 +285,8 @@ class PaymentLifecycle:
             raise ValueError("PAYMENT_NOT_FOUND")
         return row
 
-    def _event(self, event_id: str, payment_id: str, event_type: str, evidence: dict[str, Any]) -> None:
+    def _event(self, event_id: str, payment_id: str, event_type: str, evidence: dict[str, Any]) -> bool:
+        """Insert a new event; return True only for an identical prior event."""
         if not event_id:
             raise ValueError("EVENT_ID_REQUIRED")
         payload = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
@@ -288,8 +299,9 @@ class PaymentLifecycle:
                 payment_id, event_type, payload
             ):
                 raise ValueError("EVENT_ID_CONFLICT")
-            return
+            return True
         self.db.execute(
             "INSERT INTO payment_events VALUES (?, ?, ?, ?)",
             (event_id, payment_id, event_type, payload),
         )
+        return False
