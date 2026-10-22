@@ -74,6 +74,8 @@ These roles describe the intended division of responsibility, not proof that eac
 - **Kagoro DSL:** independent language/compiler project, not a required KIN-SYS component. Any future integration must be optional and use a stable, implementation-independent interface.
 
 ## 8. System-level research method
+The binding implementation direction is now documented in [SYSTEM_INTEGRATION_ROADMAP.md](SYSTEM_INTEGRATION_ROADMAP.md) and [Decision 0002](DECISIONS/0002-whole-system-first-development.md): reconcile the whole-system contract, build one contract-driven executable model with explicit simulations for unfinished capabilities, then deepen components under cross-component invariants. Existing component tests remain necessary but cannot stand in for integrated system evidence.
+
 
 Research must preserve both component-level falsifiability and system-level integration. For each important use case, identify the participating institutions and actors; the role of the protocol; the required CEE/IVM execution behaviour; whether and how MINAH AI participates; whether $KIN has a necessary, justified economic role; what the Nexus Pod/edge deployment must provide; the identity, authority, governance and privacy controls; and the observable evidence of success or failure.
 
