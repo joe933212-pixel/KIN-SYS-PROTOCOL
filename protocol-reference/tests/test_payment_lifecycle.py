@@ -77,6 +77,37 @@ class PaymentLifecycleTests(unittest.TestCase):
         self.assertEqual(first["settlement_reference"], second["settlement_reference"])
         self.assertEqual(len(self.payments.history("PAY-1")), 2)  # instruction + one settlement event
 
+    def test_conflicting_settlement_evidence_cannot_replace_recorded_settlement(self):
+        self.payments.record_settlement(
+            "PAY-1", "EV-SETTLE-ORIGINAL", "SET-REF-ORIGINAL",
+            amount_minor=50000, currency="UGX",
+        )
+        with self.assertRaisesRegex(ValueError, "CONFLICTING_SETTLEMENT_EVIDENCE"):
+            self.payments.record_settlement(
+                "PAY-1", "EV-SETTLE-CONFLICT", "SET-REF-OTHER",
+                amount_minor=50000, currency="UGX",
+            )
+        payment = self.payments.get_payment("PAY-1")
+        self.assertEqual(payment["status"], "SETTLED")
+        self.assertEqual(payment["settlement_reference"], "SET-REF-ORIGINAL")
+        event_ids = [event["event_id"] for event in self.payments.history("PAY-1")]
+        self.assertNotIn("EV-SETTLE-CONFLICT", event_ids)
+
+    def test_provider_ack_cannot_downgrade_settled_payment(self):
+        self.payments.record_settlement(
+            "PAY-1", "EV-SETTLE-LOCK", "SET-REF-LOCK",
+            amount_minor=50000, currency="UGX",
+        )
+        with self.assertRaisesRegex(ValueError, "PAYMENT_ALREADY_SETTLED"):
+            self.payments.record_provider_ack(
+                "PAY-1", "EV-ACK-AFTER-SETTLE", "DECLINED", "PROVIDER-REF-LATE",
+            )
+        payment = self.payments.get_payment("PAY-1")
+        self.assertEqual(payment["status"], "SETTLED")
+        self.assertEqual(payment["settlement_reference"], "SET-REF-LOCK")
+        event_ids = [event["event_id"] for event in self.payments.history("PAY-1")]
+        self.assertNotIn("EV-ACK-AFTER-SETTLE", event_ids)
+
     def test_payment_id_cannot_be_reused_for_different_request(self):
         self.payments.create_obligation("OBL-2", 60000, "UGX", "SYNTHETIC-ASSESSMENT-2")
         with self.assertRaisesRegex(ValueError, "PAYMENT_ID_CONFLICT"):
