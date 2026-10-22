@@ -40,7 +40,7 @@ The GitHub commit-status endpoint returned no status entries when checked, and t
 - `protocol-reference/tests/test_integrated_demo.py` covers the happy path, separate origin/destination decisions, destination rejection, unauthorised actor, AI uncertainty not granting authority, payment timeout, synthetic exemption, disconnected edge behaviour, and invalid tax inputs.
 - Run from the repository root: `PYTHONPATH=protocol-reference python -m integrated_demo`.
 - This is an initial integrated **software** slice. Identity, AI, tax rules, payment, and edge conditions are synthetic/simulated. It is not a production system, legal tax implementation, live payment integration, real AI evaluation, physical Nexus Pod test, or distributed consensus implementation.
-- The corresponding GitHub Actions run must be checked before describing the newly added tests as passing: https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions
+- GitHub Actions run [39733723167](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39733723167) passed on 2026-10-22: 54 repository tests passed; the paired comparison and integrated demo reports were generated, checked, and uploaded as the `protocol-and-integrated-demo-results` artifact. This confirms the tested synthetic contract only, not production guarantees.
 
 ## Interpretation
 
