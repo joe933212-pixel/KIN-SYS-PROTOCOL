@@ -52,9 +52,13 @@ Nexus Pods are a conceptual physical deployment form for edge compute, connectiv
 
 Each profile must specify physical/cyber threat assumptions, boot integrity and software updates, key custody/recovery, data retention/deletion, power/network-loss behaviour, offline operation classes, telemetry, maintenance, decommissioning, and evidence of the running software profile.
 
-## 5. MINAH AI boundary
+## 5. MINAH: jurisprudential oracle and sovereignty gatekeeper
 
-MINAH AI is a proposed assistance layer, not an independent root of authority. It may provide interpretation or recommendations; it must not bypass authentication, institutional policy, deterministic validation, or the auditable transition path. High-impact actions require explicit authorisation and a defined decision process.
+MINAH is intended to be KIN-SYS's jurisprudential oracle and sovereignty gatekeeper, configured and trained for the jurisdiction or governing domain in which a deployment operates (for example, a country, company, or enterprise). Her remit is to reason over the applicable legal and institutional order, identify the rules and evidence relevant to a proposed action, and return a traceable jurisprudential disposition.
+
+MINAH is not a root administrator and cannot unilaterally alter the rules, grant herself authority, or commit a protected state transition. This is not a limitation that depends on MINAH voluntarily complying: it is an invariant the execution architecture must enforce. IVM and CEE research are central to this separation, providing foundations for constrained transitions, lifecycle handling, commitments, and recovery. KIN-SYS must prevent any one component—including MINAH, an operator, or an adapter—from bypassing mandatory protocol checks.
+
+Jurisdiction-specific MINAH deployments require controlled legal-source ingestion, jurisdiction and effective-date tracking, provenance, conflict/uncertainty handling, evaluation against approved cases, and a governed process for updating or replacing legal knowledge. A model's assertion that it knows the law is not proof of completeness or correctness. When a question requires discretion reserved to a court, official, or institution, or when authoritative sources conflict or are incomplete, the disposition must defer to the designated process rather than fabricate certainty. The protocol must distinguish MINAH's jurisprudential determination from deterministic enforcement and from decisions legally reserved to independent institutions.
 
 ## 6. Economic and token boundary
 
