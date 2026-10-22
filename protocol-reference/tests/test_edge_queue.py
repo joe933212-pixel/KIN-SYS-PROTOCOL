@@ -2,6 +2,7 @@
 """Offline queue tests; replay is never treated as institutional approval."""
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -91,6 +92,54 @@ class EdgeOperationQueueTests(unittest.TestCase):
         )
         self.assertEqual(fresh["status"], "QUEUED_OFFLINE")
         self.assertEqual(result["status"], "READY_FOR_CENTRAL_REVIEW")
+
+    def test_concurrent_duplicate_enqueue_creates_one_queue_event(self):
+        barrier = threading.Barrier(2)
+        outcomes = []
+        lock = threading.Lock()
+
+        def attempt():
+            other = EdgeOperationQueue(self.path)
+            try:
+                barrier.wait(timeout=5)
+                result = other.enqueue(
+                    "OP-CONCURRENT", {"case_id": "CASE-2", "action": "REQUEST_REVIEW"},
+                    evidence_version="EVIDENCE-1", rule_version="RULE-1",
+                )
+                outcome = ("ok", result["status"])
+            except Exception as exc:
+                outcome = ("error", str(exc))
+            finally:
+                other.close()
+            with lock:
+                outcomes.append(outcome)
+
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "concurrent queue writers hung")
+        self.assertEqual(outcomes, [("ok", "QUEUED_OFFLINE"), ("ok", "QUEUED_OFFLINE")])
+        events = self.queue.db.execute(
+            "SELECT COUNT(*) FROM queue_events WHERE operation_id='OP-CONCURRENT'"
+        ).fetchone()[0]
+        self.assertEqual(events, 1)
+
+    def test_tampered_payload_is_quarantined_at_reconnect(self):
+        self.queue.db.execute(
+            "UPDATE queued_operations SET payload_json=? WHERE operation_id='OP-1'",
+            ('{"case_id":"ALTERED","action":"REQUEST_REVIEW"}',),
+        )
+        self.queue.db.commit()
+        result = self.queue.replay(
+            "OP-1", current_evidence_version="EVIDENCE-1",
+            current_rule_version="RULE-1", authority_active=True,
+        )
+        self.assertEqual(result["status"], "QUARANTINED_PAYLOAD_INTEGRITY_FAILURE")
+        self.assertEqual(result["replay_reason"], "PAYLOAD_DIGEST_MISMATCH")
+        self.assertFalse(result["payload_integrity_ok"])
+        self.assertIsNone(result["payload"])
 
     def test_queue_and_history_survive_reopen(self):
         self.queue.replay(
