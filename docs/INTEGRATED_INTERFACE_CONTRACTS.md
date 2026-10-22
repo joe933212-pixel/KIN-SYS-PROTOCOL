@@ -32,7 +32,7 @@ The example is illustrative. Real identifiers and evidence must be opaque refere
 | Institutional decision | Case, stage, actor, requested decision, event ID, rule version | Accepted/rejected status, reason, recorded decision, history reference | Coordinator or AI cannot impersonate the institution |
 | MINAH AI adapter | Evidence references, supplied rule-pack references, requested task | Advisory, cited source references, adapter/model version, uncertainty, missing evidence | AI output cannot grant authority, silently amend law, or directly commit a decision |
 | Rule / statutory assessment | Approved inputs, rule-pack ID/version, currency and units, exemption/deferment evidence | Calculation inputs, result, rule version, legal status of rule source | A synthetic rate must never be represented as actual law |
-| Payment provider | Stable payment ID, amount, currency, payee reference, idempotency key | Provider reference, status, timestamps, reconciliation requirement | Timeout cannot be treated as success or failure without evidence |
+| Payment lifecycle | Obligation ID, stable payment ID, amount, currency, source assessment | Separate instruction, provider acknowledgement, settlement evidence, reconciliation state | Instruction or provider acceptance is not proof of settlement; unknown outcomes must not trigger blind resubmission |
 | Edge execution profile | Operation, local policy, connectivity and storage state | Accepted/deferred/rejected result, queued operation ID, sync status | Offline mode cannot invent online authority or fabricate external confirmation |
 | Audit/history | Event ID, case ID, actor and authority references, before/after state, evidence references | Append-only event reference and integrity metadata | Correction must not erase the original decision or its history |
 
@@ -81,6 +81,7 @@ No real tax rate, duty, fee, exemption, or remittance recipient is established b
 - A network or adapter failure must be distinguishable from a valid institutional refusal.
 - Missing, stale, contradictory, or unverifiable evidence must be surfaced rather than silently normalised.
 - If a required component is unavailable, return a documented pending/deferred result rather than inventing a successful result.
+- The payment lifecycle reference model records stable instruction IDs and separates acknowledgement from settlement evidence. Its current scope does not prove provider-side idempotency or eliminate duplicate effects across a real network; those guarantees require a provider contract and integration tests.
 
 ## 7. Versioning and compatibility
 
@@ -89,8 +90,9 @@ Every request/response contract and rule pack should carry a version. Changes to
 ## 8. Current implementation map
 
 - Implemented in the initial demo: synthetic identity gate, deterministic non-authoritative MINAH adapter, fictional UGX obligation calculation, simulated payment statuses, and online/disconnected profile selection.
+- Implemented as a separate reference model: SQLite-backed obligation/instruction records, stable payment IDs, provider acknowledgement states, matching settlement evidence, reconciliation findings, and event-ID conflict detection.
 - Reused from the research workflow: separate origin/destination stages, actor and authority checks, rule-version checks, event IDs, stage history, and correction/dispute research operations.
-- Still incomplete: a formal serialised adapter API, a live evidence store, production credential validation, real AI model evaluation, authoritative tax rules, real payment-provider reconciliation, cryptographic audit proofs, distributed execution, and physical edge-node operation.
+- Still incomplete: wiring the payment lifecycle model into the integrated demo, a matched end-to-end conventional comparator, a formal serialised adapter API, a live evidence store, production credential validation, real AI model evaluation, authoritative tax rules, real payment-provider reconciliation, cryptographic audit proofs, distributed execution, and physical edge-node operation.
 
 ## 9. Contract acceptance criteria
 
