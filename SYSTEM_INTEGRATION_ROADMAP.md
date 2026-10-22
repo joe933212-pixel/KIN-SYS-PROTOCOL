@@ -13,6 +13,10 @@ The repository already contains valuable component experiments and an initial in
 
 **System-first does not mean building every physical and software component before anything can be tested.** It means first defining the end-to-end system contract and representing all intended capabilities in a coherent executable model. Simulators stand in for expensive or unfinished components while the same system-level interfaces and invariants are exercised. As real components mature, they replace adapters without changing the meaning of the overall protocol.
 
+## Foundational thesis
+
+See [KIN-SYS Foundational Thesis and Shared Architecture](KIN-SYS-FOUNDATIONAL-THESIS.md). This establishes the common problem statement: KIN-SYS is intended as a deployable coordination and enforcement layer for heterogeneous systems, with built-in identity/authority responsibilities, MINAH as a jurisdiction-trained jurisprudential oracle, Kagoro DSL under evaluation as a formal rule language, and IVM/CEE-informed safeguards against component bypass. API connectivity is necessary for integration but is not, by itself, coordinated execution.
+
 ## 2. The system KIN-SYS is intended to be
 
 KIN-SYS is a sovereign, distributed protocol and execution environment through which independently operated people, institutions, services, economic systems, and edge nodes can coordinate under explicit authority, evidence, policy, state, and accountability rules.
@@ -34,7 +38,7 @@ The following are logical responsibilities, not a claim that every item is imple
 | System responsibility | Role in the whole system | Required contract / boundary |
 |---|---|---|
 | 1. Participants and institutions | People, businesses, agencies, operators, service providers, and their mandates | Identifiable principal, declared role/purpose, accountable decision-maker, dispute route |
-| 2. Sovereign identity and authority | Identity references, credentials, delegation, scopes, expiry, revocation, key custody | Identity is not authority; authority is operation-, scope-, purpose-, and time-dependent |
+| 2. Sovereign identity and authority | Built-in protocol responsibility for identity verification, authentication, delegation, scopes, expiry, revocation, and key custody; MINAH and other components access external registries only through governed APIs/interfaces | Identity is not authority; API access is scoped and purpose-bound; data minimised; source/freshness/provenance recorded; unavailable or stale verification fails closed for protected actions |
 | 3. Protocol ingress and communication | Requests, messages, schema/version checks, routing, audience, replay and correlation controls | Versioned envelope, authentication, integrity, audience, expiry, operation ID, rejection reasons |
 | 4. System context and orchestration | Case lifecycle, dependencies, sequencing, policy/profile selection, cross-component coordination | Explicit prerequisites and lifecycle states; no hidden success based on call order |
 | 5. Evidence and external facts | Documents, attestations, registries, sensors, oracles, provenance and challenges | A stored assertion is not automatically a true real-world fact; source, freshness, confidence and dispute must be represented |
