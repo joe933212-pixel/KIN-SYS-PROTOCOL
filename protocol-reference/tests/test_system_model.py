@@ -36,7 +36,9 @@ class WholeSystemModelTests(unittest.TestCase):
         }
         self.assertTrue(required.issubset(components))
         self.assertEqual(components["minah_ai"]["status"], "SIMULATED")
-        self.assertEqual(components["nexus_pod_infrastructure"]["status"], "SPECIFIED")
+        self.assertEqual(components["nexus_pod_infrastructure"]["status"], "OPTIONAL_DESIGN")
+        self.assertEqual(components["nexus_pod_infrastructure"]["depends_on"], [])
+        self.assertNotIn("nexus_pod_infrastructure", components["privacy_and_security"]["depends_on"])
         self.assertEqual(components["economic_mechanism_kin"]["status"], "OPEN_DESIGN")
         self.assertEqual(components["network_and_federation"]["status"], "SPECIFIED")
         self.assertIn("No physical Nexus Pod", " ".join(manifest["system_claims"]))
