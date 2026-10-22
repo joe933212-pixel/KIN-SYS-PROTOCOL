@@ -92,7 +92,7 @@ Every request/response contract and rule pack should carry a version. Changes to
 - Implemented in the initial demo: synthetic identity gate, deterministic non-authoritative MINAH adapter, fictional UGX obligation calculation, simulated payment statuses, and online/disconnected profile selection.
 - Implemented as a reference model and wired into the synthetic integrated demo: SQLite-backed obligation/instruction records, stable payment IDs, provider acknowledgement states, matching simulated settlement evidence, reconciliation findings, and event-ID conflict detection. The demo labels settlement as simulated; no real funds move.
 - Reused from the research workflow: separate origin/destination stages, actor and authority checks, rule-version checks, event IDs, stage history, and correction/dispute research operations.
-- Still incomplete: wiring the payment lifecycle model into the integrated demo, a matched end-to-end conventional comparator, a formal serialised adapter API, a live evidence store, production credential validation, real AI model evaluation, authoritative tax rules, real payment-provider reconciliation, cryptographic audit proofs, distributed execution, and physical edge-node operation.
+- Still incomplete: a matched end-to-end conventional comparator, a formal serialised adapter API, a live evidence store, production credential validation, real AI model evaluation, authoritative tax rules, real payment-provider reconciliation, cryptographic audit proofs, distributed execution, and physical edge-node operation.
 
 ## 9. Contract acceptance criteria
 
