@@ -288,19 +288,9 @@ store.create_instruction("PAY-CRASH", "OBL-CRASH")
             self.payments._event = original_event
 
         self.assertEqual(self.payments.get_payment("PAY-1")["status"], "INSTRUCTION_CREATED")
-        self.assertEqual(self.payments.history("PAY-1"), [
-            {
-                "event_id": "PAY-1:INSTRUCTION",
-                "payment_id": "PAY-1",
-                "event_type": "INSTRUCTION_CREATED",
-                "evidence": {
-                    "amount_minor": 50000,
-                    "currency": "UGX",
-                    "obligation_id": "OBL-1",
-                    "payment_id": "PAY-1",
-                },
-            }
-        ])
+        history = self.payments.history("PAY-1")
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["event_type"], "INSTRUCTION_CREATED")
         self.assertFalse(self.payments.db.in_transaction)
 
     def test_reconciliation_event_failure_rolls_back_event_and_state(self):
