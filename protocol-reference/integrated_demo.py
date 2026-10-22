@@ -52,17 +52,17 @@ class SyntheticTaxRules:
     version = DEMO_RULE_VERSION
     rate_basis_points = 500  # fictional 5%; integer arithmetic avoids float drift
 
-    def assess(self, declared_value_minor: int, *, exempt: bool = False) -> dict[str, Any]:
-        if not isinstance(declared_value_minor, int) or declared_value_minor < 0:
+    def assess(self, declared_value_ugx: int, *, exempt: bool = False) -> dict[str, Any]:
+        if not isinstance(declared_value_ugx, int) or declared_value_ugx < 0:
             raise ValueError("INVALID_DECLARED_VALUE")
-        amount = 0 if exempt else (declared_value_minor * self.rate_basis_points + 5000) // 10000
+        amount = 0 if exempt else (declared_value_ugx * self.rate_basis_points + 5000) // 10000
         return {
             "rule_version": self.version,
             "currency": "UGX",
-            "declared_value_minor": declared_value_minor,
+            "declared_value_ugx": declared_value_ugx,
             "rate_basis_points": 0 if exempt else self.rate_basis_points,
             "exempt": exempt,
-            "assessed_amount_minor": amount,
+            "assessed_amount_ugx": amount,
             "status": "EXEMPT" if exempt else "ASSESSED",
             "legal_status": "SYNTHETIC_DEMO_RULE_NOT_LAW",
         }
@@ -71,8 +71,8 @@ class SyntheticTaxRules:
 class SimulatedPaymentProvider:
     """Fake provider: never moves funds and never claims live settlement."""
 
-    def submit(self, payment_id: str, amount_minor: int, *, outcome: str = "CONFIRMED") -> dict[str, Any]:
-        if not payment_id or amount_minor < 0:
+    def submit(self, payment_id: str, amount_ugx: int, *, outcome: str = "CONFIRMED") -> dict[str, Any]:
+        if not payment_id or amount_ugx < 0:
             raise ValueError("INVALID_PAYMENT_REQUEST")
         if outcome not in {"CONFIRMED", "DECLINED", "TIMEOUT_UNKNOWN"}:
             raise ValueError("UNSUPPORTED_SIMULATED_PAYMENT_OUTCOME")
@@ -83,7 +83,7 @@ class SimulatedPaymentProvider:
         }[outcome]
         return {
             "payment_id": payment_id,
-            "amount_minor": amount_minor,
+            "amount_ugx": amount_ugx,
             "status": status,
             "funds_moved": False,
             "provider": "SIMULATED_ONLY",
@@ -109,7 +109,7 @@ class IntegratedDemonstrator:
         consignment_id: str = "DEMO-CONSIGNMENT-001",
         origin_decision: str = "APPROVE",
         destination_decision: str = "APPROVE",
-        declared_value_minor: int = 1_000_000,
+        declared_value_ugx: int = 1_000_000,
         payment_outcome: str = "CONFIRMED",
         minah_evidence: dict[str, Any] | None = None,
         origin_actor: str = "ORIGIN-A",
@@ -172,15 +172,15 @@ class IntegratedDemonstrator:
             and origin.get("outcome") == "APPROVE"
             and destination.get("outcome") == "APPROVE"
         )
-        tax = self.tax_rules.assess(declared_value_minor, exempt=exempt) if institutions_approved else None
+        tax = self.tax_rules.assess(declared_value_ugx, exempt=exempt) if institutions_approved else None
         payment = None
-        if tax and tax["assessed_amount_minor"] > 0:
+        if tax and tax["assessed_amount_ugx"] > 0:
             payment = self.payment.submit(
-                f"{consignment_id}:TAX:1", tax["assessed_amount_minor"], outcome=payment_outcome
+                f"{consignment_id}:TAX:1", tax["assessed_amount_ugx"], outcome=payment_outcome
             )
         elif tax and tax["exempt"]:
             payment = {
-                "payment_id": None, "amount_minor": 0, "status": "NOT_REQUIRED_EXEMPT",
+                "payment_id": None, "amount_ugx": 0, "status": "NOT_REQUIRED_EXEMPT",
                 "funds_moved": False, "provider": "NOT_CALLED",
             }
 
