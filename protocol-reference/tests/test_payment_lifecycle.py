@@ -60,7 +60,7 @@ class PaymentLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(self.payments.get_payment("PAY-1")["status"], "SETTLED")
         obligation = self.payments.db.execute(
-            "SELECT status FROM obligations WHERE obligation_id='OBL-1'"
+            "SELECT status FROM obligations WHERE obligation_id='OBL-CONCURRENT'"
         ).fetchone()
         self.assertEqual(obligation["status"], "SETTLED")
 
@@ -91,6 +91,7 @@ class PaymentLifecycleTests(unittest.TestCase):
             self.payments.record_provider_ack("PAY-1", "EV-ACK-1", "ACCEPTED")
 
     def test_concurrent_instructions_cannot_create_two_payments_for_one_obligation(self):
+        self.payments.create_obligation("OBL-CONCURRENT", 70000, "UGX", "SYNTHETIC-CONCURRENT-ASSESSMENT")
         barrier = threading.Barrier(2)
         outcomes = []
         outcomes_lock = threading.Lock()
@@ -99,7 +100,7 @@ class PaymentLifecycleTests(unittest.TestCase):
             connection = PaymentLifecycle(self.db_path)
             try:
                 barrier.wait(timeout=5)
-                result = connection.create_instruction(payment_id, "OBL-1")
+                result = connection.create_instruction(payment_id, "OBL-CONCURRENT")
                 outcome = ("created", result["payment_id"])
             except Exception as exc:
                 outcome = ("error", str(exc))
