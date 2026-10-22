@@ -116,6 +116,8 @@ class IntegratedDemonstrator:
         destination_actor: str = "DESTINATION-B",
         edge_connected: bool = True,
         exempt: bool = False,
+        revoke_origin_before_decision: bool = False,
+        origin_rule_version_override: str | None = None,
     ) -> dict[str, Any]:
         if not self.identity.permits("EXPORTER-TEST", "SUBMIT_CONSIGNMENT"):
             raise PermissionError("EXPORTER_NOT_AUTHORISED")
@@ -131,7 +133,7 @@ class IntegratedDemonstrator:
             consignment_id,
             origin_authority="ORIGIN-A",
             destination_authority="DESTINATION-B",
-            origin_rule_version=DEMO_RULE_VERSION,
+            origin_rule_version=origin_rule_version_override or DEMO_RULE_VERSION,
             destination_rule_version=DEMO_RULE_VERSION,
         )
         if not edge_connected:
@@ -148,6 +150,9 @@ class IntegratedDemonstrator:
                 "claims": ["NO_PHYSICAL_NEXUS_POD", "NO_LIVE_IDENTITY", "NO_LIVE_PAYMENT"],
             }
 
+        if revoke_origin_before_decision:
+            self.workflow.set_authority_active(consignment_id, "ORIGIN", False)
+
         origin_result = self.workflow.decide(
             event_id=f"{consignment_id}:ORIGIN:1",
             consignment_id=consignment_id,
@@ -156,15 +161,22 @@ class IntegratedDemonstrator:
             decision=origin_decision,
             rule_version=DEMO_RULE_VERSION,
         )
-        destination_result = self.workflow.decide(
-            event_id=f"{consignment_id}:DESTINATION:1",
-            consignment_id=consignment_id,
-            stage="DESTINATION",
-            actor_id=destination_actor,
-            decision=destination_decision,
-            rule_version=DEMO_RULE_VERSION,
-        )
         origin = self.workflow.stage(consignment_id, "ORIGIN")
+        if origin_result["status"] == "ACCEPTED" and origin.get("outcome") == "APPROVE":
+            destination_result = self.workflow.decide(
+                event_id=f"{consignment_id}:DESTINATION:1",
+                consignment_id=consignment_id,
+                stage="DESTINATION",
+                actor_id=destination_actor,
+                decision=destination_decision,
+                rule_version=DEMO_RULE_VERSION,
+            )
+        else:
+            destination_result = {
+                "status": "NOT_ATTEMPTED",
+                "reason": "ORIGIN_STAGE_NOT_APPROVED",
+                "duplicate": False,
+            }
         destination = self.workflow.stage(consignment_id, "DESTINATION")
         institutions_approved = (
             origin_result["status"] == "ACCEPTED"
