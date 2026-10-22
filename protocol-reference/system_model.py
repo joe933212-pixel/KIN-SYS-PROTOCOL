@@ -1,0 +1,236 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+"""Whole-system component inventory for the KIN-SYS integrated demonstrator.
+
+This registry is intentionally explicit about simulated and not-yet-implemented
+capabilities. It describes the system boundary, not a claim of production readiness.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+
+SYSTEM_MODEL_VERSION = "kin-sys-system-model-0.1"
+
+
+# Logical responsibilities are listed together even when one executable module
+# currently implements several of them. Status refers to this demonstrator only.
+_COMPONENTS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "protocol_orchestration",
+        "responsibility": "Coordinate the case lifecycle and propagate prerequisite failures.",
+        "status": "PROTOTYPE",
+        "implementation": "IntegratedDemonstrator.run_case",
+        "mode": "LOCAL_SYNTHETIC",
+        "depends_on": ["identity_authority", "evidence_and_external_facts", "institutional_coordination", "execution_and_history"],
+        "limitations": ["Single-process orchestration; not a distributed protocol implementation."],
+        "invariants": ["SYS-002", "SYS-006", "SYS-012", "SYS-013"],
+    },
+    {
+        "id": "identity_authority",
+        "responsibility": "Check synthetic principal permissions and institutional authority state.",
+        "status": "SIMULATED",
+        "implementation": "SyntheticIdentityGate plus workflow authority records",
+        "mode": "SYNTHETIC_IDENTITIES",
+        "depends_on": [],
+        "limitations": ["No real credentials, cryptographic authentication, federation, or national identity integration."],
+        "invariants": ["SYS-001", "SYS-002", "SYS-010"],
+    },
+    {
+        "id": "protocol_ingress_and_messages",
+        "responsibility": "Validate versioned request envelopes, audience, integrity, replay and schema.",
+        "status": "INTERFACE_MODELLED",
+        "implementation": "Documentation only; no complete serialized adapter protocol",
+        "mode": "NOT_IMPLEMENTED",
+        "depends_on": ["identity_authority"],
+        "limitations": ["The demonstrator does not yet validate a complete cross-component wire envelope."],
+        "invariants": ["SYS-004", "SYS-011", "SYS-013"],
+    },
+    {
+        "id": "evidence_and_external_facts",
+        "responsibility": "Track evidence references, provenance, freshness, conflict and source authority.",
+        "status": "SIMULATED",
+        "implementation": "Synthetic evidence dictionaries and source references",
+        "mode": "SYNTHETIC_EVIDENCE",
+        "depends_on": [],
+        "limitations": ["No authoritative external registry, evidence store, oracle validation, or cryptographic proof."],
+        "invariants": ["SYS-003", "SYS-007", "SYS-010"],
+    },
+    {
+        "id": "rules_and_statutory_policy",
+        "responsibility": "Apply versioned rules and calculate any permitted statutory obligation.",
+        "status": "SIMULATED",
+        "implementation": "SyntheticTaxRules",
+        "mode": "FICTIONAL_RULES",
+        "depends_on": ["evidence_and_external_facts", "institutional_coordination"],
+        "limitations": ["The 5% sample rate is fictional and is not Ugandan law."],
+        "invariants": ["SYS-003", "SYS-008", "SYS-011"],
+    },
+    {
+        "id": "minah_ai",
+        "responsibility": "Provide bounded, non-authoritative evidence review and missing-information signals.",
+        "status": "SIMULATED",
+        "implementation": "DeterministicMinahAdapter",
+        "mode": "DETERMINISTIC_MOCK",
+        "depends_on": ["evidence_and_external_facts"],
+        "limitations": ["No live AI model, retrieval system, model evaluation, or legal reasoning claim."],
+        "invariants": ["SYS-002", "SYS-003", "SYS-007", "SYS-012"],
+    },
+    {
+        "id": "execution_and_history",
+        "responsibility": "Evaluate local institutional transitions and persist state/history.",
+        "status": "PROTOTYPE",
+        "implementation": "InstitutionalWorkflow and SQLite transition research",
+        "mode": "LOCAL_SQLITE",
+        "depends_on": ["identity_authority", "rules_and_statutory_policy"],
+        "limitations": ["No distributed consensus or general cross-store atomic transaction."],
+        "invariants": ["SYS-001", "SYS-004", "SYS-005", "SYS-006", "SYS-011"],
+    },
+    {
+        "id": "institutional_coordination",
+        "responsibility": "Represent independent origin and destination decisions.",
+        "status": "PROTOTYPE",
+        "implementation": "InstitutionalWorkflow",
+        "mode": "TWO_INSTITUTION_SYNTHETIC_WORKFLOW",
+        "depends_on": ["identity_authority", "rules_and_statutory_policy", "evidence_and_external_facts"],
+        "limitations": ["No live institution, delegated mandate federation, or legally validated workflow."],
+        "invariants": ["SYS-001", "SYS-002", "SYS-003", "SYS-012"],
+    },
+    {
+        "id": "economic_accounting_and_remittance",
+        "responsibility": "Separate obligation, payment instruction, acknowledgement, settlement and reconciliation.",
+        "status": "PROTOTYPE",
+        "implementation": "PaymentLifecycle plus SimulatedPaymentProvider",
+        "mode": "LOCAL_SQLITE_AND_SIMULATED_PROVIDER",
+        "depends_on": ["rules_and_statutory_policy", "institutional_coordination"],
+        "limitations": ["No live payment rail or funds movement; provider-side idempotency is unproven."],
+        "invariants": ["SYS-004", "SYS-008", "SYS-012"],
+    },
+    {
+        "id": "edge_operation",
+        "responsibility": "Queue work while disconnected and require central review at reconnect.",
+        "status": "SIMULATED",
+        "implementation": "EdgeOperationQueue",
+        "mode": "LOCAL_SQLITE_EDGE_PROFILE",
+        "depends_on": ["protocol_ingress_and_messages", "evidence_and_external_facts", "rules_and_statutory_policy", "identity_authority"],
+        "limitations": ["No physical edge node; offline policy and synchronisation remain incomplete."],
+        "invariants": ["SYS-003", "SYS-004", "SYS-009", "SYS-011", "SYS-012"],
+    },
+    {
+        "id": "network_and_federation",
+        "responsibility": "Coordinate independently operated nodes and trust domains.",
+        "status": "SPECIFIED",
+        "implementation": "Architecture and specification documents",
+        "mode": "NOT_IMPLEMENTED",
+        "depends_on": ["protocol_ingress_and_messages", "identity_authority", "execution_and_history"],
+        "limitations": ["No node discovery, distributed consensus, federation protocol, or replication implementation."],
+        "invariants": ["SYS-001", "SYS-004", "SYS-005", "SYS-009", "SYS-011"],
+    },
+    {
+        "id": "nexus_pod_infrastructure",
+        "responsibility": "Provide a potential physical edge deployment substrate for compute, storage, power and connectivity.",
+        "status": "SPECIFIED",
+        "implementation": "Conceptual architecture only",
+        "mode": "NO_PHYSICAL_HARDWARE",
+        "depends_on": ["edge_operation", "network_and_federation", "identity_authority", "privacy_and_security"],
+        "limitations": ["No bill of materials, GPU selection, thermal/power engineering, secure boot, or field test is claimed."],
+        "invariants": ["SYS-009", "SYS-014"],
+    },
+    {
+        "id": "privacy_and_security",
+        "responsibility": "Apply purpose limitation, least privilege, data protection and threat controls.",
+        "status": "SPECIFIED",
+        "implementation": "Threat model and design requirements",
+        "mode": "NOT_IMPLEMENTED_AS_END_TO_END_CONTROLS",
+        "depends_on": ["identity_authority", "evidence_and_external_facts", "protocol_ingress_and_messages", "nexus_pod_infrastructure"],
+        "limitations": ["No end-to-end privacy proof or independent security validation."],
+        "invariants": ["SYS-001", "SYS-010", "SYS-014"],
+    },
+    {
+        "id": "governance_disputes_and_upgrades",
+        "responsibility": "Govern policy changes, appeals, corrections, key incidents and software upgrades.",
+        "status": "INTERFACE_MODELLED",
+        "implementation": "Partial workflow research and architecture documents",
+        "mode": "PARTIAL_RESEARCH",
+        "depends_on": ["institutional_coordination", "execution_and_history", "identity_authority"],
+        "limitations": ["No complete cross-institution governance, appeal, or upgrade mechanism."],
+        "invariants": ["SYS-002", "SYS-005", "SYS-011", "SYS-014"],
+    },
+    {
+        "id": "external_adapters",
+        "responsibility": "Connect conforming implementations to real institutions, registries, AI and payment providers.",
+        "status": "INTERFACE_MODELLED",
+        "implementation": "Draft adapter contracts; simulated local implementations",
+        "mode": "NO_LIVE_EXTERNAL_SERVICES",
+        "depends_on": ["protocol_ingress_and_messages", "identity_authority", "rules_and_statutory_policy", "economic_accounting_and_remittance"],
+        "limitations": ["No production credentials, provider contracts, or live institutional integration."],
+        "invariants": ["SYS-003", "SYS-007", "SYS-008", "SYS-011", "SYS-013"],
+    },
+    {
+        "id": "economic_mechanism_kin",
+        "responsibility": "Potential token-based economic mechanism, only if a defined use case justifies it.",
+        "status": "OPEN_DESIGN",
+        "implementation": "No token contract or token dependency",
+        "mode": "NOT_IMPLEMENTED",
+        "depends_on": ["economic_accounting_and_remittance", "governance_disputes_and_upgrades"],
+        "limitations": ["Purpose, legal/economic basis, accounting and necessity are unresolved; not required by default."],
+        "invariants": ["SYS-008", "SYS-015"],
+    },
+    {
+        "id": "conformance_and_evidence",
+        "responsibility": "Verify component contracts, whole-system scenarios, and fair baseline outcomes.",
+        "status": "PROTOTYPE",
+        "implementation": "Python tests and GitHub Actions synthetic reports",
+        "mode": "LOCAL_CI",
+        "depends_on": ["protocol_orchestration"],
+        "limitations": ["Passing local tests does not establish production readiness or superiority."],
+        "invariants": ["SYS-015"],
+    },
+    {
+        "id": "cee_ivm_research_lineage",
+        "responsibility": "Inform execution environment, transition, commitment and recovery semantics.",
+        "status": "RESEARCH_INPUT",
+        "implementation": "Separate research artifacts mapped into KIN-SYS design",
+        "mode": "SOURCE_RECONCILIATION_REQUIRED",
+        "depends_on": ["execution_and_history"],
+        "limitations": ["Neither CEE nor IVM alone is the complete KIN-SYS system."],
+        "invariants": ["SYS-005", "SYS-006", "SYS-011"],
+    },
+    {
+        "id": "crs_cisa_research_lineage",
+        "responsibility": "Contribute distinct research requirements where traceable to source artifacts.",
+        "status": "RESEARCH_INPUT",
+        "implementation": "Source crosswalk and pending version reconciliation",
+        "mode": "SOURCE_RECONCILIATION_REQUIRED",
+        "depends_on": ["protocol_orchestration", "identity_authority", "execution_and_history"],
+        "limitations": ["Exact source-version relationships and whole-system mappings remain to be reconciled."],
+        "invariants": ["SYS-001", "SYS-005", "SYS-011"],
+    },
+)
+
+
+def system_manifest() -> dict[str, Any]:
+    """Return a detached, machine-readable inventory of all logical responsibilities."""
+    return {
+        "model_version": SYSTEM_MODEL_VERSION,
+        "scope": "WHOLE_KIN_SYS_SYSTEM",
+        "status_semantics": {
+            "SPECIFIED": "Documented intent; not implemented.",
+            "INTERFACE_MODELLED": "Interface/partial research exists; complete behaviour is not implemented.",
+            "SIMULATED": "Executable substitute only; real-world function is not performed.",
+            "PROTOTYPE": "Limited local implementation with explicit limitations.",
+            "INTEGRATED": "Exercised through a shared end-to-end contract in the declared profile.",
+            "INDEPENDENTLY_VALIDATED": "Evidence reproduced or evaluated by an independent reviewer.",
+            "PRODUCTION_ACCEPTED": "A specific deployment profile passed its acceptance gates.",
+            "OPEN_DESIGN": "Purpose or requirements are unresolved.",
+            "RESEARCH_INPUT": "Source material informs design but is not itself the KIN-SYS implementation.",
+        },
+        "components": deepcopy(list(_COMPONENTS)),
+        "system_claims": [
+            "This manifest describes intended system responsibilities, not a production deployment.",
+            "A passing component test is not evidence of whole-system correctness.",
+            "MINAH AI, statutory rules, payment provider and edge operation are simulated in this demonstrator.",
+            "No physical Nexus Pod, distributed consensus, live institutional service, or live payment is implemented here.",
+            "The $KIN economic mechanism remains optional and unresolved.",
+        ],
+    }
