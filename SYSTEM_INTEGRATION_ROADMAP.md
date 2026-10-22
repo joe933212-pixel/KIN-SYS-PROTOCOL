@@ -65,6 +65,12 @@ The following are logical responsibilities, not a claim that every item is imple
 - **Kagoro DSL** should be evaluated as a candidate formal language for expressing jurisdiction-specific law, institutional rules, authority conditions, exceptions, and permitted transitions. Its status as a required KIN-SYS component is an open architecture decision pending semantic fit, conformance tests, and comparison with simpler alternatives. Do not assume it is mandatory before that evidence exists.
 - **$KIN** is not assumed necessary. Its inclusion must be justified by a system-level use case and comparison with simpler accounting/settlement mechanisms.
 
+## Deployment profiles are first-class design targets
+
+KIN-SYS is software-first and hardware-independent. Start with the standard software profile, then exercise the same core obligations under constrained connectivity/power and an optional hardware-enhanced security profile. The profiles are defined in [DEPLOYMENT_PROFILES.md](DEPLOYMENT_PROFILES.md) and represented in protocol-reference/deployment_profiles.py. They are design targets, not evidence of implementation or certification.
+
+Every profile must preserve the same authority, rule-version, transition, replay, provenance/freshness, privacy, audit, and recovery obligations. A profile may add deployment controls but must not silently weaken the core contract. Hardware availability may affect which operations can safely proceed, but it must not change the protocol authority model. Nexus Pods and their HSM/proof capabilities remain optional infrastructure. Test power loss and network partitions using generic simulated infrastructure before deciding whether a physical Pod is needed. Compare software-only and hardware-enhanced approaches for cost, security, reliability, performance, and operational complexity.
+
 ## 4. One shared end-to-end operation model
 
 Every consequential operation, regardless of which component receives it, should be traceable to a common logical context. The wire encoding remains undecided; this is the semantic contract that implementations must preserve.
