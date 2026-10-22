@@ -27,7 +27,7 @@
 | Offline edge behaviour | Requirements identified | Offline authority model and reconciliation tests |
 | Cross-institution trust | Open design | Trust federation, governance, and dispute model |
 | Integrated demonstrator | Synthetic end-to-end software slice implemented; 79-test CI suite passes; machine-readable candidate and paired conventional reports generated | Expand adversarial and recovery cases, extend the matched comparator, and review component interfaces; all non-protocol adapters remain simulated |
-| Statutory remittance | Integrated demonstrator requirement specified; not implemented | Authoritative rule pack, obligation calculation, payment evidence contract, exemptions/deferments, reconciliation, legal and fiscal review |
+| Statutory remittance | Fictional tax assessment and simulated payment lifecycle implemented in the demonstrator; production statutory remittance not implemented | Authoritative rule pack, institution-approved obligation calculation, real provider integration, exemptions/deferments, reconciliation, legal and fiscal review |
 | Economic accounting / $KIN | Open design; not assumed necessary for statutory remittance | Purpose, accounting rules, abuse model, and legal/economic review |
 | MINAH AI boundary | Conceptual boundary documented; integrated adapter specified in demonstrator plan | Implement deterministic adapter first; test uncertainty, source citation, model/version changes, and authority separation |
 | Nexus Pods / edge deployment | Conceptual deployment form; simulated edge profile specified | Offline action policy, resource bounds, key custody, update/maintenance profile, hardware and field testing |
