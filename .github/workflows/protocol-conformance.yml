@@ -33,10 +33,16 @@ jobs:
         run: PYTHONPATH=protocol-reference python -m comparators.paired_harness > comparison-results.json
       - name: Verify paired comparison report
         run: python -c "import json; r=json.load(open('comparison-results.json', encoding='utf-8')); assert r['all_equivalent_on_observed_fields'], r"
-      - name: Upload normalized comparison report
+      - name: Generate integrated demonstrator report
+        run: PYTHONPATH=protocol-reference python -m integrated_demo > integrated-demo-results.json
+      - name: Verify integrated demonstrator report
+        run: python -c "import json; r=json.load(open('integrated-demo-results.json', encoding='utf-8')); assert r['status'] == 'DEMO_READY_AFTER_SIMULATED_REMITTANCE', r; assert r['payment']['funds_moved'] is False, r; assert r['minah_advisory']['may_authorise'] is False, r"
+      - name: Upload reproducible research reports
         uses: actions/upload-artifact@v4
         with:
-          name: paired-comparison-results
-          path: comparison-results.json
+          name: protocol-and-integrated-demo-results
+          path: |
+            comparison-results.json
+            integrated-demo-results.json
           if-no-files-found: error
           retention-days: 30
