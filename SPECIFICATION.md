@@ -59,7 +59,7 @@ The semantics and role of $KIN remain an open design decision. This specificatio
 
 ## 7. AI-assisted components
 
-AI may assist with interpretation, routing, analysis, or recommendations only within an explicitly bounded role. Consequential institutional transitions must pass through deterministic policy and authority checks. MINAH AI is conceptual; its permissions, reliability envelope, evaluation method, and prohibited actions remain to be specified.
+MINAH is intended as the jurisprudential oracle and sovereignty gatekeeper for a configured jurisdiction or governing domain. She evaluates applicable law and institutional rules against case evidence and produces a traceable disposition. Jurisdiction-specific training/adaptation, authoritative source provenance, effective-date handling, conflict and uncertainty treatment, and acceptance evaluation must be specified. The protocol must not rely on MINAH's voluntary compliance to prevent bypass: IVM/CEE-informed execution and the wider KIN-SYS controls must enforce mandatory transition and authority constraints even if MINAH returns an incorrect or malicious result. MINAH cannot rewrite her own governing rules, grant herself authority, or directly commit protected state. Decisions reserved by law to an independent institution or official must remain with that authority.
 
 ## 8. Governance and upgrades
 
