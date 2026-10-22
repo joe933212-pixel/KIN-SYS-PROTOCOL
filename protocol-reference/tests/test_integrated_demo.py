@@ -185,6 +185,45 @@ demo.run_case(consignment_id="RECOVERY-CASE")
             self.assertEqual(obligations, 1)
             self.assertEqual(payments, 1)
 
+    def test_restart_after_provider_ack_recovers_without_duplicate_payment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = str(Path(tmp) / "kin-sys-ack-recovery")
+            script = r"""
+import os
+import sys
+from integrated_demo import IntegratedDemonstrator
+from payment_lifecycle import PaymentLifecycle
+def crash_before_settlement(self, *args, **kwargs):
+    os._exit(83)
+PaymentLifecycle.record_settlement = crash_before_settlement
+demo = IntegratedDemonstrator(database_prefix=sys.argv[1])
+demo.run_case(consignment_id="ACK-RECOVERY-CASE")
+"""
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(ROOT)
+            child = subprocess.run(
+                [sys.executable, "-c", script, prefix],
+                env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(child.returncode, 83, child.stderr)
+
+            resumed = IntegratedDemonstrator(database_prefix=prefix)
+            self.addCleanup(resumed.close)
+            result = resumed.run_case(consignment_id="ACK-RECOVERY-CASE")
+            payment_id = "ACK-RECOVERY-CASE:TAX:1"
+            payment = resumed.payment_lifecycle.get_payment(payment_id)
+            history = resumed.payment_lifecycle.history(payment_id)
+
+            self.assertEqual(result["status"], "DEMO_READY_AFTER_SIMULATED_REMITTANCE")
+            self.assertEqual(payment["status"], "SETTLED")
+            self.assertEqual(payment["settlement_reference"], f"SIMULATED-SETTLEMENT:{payment_id}")
+            self.assertEqual(
+                [event["event_type"] for event in history],
+                ["INSTRUCTION_CREATED", "PROVIDER_ACKNOWLEDGEMENT", "SETTLEMENT_EVIDENCE"],
+            )
+            self.assertEqual(len({event["event_id"] for event in history}), 3)
+            self.assertFalse(result["payment_lifecycle"]["funds_moved"])
+
     def test_reusing_consignment_id_with_different_authority_is_rejected(self):
         from workflows.institutional_workflow import InstitutionalWorkflow, WorkflowConflict
         workflow = InstitutionalWorkflow()
