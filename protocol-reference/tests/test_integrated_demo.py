@@ -100,6 +100,36 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["edge_queue"]["payload"]["action"], "REQUEST_CENTRAL_REVIEW")
         self.assertIn("OFFLINE_QUEUE_REPLAY_IS_NOT_INSTITUTIONAL_APPROVAL", result["claims"])
 
+    def test_reconnect_with_current_context_only_enters_central_review_queue(self):
+        result = self.run_case(edge_connected=False, edge_reconnect=True)
+        self.assertEqual(result["status"], "PENDING")
+        self.assertEqual(result["edge_queue"]["status"], "READY_FOR_CENTRAL_REVIEW")
+        self.assertEqual(result["reason"], "READY_FOR_CENTRAL_REVIEW_NOT_INSTITUTIONAL_APPROVAL")
+        self.assertEqual(result["history"], [])
+
+    def test_reconnect_with_stale_evidence_remains_deferred(self):
+        result = self.run_case(
+            edge_connected=False, edge_reconnect=True,
+            edge_current_evidence_version="SYNTHETIC-EVIDENCE-2",
+        )
+        self.assertEqual(result["edge_queue"]["status"], "DEFERRED_STALE_EVIDENCE")
+        self.assertEqual(result["status"], "PENDING")
+
+    def test_reconnect_with_rule_drift_remains_deferred(self):
+        result = self.run_case(
+            edge_connected=False, edge_reconnect=True,
+            edge_current_rule_version="SYNTHETIC-OLD-RULE",
+        )
+        self.assertEqual(result["edge_queue"]["status"], "DEFERRED_RULE_VERSION_MISMATCH")
+        self.assertEqual(result["status"], "PENDING")
+
+    def test_reconnect_with_revoked_authority_is_rejected(self):
+        result = self.run_case(
+            edge_connected=False, edge_reconnect=True, edge_authority_active=False,
+        )
+        self.assertEqual(result["edge_queue"]["status"], "REJECTED_AUTHORITY_REVOKED")
+        self.assertEqual(result["status"], "PENDING")
+
     def test_synthetic_exemption_has_explicit_zero_obligation_without_payment(self):
         result = self.run_case(exempt=True)
         self.assertEqual(result["status"], "DEMO_READY_UNDER_SYNTHETIC_EXEMPTION")
