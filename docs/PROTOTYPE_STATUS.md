@@ -47,4 +47,4 @@ The transition tests exercise local state/history properties using SQLite. The t
 
 Even if tests pass, they establish only the local properties exercised. They do not establish cryptographic authentication, the full CEE lifecycle, phase-by-phase crash recovery, concurrent multi-process correctness, distributed commitment, multi-institution trust, production readiness, novelty, or commercial superiority.
 
-Next engineering gates: test process interruption between lifecycle writes, broader corrupted/stale evidence paths, and recovery across component boundaries; refine serialised adapter contracts; and arrange independent review. The current concurrency tests cover specific SQLite instruction/enqueue races only, not general concurrent multi-process correctness.
+Next engineering gates: test process interruption during settlement and reconciliation writes, broader corrupted/stale evidence paths, and recovery across component boundaries; refine serialised adapter contracts; and arrange independent review. The current concurrency tests cover specific SQLite instruction/enqueue races only, not general concurrent multi-process correctness.
