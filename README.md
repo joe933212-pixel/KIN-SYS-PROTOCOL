@@ -30,7 +30,7 @@ These are design objectives and research questions, not a claim that every prope
 
 ## Conceptual elements
 
-MINAH AI, Nexus Pods, and $KIN are considered within the wider KIN-SYS concept. Their exact authority, trust boundaries, interfaces, operational roles, and economic rules remain subject to specification and evidence. An AI component must not silently acquire institutional authority; an edge device must not be trusted solely because it is physically deployed; and token balances must not be treated as proof of an underlying real-world asset or entitlement without a separately defined and verifiable basis.
+MINAH is intended to serve as KIN-SYS's jurisprudential oracle and sovereignty gatekeeper, configured and trained for the applicable jurisdiction or governing domain. Her dispositions must be grounded in traceable, versioned legal sources and evidence. IVM/CEE-informed execution and wider KIN-SYS safeguards must prevent any single component—including MINAH—from bypassing mandatory rules or committing protected state outside the authorised transition path. Kagoro DSL is a candidate formal language for expressing legal and institutional rules; whether it becomes a required protocol component must be decided through semantic and conformance evaluation. Nexus Pods and $KIN remain subject to their own specification and evidence requirements. An edge device is not authority merely because it is physically deployed, and token balances are not proof of an underlying real-world asset or entitlement without a separately defined and verifiable basis.
 
 ## Research lineage and source material
 
@@ -39,7 +39,7 @@ MINAH AI, Nexus Pods, and $KIN are considered within the wider KIN-SYS concept. 
 - [Earlier KIN-SYS v2 repository](https://github.com/joe933212-pixel/KIN-SYS-v2) — legacy concepts and artifacts to audit; not proof that described capabilities are operational.
 - [Earlier KIN-SYS Protocol v2.1 repository](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL-v2.1) — legacy artifacts to audit, not the specification authority for this repository.
 
-The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the evidence register. Kagoro DSL remains an independent language/compiler project and is not a required protocol component.
+The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the evidence register. Kagoro DSL is a separate language/compiler project whose possible role as KIN-SYS's formal legal/policy language is an open design decision pending conformance evidence.
 
 ## Start here
 
