@@ -96,6 +96,9 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["status"], "PENDING")
         self.assertEqual(result["history"], [])
         self.assertIsNone(result["payment"])
+        self.assertEqual(result["edge_queue"]["status"], "QUEUED_OFFLINE")
+        self.assertEqual(result["edge_queue"]["payload"]["action"], "REQUEST_CENTRAL_REVIEW")
+        self.assertIn("OFFLINE_QUEUE_REPLAY_IS_NOT_INSTITUTIONAL_APPROVAL", result["claims"])
 
     def test_synthetic_exemption_has_explicit_zero_obligation_without_payment(self):
         result = self.run_case(exempt=True)
