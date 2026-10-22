@@ -125,13 +125,28 @@ class PaymentLifecycleTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(len(rows), 1)
 
-    def test_failed_instruction_attempt_leaves_no_partial_event_or_status(self):
-        with self.assertRaisesRegex(ValueError, "EVENT_ID_REQUIRED"):
-            # Force the event validation to fail inside the transaction by
-            # temporarily invoking the event helper with an empty ID.
-            self.payments._event("", "PAY-1", "TEST", {})
-        self.assertEqual(self.payments.get_payment("PAY-1")["status"], "INSTRUCTION_CREATED")
-        self.assertEqual(len(self.payments.history("PAY-1")), 1)
+    def test_instruction_failure_rolls_back_payment_and_obligation_status(self):
+        self.payments.create_obligation("OBL-2", 60000, "UGX", "SYNTHETIC-ASSESSMENT-2")
+        original_event = self.payments._event
+
+        def fail_event(*args, **kwargs):
+            raise ValueError("INJECTED_EVENT_WRITE_FAILURE")
+
+        self.payments._event = fail_event
+        try:
+            with self.assertRaisesRegex(ValueError, "INJECTED_EVENT_WRITE_FAILURE"):
+                self.payments.create_instruction("PAY-2", "OBL-2")
+        finally:
+            self.payments._event = original_event
+
+        payment = self.payments.db.execute(
+            "SELECT payment_id FROM payments WHERE obligation_id='OBL-2'"
+        ).fetchone()
+        obligation = self.payments.db.execute(
+            "SELECT status FROM obligations WHERE obligation_id='OBL-2'"
+        ).fetchone()
+        self.assertIsNone(payment)
+        self.assertEqual(obligation["status"], "RECORDED")
 
     def test_payment_records_survive_database_reopen(self):
         self.payments.close()
