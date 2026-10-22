@@ -44,6 +44,20 @@ The adapters are deliberately simulated. The tax rule is fictional, no money mov
 
 Tests are in `protocol-reference/tests/test_payment_lifecycle.py`. The model is wired into `integrated_demo.py` for simulated confirmed, declined, and unknown outcomes; the integrated report includes a separate lifecycle trace and explicitly labels settlement as simulated. There is no provider adapter, real money movement, distributed transaction, cryptographic evidence validation, reversal/refund workflow, or production reconciliation service. An independent conventional payment-lifecycle implementation and paired observable-contract tests exist in `protocol-reference/comparators/conventional_payment_lifecycle.py` and `protocol-reference/tests/test_paired_payment_lifecycle.py`. A matched synthetic whole-flow comparator is now in `protocol-reference/comparators/paired_integrated_harness.py`; run it with `PYTHONPATH=protocol-reference python -m comparators.paired_integrated_harness`. It compares nine declared scenarios across institutional outcomes, synthetic tax assessment, payment statuses, and the disconnected profile. The comparison is limited to a shared observable result vector and does not establish a performance, cost, security, or novelty advantage.
 
+## Simulated offline queue and reconnect checks
+
+`protocol-reference/edge_queue.py` provides a local SQLite queue for offline operations. It pins evidence and rule versions, rejects conflicting operation-ID reuse, and revalidates authority, evidence version, and rule version at reconnect. A successful replay means only `READY_FOR_CENTRAL_REVIEW`; it is not an institutional approval. Deferred or rejected operations cannot be silently reactivated under the same ID; changed evidence/context requires a newly identified operation. Tests in `protocol-reference/tests/test_edge_queue.py` cover duplicate enqueue, stale evidence, rule drift, authority revocation, recovery with a fresh ID, and file-backed reopen. This queue is currently a separate research module, not yet wired into the integrated demonstrator or its paired whole-flow scenarios.
+
+## Paired integrated workflow comparison
+
+Run the paired nine-scenario synthetic comparison from the repository root:
+
+```sh
+PYTHONPATH=protocol-reference python -m comparators.paired_integrated_harness
+```
+
+The candidate and independently implemented conventional path are compared on a declared observable vector for happy path, destination rejection, unauthorised origin, rule drift, revoked origin authority, payment decline, unknown payment outcome, synthetic exemption, and disconnected edge profile. Equivalence means only that the listed fields match in these synthetic cases; it does not establish advantage, security, production readiness, or real institutional compatibility.
+
 ## Two-institution workflow experiment
 
 The experimental KIN-SYS research model is in `protocol-reference/workflows/institutional_workflow.py`; its independently implemented conventional baseline is `protocol-reference/comparators/conventional_workflow.py`. Matched contract tests are in `protocol-reference/tests/test_institutional_workflow.py`.
