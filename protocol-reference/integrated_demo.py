@@ -135,6 +135,7 @@ class IntegratedDemonstrator:
         exempt: bool = False,
         revoke_origin_before_decision: bool = False,
         origin_rule_version_override: str | None = None,
+        destination_rule_version_override: str | None = None,
     ) -> dict[str, Any]:
         if not self.identity.permits("EXPORTER-TEST", "SUBMIT_CONSIGNMENT"):
             raise PermissionError("EXPORTER_NOT_AUTHORISED")
@@ -151,7 +152,7 @@ class IntegratedDemonstrator:
             origin_authority="ORIGIN-A",
             destination_authority="DESTINATION-B",
             origin_rule_version=origin_rule_version_override or DEMO_RULE_VERSION,
-            destination_rule_version=DEMO_RULE_VERSION,
+            destination_rule_version=destination_rule_version_override or DEMO_RULE_VERSION,
         )
         if not edge_connected:
             # Queue a request for later central review; never decide institutionally offline.
