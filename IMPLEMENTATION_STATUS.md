@@ -41,9 +41,9 @@ A legacy codebase or document describing a feature does not mark it implemented 
 
 ## Immediate next steps
 
-1. Expand the integrated slice's challenge tests: conflicting rule versions, revocation timing, payment retries/reconciliation, corrupted or stale evidence, and restart/recovery across component boundaries.
+1. Expand the integrated slice's challenge tests: payment retries/reconciliation, corrupted or stale evidence, and restart/recovery across component boundaries. Revocation timing and rule-version drift now have initial tests.
 2. Implement the same end-to-end contract in the conventional comparator, not just the existing institutional-stage baseline, and compare outcomes and complexity fairly.
-3. Specify versioned interface contracts between the protocol, identity, MINAH AI, statutory remittance, payment, and edge adapters.
+3. Refine and test the draft versioned interface contracts between the protocol, identity, MINAH AI, statutory remittance, payment, and edge adapters.
 4. Continue source-version reconciliation for CRS, CISA, IVM, and CEE alongside integration work; do not treat those artifacts as the whole KIN-SYS system.
 5. Add a richer simulated edge/Nexus Pod profile after interface contracts stabilise; physical hardware and institutional integrations remain separate validation gates.
 6. Prepare an external-review bundle with the demo script, synthetic rules, test reports, limitations, and unresolved decisions.
