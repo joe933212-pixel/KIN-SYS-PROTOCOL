@@ -67,11 +67,23 @@ class InstitutionalWorkflowContractTests(unittest.TestCase):
                                actor_id="ORIGIN-A", decision="APPROVE", rule_version="1.0")
                 self.assertFalse(store.decide(**request)["duplicate"])
                 self.assertTrue(store.decide(**request)["duplicate"])
-                changed = dict(request, decision="REJECT")
                 conflict = WorkflowConflict if implementation is InstitutionalWorkflow else ValueError
-                with self.assertRaises(conflict):
-                    store.decide(**changed)
-                self.assertEqual(len(store.history("C-001")), 1)
+                altered_replays = (
+                    dict(request, decision="REJECT"),
+                    dict(request, actor_id="UNAUTHORISED-ACTOR"),
+                    dict(request, stage="DESTINATION"),
+                    dict(request, rule_version="2.0"),
+                    dict(request, consignment_id="C-OTHER"),
+                )
+                for altered in altered_replays:
+                    with self.subTest(altered=altered):
+                        with self.assertRaises(conflict):
+                            store.decide(**altered)
+                        self.assertEqual(len(store.history("C-001")), 1)
+                        self.assertEqual(store.stage("C-001", "ORIGIN").get(
+                            "outcome", store.stage("C-001", "ORIGIN").get("result")
+                        ), "APPROVE")
+                        self.assertEqual(len(store.history("C-OTHER")), 0)
 
     def test_authority_revocation_and_rule_version_are_stage_specific(self):
         for implementation in IMPLEMENTATIONS:
