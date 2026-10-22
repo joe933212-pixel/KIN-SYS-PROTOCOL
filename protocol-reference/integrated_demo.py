@@ -305,7 +305,12 @@ class IntegratedDemonstrator:
                 "funds_moved": False,
             }
 
-        if origin_result["status"] == "REJECTED" or destination_result["status"] == "REJECTED":
+        if (
+            origin_result["status"] == "REJECTED"
+            or destination_result["status"] == "REJECTED"
+            or not origin_currently_valid
+            or not destination_currently_valid
+        ):
             final_status = "REJECTED_AUTHORITY_ACTION_INVALID"
         elif origin.get("outcome") == "REJECT" or destination.get("outcome") == "REJECT":
             final_status = "INSTITUTIONAL_DECISION_REJECTED"
