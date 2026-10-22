@@ -375,7 +375,7 @@ demo.run_case(consignment_id="DESTINATION-RECOVERY-CASE")
                 ("DESTINATION-RECOVERY-CASE:OBL:TAX:1",),
             ).fetchone()[0]
             instruction_count = resumed.payment_lifecycle.db.execute(
-                "SELECT COUNT(*) FROM payment_instructions WHERE payment_id=?",
+                "SELECT COUNT(*) FROM payments WHERE payment_id=?",
                 ("DESTINATION-RECOVERY-CASE:TAX:1",),
             ).fetchone()[0]
             self.assertEqual(obligation_count, 1)
