@@ -56,7 +56,15 @@ Proof-based exchange does not mean zero storage. Depending on the use case, impl
 
 This repository does not claim a deployed Pod or a completed production proof pipeline. Pod-specific hardware selection and physical engineering are separate workstreams and must not constrain the protocol specification.
 
-## 5. MINAH: jurisprudential oracle and sovereignty gatekeeper
+## 5. Deployment profiles and software/hardware boundary
+
+KIN-SYS is software-first and hardware-independent. It should be deployable on suitable existing infrastructure at an institution, university, pharmacy, factory, enterprise, or public agency, subject to the adapters, authority configuration, operational controls, and conformance evidence that deployment requires. Hardware independence does not mean every host has identical security or availability guarantees: each profile must declare its assumptions and limitations.
+
+Three initial design profiles are defined in [DEPLOYMENT_PROFILES.md](DEPLOYMENT_PROFILES.md): standard software deployment; constrained connectivity and power; and optional hardware-enhanced security. They share the same core protocol obligations. The constrained profile requires explicit offline permission classes, durable local state, stale/revoked authority handling, replay-safe reconciliation, and recovery tests. The optional hardware profile may use an HSM, TEE, secure boot, or specialised proof compute, but must document the specific threat reduced and the hardware trust boundary. No profile mandates a Nexus Pod.
+
+This separation is deliberate: protocol semantics and conformance belong in the protocol; adapters and software operations belong in the implementation; Pod physical design, power engineering, HSM selection and proof-workload optimisation belong in a separate optional infrastructure workstream. Zero-knowledge proof generation and verification must be evaluated separately, and any claimed storage/bandwidth savings must be measured rather than assumed.
+
+## 6. MINAH: jurisprudential oracle and sovereignty gatekeeper
 
 MINAH is intended to be KIN-SYS's jurisprudential oracle and sovereignty gatekeeper, configured and trained for the jurisdiction or governing domain in which a deployment operates (for example, a country, company, or enterprise). Her remit is to reason over the applicable legal and institutional order, identify the rules and evidence relevant to a proposed action, and return a traceable jurisprudential disposition.
 
