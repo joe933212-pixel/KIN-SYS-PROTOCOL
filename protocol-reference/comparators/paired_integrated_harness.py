@@ -17,12 +17,15 @@ sys.path.insert(0, str(HERE))
 from integrated_demo import IntegratedDemonstrator, DEMO_RULE_VERSION
 from comparators.conventional_workflow import ConventionalWorkflow
 from comparators.conventional_payment_lifecycle import ConventionalPaymentLifecycle
+from comparators.conventional_edge_queue import ConventionalEdgeQueue
 
 
 SCENARIOS = {
     "happy_path", "destination_rejection", "unauthorised_origin",
     "origin_rule_drift", "origin_revoked", "payment_declined",
     "payment_unknown", "synthetic_exemption", "edge_disconnected",
+    "edge_reconnect_current", "edge_reconnect_stale_evidence",
+    "edge_reconnect_rule_drift", "edge_reconnect_revoked",
 }
 
 
@@ -46,6 +49,15 @@ def _candidate(scenario: str) -> dict[str, Any]:
             args["exempt"] = True
         elif scenario == "edge_disconnected":
             args["edge_connected"] = False
+        elif scenario.startswith("edge_reconnect_"):
+            args["edge_connected"] = False
+            args["edge_reconnect"] = True
+            if scenario == "edge_reconnect_stale_evidence":
+                args["edge_current_evidence_version"] = "SYNTHETIC-EVIDENCE-2"
+            elif scenario == "edge_reconnect_rule_drift":
+                args["edge_current_rule_version"] = "SYNTHETIC-OLD-RULE"
+            elif scenario == "edge_reconnect_revoked":
+                args["edge_authority_active"] = False
         return _normalise_candidate(demo.run_case(consignment_id=f"PAIR-{scenario.upper()}", **args))
     finally:
         demo.close()
@@ -80,15 +92,41 @@ def _conventional(scenario: str) -> dict[str, Any]:
     workflow = ConventionalWorkflow()
     payments = ConventionalPaymentLifecycle()
     try:
-        if scenario == "edge_disconnected":
-            return {
-                "status": "PENDING", "origin_result": None, "origin_operation_status": None,
-                "origin_reason": None, "destination_result": None,
-                "destination_operation_status": None, "destination_reason": None,
-                "obligation_amount_minor": None, "payment_status": None,
-                "payment_lifecycle_status": None, "edge_queue_status": "QUEUED_OFFLINE",
-                "minah_may_authorise": False, "funds_moved": False,
-            }
+        if scenario == "edge_disconnected" or scenario.startswith("edge_reconnect_"):
+            edge = ConventionalEdgeQueue()
+            try:
+                queued = edge.enqueue(
+                    f"{case_id}:EDGE:SUBMIT:1",
+                    {"case_id": case_id, "action": "REQUEST_CENTRAL_REVIEW"},
+                    evidence_version="SYNTHETIC-EVIDENCE-1",
+                    rule_version=DEMO_RULE_VERSION,
+                )
+                if scenario != "edge_disconnected":
+                    current_evidence = (
+                        "SYNTHETIC-EVIDENCE-2"
+                        if scenario == "edge_reconnect_stale_evidence"
+                        else "SYNTHETIC-EVIDENCE-1"
+                    )
+                    current_rule = (
+                        "SYNTHETIC-OLD-RULE"
+                        if scenario == "edge_reconnect_rule_drift"
+                        else DEMO_RULE_VERSION
+                    )
+                    active = scenario != "edge_reconnect_revoked"
+                    queued = edge.replay(
+                        queued["operation_id"], current_evidence_version=current_evidence,
+                        current_rule_version=current_rule, authority_active=active,
+                    )
+                return {
+                    "status": "PENDING", "origin_result": None, "origin_operation_status": None,
+                    "origin_reason": None, "destination_result": None,
+                    "destination_operation_status": None, "destination_reason": None,
+                    "obligation_amount_minor": None, "payment_status": None,
+                    "payment_lifecycle_status": None, "edge_queue_status": queued["status"],
+                    "minah_may_authorise": False, "funds_moved": False,
+                }
+            finally:
+                edge.close()
 
         origin_rule = "SYNTHETIC-OLD-RULE" if scenario == "origin_rule_drift" else DEMO_RULE_VERSION
         workflow.create_case(
