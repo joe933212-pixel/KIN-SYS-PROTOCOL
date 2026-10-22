@@ -37,6 +37,10 @@ jobs:
         run: PYTHONPATH=protocol-reference python -m integrated_demo > integrated-demo-results.json
       - name: Verify integrated demonstrator report
         run: python -c "import json; r=json.load(open('integrated-demo-results.json', encoding='utf-8')); assert r['status'] == 'DEMO_READY_AFTER_SIMULATED_REMITTANCE', r; assert r['payment']['funds_moved'] is False, r; assert r['payment_lifecycle']['status'] == 'SIMULATED_SETTLED', r; assert r['payment_lifecycle']['recorded_status'] == 'SETTLED', r; assert r['payment_lifecycle']['funds_moved'] is False, r; assert r['minah_advisory']['may_authorise'] is False, r"
+      - name: Generate paired integrated workflow report
+        run: PYTHONPATH=protocol-reference python -m comparators.paired_integrated_harness > paired-integrated-results.json
+      - name: Verify paired integrated workflow report
+        run: python -c "import json; r=json.load(open('paired-integrated-results.json', encoding='utf-8')); assert r['all_equivalent_on_observed_fields'], r"
       - name: Upload reproducible research reports
         uses: actions/upload-artifact@v4
         with:
@@ -44,5 +48,6 @@ jobs:
           path: |
             comparison-results.json
             integrated-demo-results.json
+            paired-integrated-results.json
           if-no-files-found: error
           retention-days: 30
