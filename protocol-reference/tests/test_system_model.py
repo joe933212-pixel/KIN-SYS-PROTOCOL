@@ -68,6 +68,8 @@ class WholeSystemModelTests(unittest.TestCase):
                 "protocol_orchestration",
             }.issubset(central_components))
             self.assertIn("edge_operation", {event["component_id"] for event in edge["system_trace"]})
+        finally:
+            demo.close()
 
     def test_system_trace_rejects_cross_case_or_incomplete_events(self):
         event = {
@@ -84,8 +86,6 @@ class WholeSystemModelTests(unittest.TestCase):
         self.assertTrue(validate_system_trace([event], case_id="CASE-A"))
         self.assertFalse(validate_system_trace([event], case_id="CASE-B"))
         self.assertFalse(validate_system_trace([{"case_id": "CASE-A"}], case_id="CASE-A"))
-        finally:
-            demo.close()
 
 
 if __name__ == "__main__":
