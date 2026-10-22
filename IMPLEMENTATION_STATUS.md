@@ -41,8 +41,8 @@ A legacy codebase or document describing a feature does not mark it implemented 
 
 ## Immediate next steps
 
-1. Expand challenge tests: file-backed payment reopen, process interruption, corrupted evidence, and recovery across component boundaries. Revocation timing and rule-version drift already have initial tests.
-2. Extend the matched whole-flow comparator beyond its current nine scenarios to include edge reconnect, stale evidence, rule drift, and revoked authority. Compare outcomes and complexity fairly; current equivalence is limited to the declared result vector.
+1. Expand challenge tests: file-backed payment reopen, process interruption, concurrent access, corrupted evidence, and recovery across component boundaries. Revocation timing and rule-version drift already have initial tests.
+2. Extend the matched whole-flow comparator beyond its current thirteen scenarios as further requirements emerge. Compare outcomes and complexity fairly; current equivalence is limited to the declared result vector.
 3. Refine and test versioned adapter contracts between the protocol, identity, MINAH AI, statutory assessment, payment, and edge adapters.
 4. Continue source-version reconciliation for CRS, CISA, IVM, and CEE alongside integration work; do not treat those artifacts as the whole KIN-SYS system.
 5. Add a richer simulated edge/Nexus Pod profile after interface contracts stabilise; physical hardware and institutional integrations remain separate validation gates.
