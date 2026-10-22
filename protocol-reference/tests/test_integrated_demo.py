@@ -1,0 +1,81 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+"""End-to-end synthetic KIN-SYS demonstrator tests; no real services or funds."""
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from integrated_demo import IntegratedDemonstrator, SyntheticTaxRules
+
+
+class IntegratedDemonstratorTests(unittest.TestCase):
+    def run_case(self, **kwargs):
+        demo = IntegratedDemonstrator()
+        self.addCleanup(demo.close)
+        return demo.run_case(**kwargs)
+
+    def test_happy_path_integrates_authority_minah_tax_and_simulated_payment(self):
+        result = self.run_case()
+        self.assertEqual(result["status"], "DEMO_READY_AFTER_SIMULATED_REMITTANCE")
+        self.assertEqual(result["institutional_decisions"]["origin"]["result"], "APPROVE")
+        self.assertEqual(result["institutional_decisions"]["destination"]["result"], "APPROVE")
+        self.assertEqual(result["minah_advisory"]["may_authorise"], False)
+        self.assertEqual(result["statutory_obligation"]["legal_status"], "SYNTHETIC_DEMO_RULE_NOT_LAW")
+        self.assertEqual(result["statutory_obligation"]["assessed_amount_minor"], 50_000)
+        self.assertEqual(result["payment"]["status"], "SIMULATED_CONFIRMED")
+        self.assertFalse(result["payment"]["funds_moved"])
+        self.assertEqual(len(result["history"]), 2)
+
+    def test_destination_rejection_cannot_be_overridden_by_origin_approval(self):
+        result = self.run_case(destination_decision="REJECT")
+        self.assertEqual(result["status"], "REJECTED_OR_AUTHORITY_ACTION_INVALID")
+        self.assertEqual(result["institutional_decisions"]["origin"]["result"], "APPROVE")
+        self.assertEqual(result["institutional_decisions"]["destination"]["result"], "REJECT")
+        self.assertIsNone(result["statutory_obligation"])
+        self.assertIsNone(result["payment"])
+
+    def test_payment_timeout_remains_unresolved_not_paid(self):
+        result = self.run_case(payment_outcome="TIMEOUT_UNKNOWN")
+        self.assertEqual(result["status"], "PENDING_PAYMENT_RECONCILIATION")
+        self.assertEqual(result["payment"]["status"], "UNKNOWN_PENDING_RECONCILIATION")
+        self.assertFalse(result["payment"]["funds_moved"])
+
+    def test_minah_missing_evidence_does_not_create_institutional_approval(self):
+        result = self.run_case(minah_evidence={"commodity": "SYNTHETIC_MAIZE"})
+        self.assertEqual(result["minah_advisory"]["status"], "NEEDS_INFORMATION")
+        self.assertEqual(result["minah_advisory"]["may_authorise"], False)
+        # Institutional decisions are still made only by the configured test actors.
+        self.assertEqual(result["institutional_decisions"]["origin"]["result"], "APPROVE")
+
+    def test_unauthorised_actor_is_rejected(self):
+        result = self.run_case(origin_actor="UNAUTHORISED-TEST")
+        self.assertEqual(result["institutional_decisions"]["origin"]["operation"]["reason"],
+                         "AUTHORITY_MISMATCH")
+        self.assertEqual(result["status"], "REJECTED_OR_AUTHORITY_ACTION_INVALID")
+        self.assertIsNone(result["statutory_obligation"])
+
+    def test_disconnected_edge_profile_defers_online_required_decisions(self):
+        result = self.run_case(edge_connected=False)
+        self.assertEqual(result["profile"], "SIMULATED_EDGE_DISCONNECTED")
+        self.assertEqual(result["status"], "PENDING")
+        self.assertEqual(result["history"], [])
+        self.assertIsNone(result["payment"])
+
+    def test_synthetic_exemption_has_explicit_zero_obligation_without_payment(self):
+        result = self.run_case(exempt=True)
+        self.assertEqual(result["status"], "DEMO_READY_UNDER_SYNTHETIC_EXEMPTION")
+        self.assertEqual(result["statutory_obligation"]["assessed_amount_minor"], 0)
+        self.assertEqual(result["payment"]["status"], "NOT_REQUIRED_EXEMPT")
+
+    def test_tax_calculator_rejects_negative_or_non_integer_amounts(self):
+        rules = SyntheticTaxRules()
+        for value in (-1, 1.5, "100"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    rules.assess(value)
+
+
+if __name__ == "__main__":
+    unittest.main()
