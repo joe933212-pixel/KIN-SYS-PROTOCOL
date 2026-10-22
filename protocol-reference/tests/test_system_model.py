@@ -58,6 +58,17 @@ class WholeSystemModelTests(unittest.TestCase):
             self.assertTrue(edge["system_trace_valid"])
             self.assertTrue(validate_system_trace(central["system_trace"], case_id="SYSTEM-MODEL-CENTRAL"))
             self.assertTrue(validate_system_trace(edge["system_trace"], case_id="SYSTEM-MODEL-EDGE"))
+            self.assertEqual(
+                {response["component_id"] for response in central["component_responses"]},
+                {"identity_authority", "minah_ai", "rules_and_statutory_policy", "external_adapters"},
+            )
+            self.assertEqual(
+                {response["component_id"] for response in edge["component_responses"]},
+                {"identity_authority", "minah_ai"},
+            )
+            for response in central["component_responses"] + edge["component_responses"]:
+                self.assertEqual(response["contract_version"], "kin-sys-component-response-0.1")
+                self.assertTrue(response["operation_id"].startswith(response["data"].get("case_id", response["operation_id"].split(":")[0])))
             central_components = {event["component_id"] for event in central["system_trace"]}
             self.assertTrue({
                 "identity_authority",
