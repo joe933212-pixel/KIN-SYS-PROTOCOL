@@ -278,6 +278,60 @@ demo.run_case(consignment_id="ORIGIN-RECOVERY-CASE")
                 any(row["stage"] == "DESTINATION" for row in result["history"])
             )
 
+    def test_restart_after_origin_approval_defers_destination_when_rule_version_changes(self):
+        from workflows.institutional_workflow import InstitutionalWorkflow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = str(Path(tmp) / "origin-rule-drift-recovery")
+            script = r"""
+import os
+import sys
+from integrated_demo import IntegratedDemonstrator
+from workflows.institutional_workflow import InstitutionalWorkflow
+original = InstitutionalWorkflow.decide
+def crash_after_origin_commit(self, **kwargs):
+    result = original(self, **kwargs)
+    if kwargs.get("stage") == "ORIGIN" and result.get("status") == "ACCEPTED":
+        os._exit(85)
+    return result
+InstitutionalWorkflow.decide = crash_after_origin_commit
+demo = IntegratedDemonstrator(database_prefix=sys.argv[1])
+demo.run_case(consignment_id="RULE-DRIFT-RECOVERY-CASE")
+"""
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(ROOT)
+            child = subprocess.run(
+                [sys.executable, "-c", script, prefix],
+                env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(child.returncode, 85, child.stderr)
+
+            resumed = IntegratedDemonstrator(database_prefix=prefix)
+            self.addCleanup(resumed.close)
+            resumed.workflow.set_rule_version(
+                "RULE-DRIFT-RECOVERY-CASE", "DESTINATION", "SYNTHETIC-NEW-RULE"
+            )
+            result = resumed.run_case(
+                consignment_id="RULE-DRIFT-RECOVERY-CASE",
+                destination_rule_version_override="SYNTHETIC-NEW-RULE",
+            )
+
+            self.assertEqual(
+                result["institutional_decisions"]["origin"]["operation"]["status"],
+                "ACCEPTED",
+            )
+            self.assertTrue(
+                result["institutional_decisions"]["origin"]["operation"]["duplicate"]
+            )
+            self.assertEqual(
+                result["institutional_decisions"]["destination"]["operation"]["reason"],
+                "RULE_VERSION_MISMATCH",
+            )
+            self.assertEqual(result["status"], "REJECTED_AUTHORITY_ACTION_INVALID")
+            self.assertIsNone(result["statutory_obligation"])
+            self.assertIsNone(result["payment"])
+            self.assertEqual(len(result["history"]), 1)
+
     def test_reusing_consignment_id_with_different_authority_is_rejected(self):
         from workflows.institutional_workflow import InstitutionalWorkflow, WorkflowConflict
         workflow = InstitutionalWorkflow()
