@@ -332,6 +332,56 @@ demo.run_case(consignment_id="RULE-DRIFT-RECOVERY-CASE")
             self.assertIsNone(result["payment"])
             self.assertEqual(len(result["history"]), 1)
 
+    def test_restart_after_destination_approval_before_obligation_creation(self):
+        from payment_lifecycle import PaymentLifecycle
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = str(Path(tmp) / "destination-approval-recovery")
+            script = r"""
+import os
+import sys
+from integrated_demo import IntegratedDemonstrator
+from payment_lifecycle import PaymentLifecycle
+def crash_before_obligation(self, *args, **kwargs):
+    os._exit(86)
+PaymentLifecycle.create_obligation = crash_before_obligation
+demo = IntegratedDemonstrator(database_prefix=sys.argv[1])
+demo.run_case(consignment_id="DESTINATION-RECOVERY-CASE")
+"""
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(ROOT)
+            child = subprocess.run(
+                [sys.executable, "-c", script, prefix],
+                env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(child.returncode, 86, child.stderr)
+
+            resumed = IntegratedDemonstrator(database_prefix=prefix)
+            self.addCleanup(resumed.close)
+            result = resumed.run_case(consignment_id="DESTINATION-RECOVERY-CASE")
+
+            self.assertEqual(result["status"], "DEMO_READY_AFTER_SIMULATED_REMITTANCE")
+            self.assertTrue(result["institutional_decisions"]["origin"]["operation"]["duplicate"])
+            self.assertTrue(result["institutional_decisions"]["destination"]["operation"]["duplicate"])
+            self.assertEqual(
+                [row["stage"] for row in result["history"]],
+                ["ORIGIN", "DESTINATION"],
+            )
+            self.assertEqual(len(result["history"]), 2)
+            self.assertEqual(result["payment_lifecycle"]["status"], "SIMULATED_SETTLED")
+            self.assertFalse(result["payment_lifecycle"]["funds_moved"])
+            obligation_count = resumed.payment_lifecycle.db.execute(
+                "SELECT COUNT(*) FROM obligations WHERE obligation_id=?",
+                ("DESTINATION-RECOVERY-CASE:OBL:TAX:1",),
+            ).fetchone()[0]
+            instruction_count = resumed.payment_lifecycle.db.execute(
+                "SELECT COUNT(*) FROM payment_instructions WHERE payment_id=?",
+                ("DESTINATION-RECOVERY-CASE:TAX:1",),
+            ).fetchone()[0]
+            self.assertEqual(obligation_count, 1)
+            self.assertEqual(instruction_count, 1)
+            self.assertEqual(len(result["payment_lifecycle"]["history"]), 3)
+
     def test_reusing_consignment_id_with_different_authority_is_rejected(self):
         from workflows.institutional_workflow import InstitutionalWorkflow, WorkflowConflict
         workflow = InstitutionalWorkflow()
