@@ -86,7 +86,19 @@ Simulators are appropriate for expensive or unfinished elements, provided they a
 
 KIN-SYS must be compared against conventional approaches using fair baselines and measurable criteria such as integration effort, failure containment, auditability, policy correctness, recovery behaviour, performance, operational cost, and deployment complexity. If a conventional approach achieves the required result more simply, that is evidence to record—not something to explain away.
 
-## 9. Immediate design sequence
+## 9. Nexus Pods: hardware-rooted local computation and zero-knowledge proofs
+
+Nexus Pods are intended to include an inbuilt hardware security module (HSM) and the local computing capability needed to generate and verify the zero-knowledge proofs required by their declared KIN-SYS deployment profile. This is a foundational design requirement for the proposed Pod, not a claim that the hardware or proof pipeline has already been built.
+
+The design objective is to keep source records and sensitive operational data at, or close to, the institution or edge environment where they are produced whenever the use case and law permit. A Pod should process eligible data locally and transmit a cryptographic proof, commitment, signed attestation, or minimal result that lets an authorised verifier check a specific claim or computation without routinely receiving the underlying raw data. Proofs must be bound to the relevant statement, protocol/circuit version, public inputs, rule or policy version, execution context, and freshness/replay controls.
+
+The HSM's primary role is to protect cryptographic keys and perform supported cryptographic operations, such as signing, key derivation, and device or workload attestation where the chosen hardware supports them. The Pod's general-purpose or specialised compute generates zero-knowledge proofs; we must not assume that an HSM can efficiently generate arbitrary ZK proofs. The architecture should evaluate secure boot, measured software, key isolation, attestation, key rotation/revocation, recovery, and hardware failure as one trust chain. HSM presence alone does not prove the whole Pod is uncompromised.
+
+Proof-based exchange can reduce raw-data transmission and central retention, but it does not make all storage unnecessary. The system may still need to retain commitments, nullifiers or replay-prevention state, proof/public-input references, policy and circuit versions, revocation/freshness data, minimal audit events, and legally required records. Retention must be designed around the use case, threat model, privacy rules, and dispute/recovery obligations. Zero-knowledge proves a defined mathematical relation under stated assumptions; it does not independently prove that the original real-world input was truthful, that the law was interpreted correctly, or that the chosen circuit expresses the intended rule.
+
+Required research includes selecting suitable proof systems and circuits, defining public versus private inputs, proving source and computation provenance, measuring proof-generation and verification cost, benchmarking storage and bandwidth against a fair conventional baseline, and testing compromised keys, stale/replayed proofs, circuit/version mismatch, unavailable verification, and node restart. Each deployment must state which claims are proved, which facts still depend on trusted sources, and what remains stored locally or centrally.
+
+## 10. Immediate design sequence
 
 1. Ratify this shared problem statement and identify unresolved assumptions.
 2. Specify the core protocol contract and deployment profile, including identity, authority, case/operation identity, legal rule versions, evidence references, lifecycle states, and failure semantics.
@@ -95,6 +107,6 @@ KIN-SYS must be compared against conventional approaches using fair baselines an
 5. Extend the integrated demonstrator across the complete path using synthetic data first; label each simulated or unimplemented boundary.
 6. Only then choose the next component implementation based on which unresolved system-level risk it reduces.
 
-## 10. The intended outcome
+## 11. The intended outcome
 
 KIN-SYS aims to let an institution or ecosystem deploy a common coordination and enforcement layer so heterogeneous systems can act together under declared rules and authorities. This is a research objective, not yet a demonstrated universal guarantee. The project must prove the boundaries of what works, document what remains unresolved, and avoid claiming that one protocol can make every external system reliable merely by being installed.
