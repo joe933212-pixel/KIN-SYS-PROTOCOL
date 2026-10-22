@@ -168,6 +168,15 @@ class PaymentLifecycle:
             raise ValueError("SETTLEMENT_REFERENCE_REQUIRED")
         if amount_minor != payment["amount_minor"] or currency != payment["currency"]:
             raise ValueError("SETTLEMENT_AMOUNT_OR_CURRENCY_MISMATCH")
+        obligation = self.db.execute(
+            "SELECT amount_minor, currency FROM obligations WHERE obligation_id=?",
+            (payment["obligation_id"],),
+        ).fetchone()
+        if obligation is None or (
+            obligation["amount_minor"] != payment["amount_minor"]
+            or obligation["currency"] != payment["currency"]
+        ):
+            raise ValueError("OBLIGATION_PAYMENT_MISMATCH")
         evidence = {
             "settlement_reference": settlement_reference,
             "amount_minor": amount_minor,
