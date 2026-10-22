@@ -200,6 +200,43 @@ class PaymentLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "EVENT_ID_CONFLICT"):
             self.payments.record_provider_ack("PAY-1", "EV-ACK-1", "ACCEPTED")
 
+    def test_concurrent_identical_provider_ack_retries_record_one_event(self):
+        barrier = threading.Barrier(2)
+        outcomes = []
+        outcomes_lock = threading.Lock()
+
+        def attempt():
+            connection = PaymentLifecycle(self.db_path)
+            try:
+                barrier.wait(timeout=5)
+                result = connection.record_provider_ack(
+                    "PAY-1", "EV-ACK-CONCURRENT", "UNKNOWN", "PROVIDER-REF-CONCURRENT"
+                )
+                outcome = ("ok", result["status"])
+            except Exception as exc:
+                outcome = ("error", str(exc))
+            finally:
+                connection.close()
+            with outcomes_lock:
+                outcomes.append(outcome)
+
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads), "concurrent retries hung")
+        self.assertEqual(outcomes, [
+            ("ok", "UNKNOWN_PENDING_RECONCILIATION"),
+            ("ok", "UNKNOWN_PENDING_RECONCILIATION"),
+        ])
+        events = [
+            event for event in self.payments.history("PAY-1")
+            if event["event_id"] == "EV-ACK-CONCURRENT"
+        ]
+        self.assertEqual(len(events), 1)
+
     def test_concurrent_instructions_cannot_create_two_payments_for_one_obligation(self):
         self.payments.create_obligation("OBL-CONCURRENT", 70000, "UGX", "SYNTHETIC-CONCURRENT-ASSESSMENT")
         barrier = threading.Barrier(2)
