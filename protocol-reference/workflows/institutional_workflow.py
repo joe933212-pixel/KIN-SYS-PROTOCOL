@@ -122,22 +122,60 @@ class InstitutionalWorkflow:
                     appeal_authority: str | None = None, appeal_rule_version: str = "1.0") -> None:
         if not reviewer_authority:
             raise ValueError("INVALID_REVIEWER_AUTHORITY")
-        self.db.execute("INSERT INTO consignments(consignment_id, reviewer_authority_id) VALUES (?, ?)", (consignment_id, reviewer_authority))
-        self.db.executemany(
-            """INSERT INTO stage_state
-               (consignment_id, stage, authority_id, authority_active, rule_version)
-               VALUES (?, ?, ?, 1, ?)""",
-            [(consignment_id, "ORIGIN", origin_authority, origin_rule_version),
-             (consignment_id, "DESTINATION", destination_authority, destination_rule_version)],
-        )
-        if appeal_authority is not None:
-            if not appeal_authority or not appeal_rule_version:
-                raise ValueError("INVALID_APPEAL_AUTHORITY")
+        if not consignment_id or not origin_authority or not destination_authority:
+            raise ValueError("CASE_FIELDS_REQUIRED")
+        if appeal_authority is not None and (not appeal_authority or not appeal_rule_version):
+            raise ValueError("INVALID_APPEAL_AUTHORITY")
+        expected_stages = {
+            "ORIGIN": (origin_authority, origin_rule_version),
+            "DESTINATION": (destination_authority, destination_rule_version),
+        }
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self.db.execute(
+                "SELECT reviewer_authority_id FROM consignments WHERE consignment_id=?",
+                (consignment_id,),
+            ).fetchone()
+            if existing:
+                if existing["reviewer_authority_id"] != reviewer_authority:
+                    raise WorkflowConflict("CASE_ID_CONFLICT")
+                for stage, (authority, rule_version) in expected_stages.items():
+                    current = self.db.execute(
+                        "SELECT authority_id, rule_version FROM stage_state WHERE consignment_id=? AND stage=?",
+                        (consignment_id, stage),
+                    ).fetchone()
+                    if current is None or (current["authority_id"], current["rule_version"]) != (authority, rule_version):
+                        raise WorkflowConflict("CASE_ID_CONFLICT")
+                current_appeal = self.db.execute(
+                    "SELECT authority_id, rule_version FROM appeal_authorities WHERE consignment_id=?",
+                    (consignment_id,),
+                ).fetchone()
+                expected_appeal = (appeal_authority, appeal_rule_version) if appeal_authority is not None else None
+                actual_appeal = (current_appeal["authority_id"], current_appeal["rule_version"]) if current_appeal else None
+                if actual_appeal != expected_appeal:
+                    raise WorkflowConflict("CASE_ID_CONFLICT")
+                self.db.commit()
+                return
             self.db.execute(
-                "INSERT INTO appeal_authorities(consignment_id, authority_id, active, rule_version) VALUES (?, ?, 1, ?)",
-                (consignment_id, appeal_authority, appeal_rule_version),
+                "INSERT INTO consignments(consignment_id, reviewer_authority_id) VALUES (?, ?)",
+                (consignment_id, reviewer_authority),
             )
-        self.db.commit()
+            self.db.executemany(
+                """INSERT INTO stage_state
+                   (consignment_id, stage, authority_id, authority_active, rule_version)
+                   VALUES (?, ?, ?, 1, ?)""",
+                [(consignment_id, "ORIGIN", origin_authority, origin_rule_version),
+                 (consignment_id, "DESTINATION", destination_authority, destination_rule_version)],
+            )
+            if appeal_authority is not None:
+                self.db.execute(
+                    "INSERT INTO appeal_authorities(consignment_id, authority_id, active, rule_version) VALUES (?, ?, 1, ?)",
+                    (consignment_id, appeal_authority, appeal_rule_version),
+                )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
     def set_appeal_authority_active(self, consignment_id: str, active: bool) -> None:
         changed = self.db.execute("UPDATE appeal_authorities SET active=? WHERE consignment_id=?",
