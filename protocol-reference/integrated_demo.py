@@ -22,6 +22,8 @@ DEMO_RULE_VERSION = "UG-SYNTHETIC-1.0"
 class SyntheticIdentityGate:
     """Test-only identity and authority adapter; no real identity data is used."""
 
+    version = "synthetic-identity-gate-0.1"
+
     def __init__(self, principals: dict[str, set[str]] | None = None):
         self.principals = principals or {
             "EXPORTER-TEST": {"SUBMIT_CONSIGNMENT"},
@@ -31,6 +33,17 @@ class SyntheticIdentityGate:
 
     def permits(self, principal: str, action: str) -> bool:
         return action in self.principals.get(principal, set())
+
+    def respond(self, operation_id: str, principal: str, action: str) -> dict[str, Any]:
+        permitted = self.permits(principal, action)
+        return make_component_response(
+            component_id="identity_authority",
+            operation_id=operation_id,
+            component_version=self.version,
+            status="ACCEPTED" if permitted else "REJECTED",
+            data={"permitted": permitted},
+            failure_code=None if permitted else "AUTHORITY_DENIED",
+        )
 
 
 class DeterministicMinahAdapter:
@@ -81,6 +94,17 @@ class SyntheticTaxRules:
             "legal_status": "SYNTHETIC_DEMO_RULE_NOT_LAW",
         }
 
+    def respond(
+        self, operation_id: str, declared_value_ugx: int, *, exempt: bool = False
+    ) -> dict[str, Any]:
+        return make_component_response(
+            component_id="rules_and_statutory_policy",
+            operation_id=operation_id,
+            component_version=self.version,
+            status="ACCEPTED",
+            data=self.assess(declared_value_ugx, exempt=exempt),
+        )
+
 
 class SimulatedPaymentProvider:
     """Fake provider: never moves funds and never claims live settlement."""
@@ -102,6 +126,17 @@ class SimulatedPaymentProvider:
             "funds_moved": False,
             "provider": "SIMULATED_ONLY",
         }
+
+    def respond(
+        self, operation_id: str, payment_id: str, amount_ugx: int, *, outcome: str = "CONFIRMED"
+    ) -> dict[str, Any]:
+        return make_component_response(
+            component_id="external_adapters",
+            operation_id=operation_id,
+            component_version="simulated-payment-provider-0.1",
+            status="ACCEPTED",
+            data=self.submit(payment_id, amount_ugx, outcome=outcome),
+        )
 
 
 class IntegratedDemonstrator:
@@ -158,20 +193,17 @@ class IntegratedDemonstrator:
         trace: list[dict[str, Any]] = []
         component_responses: list[dict[str, Any]] = []
         identity_operation_id = f"{consignment_id}:IDENTITY:SUBMIT:1"
-        identity_raw = make_component_response(
-            component_id="identity_authority",
-            operation_id=identity_operation_id,
-            component_version="synthetic-identity-gate-0.1",
-            status="ACCEPTED",
-            data={"permitted": self.identity.permits("EXPORTER-TEST", "SUBMIT_CONSIGNMENT")},
+        identity_raw = self.identity.respond(
+            identity_operation_id, "EXPORTER-TEST", "SUBMIT_CONSIGNMENT"
         )
         identity_response = validate_component_response(
             identity_raw, expected_component_id="identity_authority",
             expected_operation_id=identity_operation_id,
         )
         component_responses.append(identity_response)
-        if not accepted_data(identity_response)["permitted"]:
-            raise PermissionError("EXPORTER_NOT_AUTHORISED")
+        if identity_response["status"] != "ACCEPTED" or not identity_response["data"]["permitted"]:
+            raise PermissionError(identity_response["failure_code"] or "EXPORTER_NOT_AUTHORISED")
+        accepted_data(identity_response)
         trace.append(make_trace_event(
             case_id=consignment_id,
             operation_id=f"{consignment_id}:IDENTITY:SUBMIT:1",
@@ -404,12 +436,8 @@ class IntegratedDemonstrator:
         tax = None
         if institutions_approved:
             tax_operation_id = f"{consignment_id}:TAX:ASSESS:1"
-            tax_raw = make_component_response(
-                component_id="rules_and_statutory_policy",
-                operation_id=tax_operation_id,
-                component_version=self.tax_rules.version,
-                status="ACCEPTED",
-                data=self.tax_rules.assess(declared_value_ugx, exempt=exempt),
+            tax_raw = self.tax_rules.respond(
+                tax_operation_id, declared_value_ugx, exempt=exempt
             )
             tax_response = validate_component_response(
                 tax_raw, expected_component_id="rules_and_statutory_policy",
@@ -438,12 +466,8 @@ class IntegratedDemonstrator:
             )
             instruction = self.payment_lifecycle.create_instruction(payment_id, obligation_id)
             payment_operation_id = f"{consignment_id}:PAYMENT:SUBMIT:1"
-            payment_raw = make_component_response(
-                component_id="external_adapters",
-                operation_id=payment_operation_id,
-                component_version="simulated-payment-provider-0.1",
-                status="ACCEPTED",
-                data=self.payment.submit(payment_id, amount, outcome=payment_outcome),
+            payment_raw = self.payment.respond(
+                payment_operation_id, payment_id, amount, outcome=payment_outcome
             )
             payment_response = validate_component_response(
                 payment_raw, expected_component_id="external_adapters",
