@@ -36,7 +36,7 @@ jobs:
       - name: Generate integrated demonstrator report
         run: PYTHONPATH=protocol-reference python -m integrated_demo > integrated-demo-results.json
       - name: Verify integrated demonstrator report
-        run: python -c "import json; r=json.load(open('integrated-demo-results.json', encoding='utf-8')); assert r['status'] == 'DEMO_READY_AFTER_SIMULATED_REMITTANCE', r; assert r['payment']['funds_moved'] is False, r; assert r['minah_advisory']['may_authorise'] is False, r"
+        run: python -c "import json; r=json.load(open('integrated-demo-results.json', encoding='utf-8')); assert r['status'] == 'DEMO_READY_AFTER_SIMULATED_REMITTANCE', r; assert r['payment']['funds_moved'] is False, r; assert r['payment_lifecycle']['status'] == 'SIMULATED_SETTLED', r; assert r['payment_lifecycle']['recorded_status'] == 'SETTLED', r; assert r['payment_lifecycle']['funds_moved'] is False, r; assert r['minah_advisory']['may_authorise'] is False, r"
       - name: Upload reproducible research reports
         uses: actions/upload-artifact@v4
         with:
