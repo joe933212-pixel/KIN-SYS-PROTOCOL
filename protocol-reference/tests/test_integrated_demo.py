@@ -53,7 +53,7 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         result = self.run_case(origin_actor="UNAUTHORISED-TEST")
         self.assertEqual(result["institutional_decisions"]["origin"]["operation"]["reason"],
                          "AUTHORITY_MISMATCH")
-        self.assertEqual(result["status"], "REJECTED_OR_AUTHORITY_ACTION_INVALID")
+        self.assertEqual(result["status"], "REJECTED_AUTHORITY_ACTION_INVALID")
         self.assertIsNone(result["statutory_obligation"])
 
     def test_disconnected_edge_profile_defers_online_required_decisions(self):
