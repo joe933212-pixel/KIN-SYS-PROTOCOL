@@ -60,7 +60,7 @@ class PaymentLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(self.payments.get_payment("PAY-1")["status"], "SETTLED")
         obligation = self.payments.db.execute(
-            "SELECT status FROM obligations WHERE obligation_id='OBL-CONCURRENT'"
+            "SELECT status FROM obligations WHERE obligation_id='OBL-1'"
         ).fetchone()
         self.assertEqual(obligation["status"], "SETTLED")
 
@@ -122,7 +122,7 @@ class PaymentLifecycleTests(unittest.TestCase):
         errors = [value for kind, value in outcomes if kind == "error"]
         self.assertEqual(errors, ["OBLIGATION_ALREADY_HAS_PAYMENT_INSTRUCTION"], outcomes)
         rows = self.payments.db.execute(
-            "SELECT payment_id FROM payments WHERE obligation_id='OBL-1'"
+            "SELECT payment_id FROM payments WHERE obligation_id='OBL-CONCURRENT'"
         ).fetchall()
         self.assertEqual(len(rows), 1)
 
