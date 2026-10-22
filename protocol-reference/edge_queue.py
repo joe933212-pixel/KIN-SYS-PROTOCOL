@@ -162,14 +162,16 @@ class EdgeOperationQueue:
     def _as_dict(row: sqlite3.Row) -> dict[str, Any]:
         raw_payload = row["payload_json"]
         actual_digest = hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+        integrity_ok = actual_digest == row["payload_digest"]
         try:
-            payload = json.loads(raw_payload)
+            payload = json.loads(raw_payload) if integrity_ok else None
         except (TypeError, json.JSONDecodeError):
             payload = None
+            integrity_ok = False
         return {
             "operation_id": row["operation_id"],
             "payload": payload,
-            "payload_integrity_ok": actual_digest == row["payload_digest"],
+            "payload_integrity_ok": integrity_ok,
             "evidence_version": row["evidence_version"],
             "rule_version": row["rule_version"],
             "status": row["status"],
