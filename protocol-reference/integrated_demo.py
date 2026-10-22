@@ -12,6 +12,7 @@ from typing import Any
 from workflows.institutional_workflow import InstitutionalWorkflow
 from payment_lifecycle import PaymentLifecycle
 from edge_queue import EdgeOperationQueue
+from system_model import system_manifest
 
 
 DEMO_RULE_VERSION = "UG-SYNTHETIC-1.0"
@@ -172,6 +173,7 @@ class IntegratedDemonstrator:
             return {
                 "case_id": consignment_id,
                 "profile": "SIMULATED_EDGE_RECONNECTED" if edge_reconnect else "SIMULATED_EDGE_DISCONNECTED",
+                "system_model": system_manifest(),
                 "status": "PENDING",
                 "reason": (
                     "READY_FOR_CENTRAL_REVIEW_NOT_INSTITUTIONAL_APPROVAL"
@@ -327,6 +329,7 @@ class IntegratedDemonstrator:
         return {
             "case_id": consignment_id,
             "profile": "CENTRAL_DEMO_ONLINE",
+            "system_model": system_manifest(),
             "status": final_status,
             "identity_mode": "SYNTHETIC_TEST_IDENTITIES",
             "minah_advisory": advisory,
