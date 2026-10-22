@@ -12,7 +12,7 @@ class EdgeOperationQueue:
     """Durable local queue with idempotent enqueue and explicit reconnect checks."""
 
     def __init__(self, database: str = ":memory:"):
-        self.db = sqlite3.connect(database, timeout=5.0)
+        self.db = sqlite3.connect(database, timeout=10.0)
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS queued_operations (
@@ -45,26 +45,33 @@ class EdgeOperationQueue:
             raise ValueError("EDGE_PAYLOAD_MUST_BE_OBJECT")
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        existing = self.db.execute(
-            "SELECT * FROM queued_operations WHERE operation_id=?", (operation_id,)
-        ).fetchone()
-        if existing:
-            same = (existing["payload_digest"], existing["evidence_version"], existing["rule_version"]) == (
-                digest, evidence_version, rule_version
+        try:
+            # Serialize read/compare/insert so concurrent retries converge.
+            self.db.execute("BEGIN IMMEDIATE")
+            existing = self.db.execute(
+                "SELECT * FROM queued_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if existing:
+                same = (existing["payload_digest"], existing["evidence_version"], existing["rule_version"]) == (
+                    digest, evidence_version, rule_version
+                )
+                if not same:
+                    raise ValueError("EDGE_OPERATION_ID_CONFLICT")
+                self.db.commit()
+                return self._as_dict(existing)
+            self.db.execute(
+                """INSERT INTO queued_operations
+                   (operation_id, payload_digest, payload_json, evidence_version, rule_version, status)
+                   VALUES (?, ?, ?, ?, ?, 'QUEUED_OFFLINE')""",
+                (operation_id, digest, canonical, evidence_version, rule_version),
             )
-            if not same:
-                raise ValueError("EDGE_OPERATION_ID_CONFLICT")
-            return self._as_dict(existing)
-        self.db.execute(
-            """INSERT INTO queued_operations
-               (operation_id, payload_digest, payload_json, evidence_version, rule_version, status)
-               VALUES (?, ?, ?, ?, ?, 'QUEUED_OFFLINE')""",
-            (operation_id, digest, canonical, evidence_version, rule_version),
-        )
-        self._event(operation_id + ":QUEUED", operation_id, "QUEUED_OFFLINE", {
-            "evidence_version": evidence_version, "rule_version": rule_version,
-        })
-        self.db.commit()
+            self._event(operation_id + ":QUEUED", operation_id, "QUEUED_OFFLINE", {
+                "evidence_version": evidence_version, "rule_version": rule_version,
+            })
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return self.get(operation_id)
 
     def replay(self, operation_id: str, *, current_evidence_version: str,
