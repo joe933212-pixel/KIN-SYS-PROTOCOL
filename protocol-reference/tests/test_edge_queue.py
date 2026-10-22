@@ -70,17 +70,27 @@ class EdgeOperationQueueTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "REJECTED_AUTHORITY_REVOKED")
 
-    def test_deferred_operation_can_be_rechecked_after_context_is_corrected(self):
-        self.queue.replay(
+    def test_deferred_operation_requires_new_id_after_context_changes(self):
+        deferred = self.queue.replay(
             "OP-1", current_evidence_version="EVIDENCE-2",
             current_rule_version="RULE-1", authority_active=True,
         )
-        result = self.queue.replay(
+        self.assertEqual(deferred["status"], "DEFERRED_STALE_EVIDENCE")
+        same_id_retry = self.queue.replay(
             "OP-1", current_evidence_version="EVIDENCE-1",
             current_rule_version="RULE-1", authority_active=True,
         )
+        self.assertEqual(same_id_retry["status"], "DEFERRED_STALE_EVIDENCE")
+        fresh = self.queue.enqueue(
+            "OP-2", {"case_id": "CASE-1", "action": "REQUEST_REVIEW", "evidence_ref": "EVIDENCE-2"},
+            evidence_version="EVIDENCE-2", rule_version="RULE-1",
+        )
+        result = self.queue.replay(
+            "OP-2", current_evidence_version="EVIDENCE-2",
+            current_rule_version="RULE-1", authority_active=True,
+        )
+        self.assertEqual(fresh["status"], "QUEUED_OFFLINE")
         self.assertEqual(result["status"], "READY_FOR_CENTRAL_REVIEW")
-        self.assertEqual(result["replay_count"], 2)
 
     def test_queue_and_history_survive_reopen(self):
         self.queue.replay(
