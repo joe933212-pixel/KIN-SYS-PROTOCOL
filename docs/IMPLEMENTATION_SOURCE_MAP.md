@@ -12,7 +12,7 @@ This map connects the current executable research slices to the claims they can 
 |---|---|---|---|
 | Local protocol slice | `python -m unittest discover -s protocol-reference/tests -v` | Tests the local SQLite transition, experimental institutional workflow, payment lifecycle, edge queue, component contract, and integrated demonstrator. | Local research implementation; no distributed consensus or live institutional adapters. |
 | Paired local comparison | `PYTHONPATH=protocol-reference python -m comparators.paired_harness` | Runs a matched nine-scenario comparison between the KIN-SYS SQLite transition slice and a conventional SQLite baseline. | Local SQLite comparison only; do not infer multi-node or production superiority. |
-| Integrated synthetic demo | `PYTHONPATH=protocol-reference python -m integrated_demo` | Composes origin/destination institutional decisions, synthetic identity/authority, deterministic MINAH stand-in, fictional tax calculation, simulated payment lifecycle, and edge profile. | No real AI/legal authority, national identity, tax law, payment provider, real money, or physical edge hardware. |
+| Integrated synthetic demo | `PYTHONPATH=protocol-reference python -m integrated_demo` | Composes origin/destination institutional decisions, synthetic identity/authority, deterministic MINAH stand-in (synthetic orchestration adapter, not the full jurisprudential oracle), fictional tax calculation, simulated payment lifecycle, and edge profile. | No real AI/legal authority, national identity, tax law, payment provider, real money, or physical edge hardware. |
 
 The commands above are documented in `protocol-reference/README.md`. This document has not executed them in a fresh environment; current results must be attached to a specific source revision before being reported.
 
@@ -38,7 +38,7 @@ The system model is valuable precisely because it names the gaps. Current source
 - cryptographic identity, signature verification, credential lifecycle, federation, and real national-identity integration;
 - a complete serialized request/wire protocol and transport security;
 - authoritative external evidence and real source-provenance verification;
-- jurisdiction-specific MINAH AI, legal-source retrieval, evaluation, and non-bypassable enforcement;
+- full MINAH implementation: jurisdiction-specific legal reasoning grounded in authoritative, versioned sources; governed API integrations; expert-reviewed evaluation; and end-to-end proof that the execution boundary cannot be bypassed (the current stand-in is synthetic);
 - real statutory rules, tax authority integration, and real payment provider integration;
 - distributed consensus/finality and multi-node network partition/recovery;
 - production proof generation/verification and hardware roots of trust;
