@@ -80,6 +80,10 @@ class EdgeOperationQueue:
             and row["rule_version"] == current_rule_version and authority_active
         ):
             return self._as_dict(row)
+        if row["status"] not in {"QUEUED_OFFLINE", "READY_FOR_CENTRAL_REVIEW"}:
+            # A deferred/rejected operation is immutable. Re-issue a fresh
+            # operation ID with newly reviewed evidence/context instead.
+            return self._as_dict(row)
         if not authority_active:
             status, reason = "REJECTED_AUTHORITY_REVOKED", "AUTHORITY_INACTIVE_AT_RECONNECT"
         elif row["rule_version"] != current_rule_version:
