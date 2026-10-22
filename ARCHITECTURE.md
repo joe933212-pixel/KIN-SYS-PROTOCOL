@@ -72,11 +72,11 @@ MINAH is not a root administrator and cannot unilaterally alter the rules, grant
 
 Jurisdiction-specific MINAH deployments require controlled legal-source ingestion, jurisdiction and effective-date tracking, provenance, conflict/uncertainty handling, evaluation against approved cases, and a governed process for updating or replacing legal knowledge. A model's assertion that it knows the law is not proof of completeness or correctness. When a question requires discretion reserved to a court, official, or institution, or when authoritative sources conflict or are incomplete, the disposition must defer to the designated process rather than fabricate certainty. The protocol must distinguish MINAH's jurisprudential determination from deterministic enforcement and from decisions legally reserved to independent institutions.
 
-## 6. Economic and token boundary
+## 7. Economic and token boundary
 
 $KIN is a proposed economic component whose function and rules remain unresolved in this foundation. Before implementation, define any relationship to fees, incentives, governance, access, or settlement, along with issuance, custody, accounting, duplicate protection, disputes, and failure behaviour. A token does not by itself establish legal title.
 
-## 7. Integrated system roles and research interfaces
+## 8. Integrated system roles and research interfaces
 
 These roles describe the intended division of responsibility, not proof that each component is implemented or that the interfaces are settled.
 
@@ -84,12 +84,12 @@ These roles describe the intended division of responsibility, not proof that eac
 - **CEE and IVM:** execution-enabling research and runtime layers. CEE defines an operational execution environment and lifecycle; IVM defines an abstract execution architecture. They must be mapped to the protocol contract, but neither should be treated as the whole KIN-SYS system.
 - **MINAH:** intended jurisprudential oracle and sovereignty gatekeeper, trained/configured for the relevant jurisdiction or governing domain. Her legal dispositions must be traceable to authoritative, versioned sources and evidence. IVM/CEE-informed execution and KIN-SYS safeguards must prevent any component, including MINAH, from bypassing mandatory constraints. Legal matters reserved to independent authorities must be deferred appropriately.
 - **$KIN:** proposed economic/accounting component. Its role—if any—in fees, incentives, access, governance or settlement must be evaluated together with institutional rules, accounting, duplicate-effect protection, legal context and dispute handling. Its utility or necessity is not assumed.
-- **Nexus Pods:** proposed physical edge deployment form. Research must connect hardware, connectivity, local execution, key custody, data handling, offline limits, synchronisation and operational governance to the protocol's actual requirements. The existence of the concept is not evidence of deployed infrastructure.
+- **Nexus Pods:** optional physical edge deployment form for constrained environments. They may support local compute, power/connectivity resilience, HSM-backed key custody, and proof workloads, but the protocol must remain conformant without them. Physical design and field evaluation are separate workstreams; no deployed Pod is claimed.
 - **Identity, authority, governance, privacy, external facts and institutional participation:** cross-cutting capabilities and accountable actors. These determine who can act, what can be disclosed, which rules apply, how real-world claims are established, and how decisions are challenged or reversed.
 - **CRS / CISA / CEE / IVM:** distinct research artifacts whose source versions, requirements and interfaces must be traced. Do not collapse their names or treat them as interchangeable.
 - **Kagoro DSL:** candidate formal language for expressing jurisdiction-specific legal and institutional rules, authority constraints, exceptions, and permitted transitions. Whether it becomes required in KIN-SYS remains an open design decision to be resolved by semantics, conformance tests, and comparison with alternatives.
 
-## 8. System-level research method
+## 9. System-level research method
 The binding implementation direction is now documented in [SYSTEM_INTEGRATION_ROADMAP.md](SYSTEM_INTEGRATION_ROADMAP.md) and [Decision 0002](DECISIONS/0002-whole-system-first-development.md): reconcile the whole-system contract, build one contract-driven executable model with explicit simulations for unfinished capabilities, then deepen components under cross-component invariants. Existing component tests remain necessary but cannot stand in for integrated system evidence.
 
 
@@ -97,6 +97,6 @@ Research must preserve both component-level falsifiability and system-level inte
 
 Evaluate at least three questions separately: (1) does each component work within its declared scope; (2) do the interfaces and failure semantics work when components interact; and (3) does the integrated system solve a real coordination problem better than simpler institutional or technical alternatives? A component's success must not be presented as proof of the whole system. A component may also prove unnecessary for a particular use case; integrated research must be allowed to discover that.
 
-## 9. Deployment profiles
+## 10. Deployment profile reference
 
-Define separate profiles for a single-operator laboratory, institution-operated node, intermittently connected edge node, multi-institution coordination, and high-assurance/regulated deployment. Each profile must state assumptions, supported guarantees, and conformance tests.
+The initial design profiles and their acceptance obligations are defined in [DEPLOYMENT_PROFILES.md](DEPLOYMENT_PROFILES.md). They cover standard software deployment, constrained connectivity/power, and optional hardware-enhanced security. These profiles are design targets, not certified products; each actual deployment must declare its assumptions, supported guarantees, and conformance evidence.
