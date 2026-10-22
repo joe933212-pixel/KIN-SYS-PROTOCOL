@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from workflows.institutional_workflow import InstitutionalWorkflow
+from payment_lifecycle import PaymentLifecycle
 
 
 DEMO_RULE_VERSION = "UG-SYNTHETIC-1.0"
@@ -99,9 +100,11 @@ class IntegratedDemonstrator:
         self.minah = DeterministicMinahAdapter()
         self.tax_rules = SyntheticTaxRules()
         self.payment = SimulatedPaymentProvider()
+        self.payment_lifecycle = PaymentLifecycle()
 
     def close(self) -> None:
         self.workflow.close()
+        self.payment_lifecycle.close()
 
     def run_case(
         self,
@@ -186,14 +189,59 @@ class IntegratedDemonstrator:
         )
         tax = self.tax_rules.assess(declared_value_ugx, exempt=exempt) if institutions_approved else None
         payment = None
+        payment_lifecycle_result = None
         if tax and tax["assessed_amount_ugx"] > 0:
-            payment = self.payment.submit(
-                f"{consignment_id}:TAX:1", tax["assessed_amount_ugx"], outcome=payment_outcome
+            payment_id = f"{consignment_id}:TAX:1"
+            obligation_id = f"{consignment_id}:OBL:TAX:1"
+            amount = tax["assessed_amount_ugx"]
+            self.payment_lifecycle.create_obligation(
+                obligation_id, amount, "UGX", f"{consignment_id}:SYNTHETIC-ASSESSMENT:1"
             )
+            instruction = self.payment_lifecycle.create_instruction(payment_id, obligation_id)
+            payment = self.payment.submit(payment_id, amount, outcome=payment_outcome)
+            ack = {
+                "CONFIRMED": "ACCEPTED",
+                "DECLINED": "DECLINED",
+                "TIMEOUT_UNKNOWN": "UNKNOWN",
+            }[payment_outcome]
+            self.payment_lifecycle.record_provider_ack(
+                payment_id, f"{payment_id}:ACK:1", ack,
+                "SIMULATED-PROVIDER-REF" if ack == "ACCEPTED" else None,
+            )
+            if payment_outcome == "CONFIRMED":
+                lifecycle = self.payment_lifecycle.record_settlement(
+                    payment_id, f"{payment_id}:SETTLEMENT:1",
+                    f"SIMULATED-SETTLEMENT:{payment_id}",
+                    amount_minor=amount, currency="UGX",
+                )
+                lifecycle_status = "SIMULATED_SETTLED"
+            elif payment_outcome == "DECLINED":
+                lifecycle = self.payment_lifecycle.get_payment(payment_id)
+                lifecycle_status = "SIMULATED_DECLINED"
+            else:
+                lifecycle = self.payment_lifecycle.record_reconciliation(
+                    payment_id, f"{payment_id}:RECONCILIATION:1", "UNKNOWN"
+                )
+                lifecycle_status = "UNKNOWN_PENDING_RECONCILIATION"
+            payment_lifecycle_result = {
+                "execution_mode": "SIMULATED_ONLY",
+                "obligation_id": obligation_id,
+                "instruction_status": instruction["status"],
+                "status": lifecycle_status,
+                "recorded_status": lifecycle["status"],
+                "settlement_reference": lifecycle["settlement_reference"],
+                "history": self.payment_lifecycle.history(payment_id),
+                "funds_moved": False,
+            }
         elif tax and tax["exempt"]:
             payment = {
                 "payment_id": None, "amount_ugx": 0, "status": "NOT_REQUIRED_EXEMPT",
                 "funds_moved": False, "provider": "NOT_CALLED",
+            }
+            payment_lifecycle_result = {
+                "execution_mode": "SIMULATED_ONLY",
+                "status": "NOT_REQUIRED_EXEMPT",
+                "funds_moved": False,
             }
 
         if origin_result["status"] == "REJECTED" or destination_result["status"] == "REJECTED":
@@ -225,6 +273,7 @@ class IntegratedDemonstrator:
             },
             "statutory_obligation": tax,
             "payment": payment,
+            "payment_lifecycle": payment_lifecycle_result,
             "history": self.workflow.history(consignment_id),
             "claims": [
                 "SYNTHETIC_RULES_NOT_LAW",
