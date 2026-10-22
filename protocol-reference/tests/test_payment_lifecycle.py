@@ -72,7 +72,7 @@ class PaymentLifecycleTests(unittest.TestCase):
             *args, amount_minor=50000, currency="UGX"
         )
         self.assertEqual(first["settlement_reference"], second["settlement_reference"])
-        self.assertEqual(len(self.payments.history("PAY-1")), 1)
+        self.assertEqual(len(self.payments.history("PAY-1")), 2)  # instruction + one settlement event
 
     def test_payment_id_cannot_be_reused_for_different_request(self):
         self.payments.create_obligation("OBL-2", 60000, "UGX", "SYNTHETIC-ASSESSMENT-2")
