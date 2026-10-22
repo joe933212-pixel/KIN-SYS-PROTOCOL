@@ -185,9 +185,11 @@ class IntegratedDemonstrator:
             }
 
         if origin_result["status"] == "REJECTED" or destination_result["status"] == "REJECTED":
-            final_status = "REJECTED_OR_AUTHORITY_ACTION_INVALID"
+            final_status = "REJECTED_AUTHORITY_ACTION_INVALID"
+        elif origin.get("outcome") == "REJECT" or destination.get("outcome") == "REJECT":
+            final_status = "INSTITUTIONAL_DECISION_REJECTED"
         elif not institutions_approved:
-            final_status = "INSTITUTIONAL_DECISION_PENDING_OR_REJECTED"
+            final_status = "INSTITUTIONAL_DECISION_PENDING"
         elif payment and payment["status"] == "SIMULATED_CONFIRMED":
             final_status = "DEMO_READY_AFTER_SIMULATED_REMITTANCE"
         elif payment and payment["status"] == "NOT_REQUIRED_EXEMPT":
