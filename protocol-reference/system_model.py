@@ -209,6 +209,65 @@ _COMPONENTS: tuple[dict[str, Any], ...] = (
 )
 
 
+TRACE_CONTRACT_VERSION = "kin-sys-component-trace-0.1"
+
+
+def make_trace_event(
+    *,
+    case_id: str,
+    operation_id: str,
+    component_id: str,
+    status: str,
+    mode: str,
+    component_version: str,
+    evidence_refs: list[str] | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    """Build a common, privacy-conscious event for the demonstrator's system trace."""
+    required = {
+        "case_id": case_id,
+        "operation_id": operation_id,
+        "component_id": component_id,
+        "status": status,
+        "mode": mode,
+        "component_version": component_version,
+    }
+    if any(not isinstance(value, str) or not value.strip() for value in required.values()):
+        raise ValueError("INVALID_SYSTEM_TRACE_EVENT")
+    if evidence_refs is not None and (
+        not isinstance(evidence_refs, list)
+        or any(not isinstance(ref, str) or not ref.strip() for ref in evidence_refs)
+    ):
+        raise ValueError("INVALID_SYSTEM_TRACE_EVIDENCE_REFS")
+    return {
+        "trace_contract_version": TRACE_CONTRACT_VERSION,
+        **required,
+        "evidence_refs": list(evidence_refs or []),
+        "reason": reason,
+    }
+
+
+def validate_system_trace(events: list[dict[str, Any]], *, case_id: str) -> bool:
+    """Validate required fields and case linkage without asserting event truth."""
+    required = {
+        "trace_contract_version", "case_id", "operation_id", "component_id",
+        "status", "mode", "component_version", "evidence_refs", "reason",
+    }
+    for event in events:
+        if not isinstance(event, dict) or not required.issubset(event):
+            return False
+        if event["trace_contract_version"] != TRACE_CONTRACT_VERSION:
+            return False
+        if event["case_id"] != case_id:
+            return False
+        for key in ("operation_id", "component_id", "status", "mode", "component_version"):
+            if not isinstance(event[key], str) or not event[key].strip():
+                return False
+        if not isinstance(event["evidence_refs"], list):
+            return False
+    return True
+
+
 def system_manifest() -> dict[str, Any]:
     """Return a detached, machine-readable inventory of all logical responsibilities."""
     return {
