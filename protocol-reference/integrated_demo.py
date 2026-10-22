@@ -95,14 +95,21 @@ class SimulatedPaymentProvider:
 class IntegratedDemonstrator:
     """Compose synthetic adapters and the current two-institution workflow slice."""
 
-    def __init__(self, database: str = ":memory:"):
-        self.workflow = InstitutionalWorkflow(database)
+    def __init__(self, database: str = ":memory:", *, database_prefix: str | None = None):
+        """Use in-memory stores by default or separate durable stores under a shared prefix."""
+        if database_prefix is None:
+            workflow_db = payment_db = edge_db = database
+        else:
+            workflow_db = f"{database_prefix}.workflow.sqlite3"
+            payment_db = f"{database_prefix}.payments.sqlite3"
+            edge_db = f"{database_prefix}.edge.sqlite3"
+        self.workflow = InstitutionalWorkflow(workflow_db)
         self.identity = SyntheticIdentityGate()
         self.minah = DeterministicMinahAdapter()
         self.tax_rules = SyntheticTaxRules()
         self.payment = SimulatedPaymentProvider()
-        self.payment_lifecycle = PaymentLifecycle()
-        self.edge_queue = EdgeOperationQueue()
+        self.payment_lifecycle = PaymentLifecycle(payment_db)
+        self.edge_queue = EdgeOperationQueue(edge_db)
 
     def close(self) -> None:
         self.workflow.close()
