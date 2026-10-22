@@ -69,6 +69,14 @@ MINAH is intended as the jurisprudential oracle and sovereignty gatekeeper for a
 
 A deployment must define who may propose, approve, sign, and activate changes; version compatibility; emergency powers and auditability; key-compromise and authority-revocation procedures; and how the rules and software version behind an outcome can be verified.
 
-## 9. Conformance and open decisions
+## 9. Deployment profiles and hardware independence
+
+KIN-SYS is software-first and hardware-independent. Conforming implementations may run on suitable existing institutional infrastructure; no proprietary appliance, Nexus Pod, HSM, TEE, or zero-knowledge capability is mandatory for protocol participation. Hardware-backed security is an optional deployment control when required by a declared threat model. It does not replace core protocol checks.
+
+Deployments should declare one of the profile targets in [Deployment Profiles](DEPLOYMENT_PROFILES.md): standard software; constrained connectivity and power; or optional hardware-enhanced security. All preserve the same core protocol obligations. The constrained profile must define which operation classes are safe offline, deferred, or prohibited, plus persistence, freshness, reconnection, conflict and recovery behaviour. The hardware-enhanced profile must state the precise security boundary, supported operations, failure behaviour, and evidence. These are design targets, not certified products.
+
+Zero-knowledge proofs are optional. Where used, a deployment must define the statement, public inputs, proof/circuit and rule versions, source provenance, replay/freshness controls, verifier failure semantics and dispute path. Any storage or bandwidth savings must be measured against a fair baseline; proofs do not establish external-data truth and do not eliminate all retention obligations.
+
+## 10. Conformance and open decisions
 
 A conforming implementation must pass tests for its declared profile and disclose unsupported requirements. Wire format, cryptographic profiles, trust-root distribution, node discovery, coordination/consensus, replication, clock assumptions, key lifecycle, privacy-preserving proofs, governance quorum, economic model, and deployment profiles remain undecided.
