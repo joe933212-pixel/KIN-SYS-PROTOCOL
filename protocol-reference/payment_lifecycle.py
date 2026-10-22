@@ -168,6 +168,17 @@ class PaymentLifecycle:
             raise ValueError("SETTLEMENT_REFERENCE_REQUIRED")
         if amount_minor != payment["amount_minor"] or currency != payment["currency"]:
             raise ValueError("SETTLEMENT_AMOUNT_OR_CURRENCY_MISMATCH")
+        request = {
+            "payment_id": payment["payment_id"],
+            "obligation_id": payment["obligation_id"],
+            "amount_minor": payment["amount_minor"],
+            "currency": payment["currency"],
+        }
+        expected_hash = hashlib.sha256(
+            json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if payment["request_hash"] != expected_hash:
+            raise ValueError("PAYMENT_RECORD_INTEGRITY_MISMATCH")
         obligation = self.db.execute(
             "SELECT amount_minor, currency FROM obligations WHERE obligation_id=?",
             (payment["obligation_id"],),
