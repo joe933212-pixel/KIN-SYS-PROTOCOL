@@ -396,6 +396,90 @@ demo.run_case(consignment_id="DESTINATION-RECOVERY-CASE")
                 destination_authority="DESTINATION-B",
             )
 
+
+    def test_restart_after_both_approvals_blocks_obligation_when_origin_authority_is_revoked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = str(Path(tmp) / "approval-authority-revoked")
+            script = r"""
+import os
+import sys
+from integrated_demo import IntegratedDemonstrator
+from payment_lifecycle import PaymentLifecycle
+def crash_before_obligation(self, *args, **kwargs):
+    os._exit(87)
+PaymentLifecycle.create_obligation = crash_before_obligation
+demo = IntegratedDemonstrator(database_prefix=sys.argv[1])
+demo.run_case(consignment_id="AUTHORITY-REVOKED-AFTER-APPROVAL")
+"""
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(ROOT)
+            child = subprocess.run(
+                [sys.executable, "-c", script, prefix],
+                env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(child.returncode, 87, child.stderr)
+
+            resumed = IntegratedDemonstrator(database_prefix=prefix)
+            self.addCleanup(resumed.close)
+            resumed.workflow.set_authority_active(
+                "AUTHORITY-REVOKED-AFTER-APPROVAL", "ORIGIN", False
+            )
+            result = resumed.run_case(
+                consignment_id="AUTHORITY-REVOKED-AFTER-APPROVAL"
+            )
+
+            self.assertTrue(result["institutional_decisions"]["origin"]["operation"]["duplicate"])
+            self.assertTrue(result["institutional_decisions"]["destination"]["operation"]["duplicate"])
+            self.assertEqual(result["status"], "REJECTED_AUTHORITY_ACTION_INVALID")
+            self.assertIsNone(result["statutory_obligation"])
+            self.assertIsNone(result["payment"])
+            self.assertEqual(
+                resumed.payment_lifecycle.db.execute("SELECT COUNT(*) FROM obligations").fetchone()[0],
+                0,
+            )
+
+    def test_restart_after_both_approvals_blocks_obligation_when_origin_rule_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = str(Path(tmp) / "approval-rule-version-changed")
+            script = r"""
+import os
+import sys
+from integrated_demo import IntegratedDemonstrator
+from payment_lifecycle import PaymentLifecycle
+def crash_before_obligation(self, *args, **kwargs):
+    os._exit(88)
+PaymentLifecycle.create_obligation = crash_before_obligation
+demo = IntegratedDemonstrator(database_prefix=sys.argv[1])
+demo.run_case(consignment_id="RULE-CHANGED-AFTER-APPROVAL")
+"""
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(ROOT)
+            child = subprocess.run(
+                [sys.executable, "-c", script, prefix],
+                env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(child.returncode, 88, child.stderr)
+
+            resumed = IntegratedDemonstrator(database_prefix=prefix)
+            self.addCleanup(resumed.close)
+            resumed.workflow.set_rule_version(
+                "RULE-CHANGED-AFTER-APPROVAL", "ORIGIN", "SYNTHETIC-NEW-RULE"
+            )
+            result = resumed.run_case(
+                consignment_id="RULE-CHANGED-AFTER-APPROVAL",
+                origin_rule_version_override="SYNTHETIC-NEW-RULE",
+            )
+
+            self.assertTrue(result["institutional_decisions"]["origin"]["operation"]["duplicate"])
+            self.assertTrue(result["institutional_decisions"]["destination"]["operation"]["duplicate"])
+            self.assertEqual(result["status"], "REJECTED_AUTHORITY_ACTION_INVALID")
+            self.assertIsNone(result["statutory_obligation"])
+            self.assertIsNone(result["payment"])
+            self.assertEqual(
+                resumed.payment_lifecycle.db.execute("SELECT COUNT(*) FROM obligations").fetchone()[0],
+                0,
+            )
+
     def test_tax_calculator_rejects_negative_or_non_integer_amounts(self):
         rules = SyntheticTaxRules()
         for value in (-1, 1.5, "100"):
