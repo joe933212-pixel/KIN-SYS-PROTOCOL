@@ -272,6 +272,63 @@ store.create_instruction("PAY-CRASH", "OBL-CRASH")
         self.assertEqual(obligation["status"], "RECORDED")
         self.assertEqual(events, 0)
 
+    def test_provider_ack_event_failure_rolls_back_event_and_state(self):
+        original_event = self.payments._event
+
+        def write_then_fail(*args, **kwargs):
+            original_event(*args, **kwargs)
+            if args[2] == "PROVIDER_ACKNOWLEDGEMENT":
+                raise RuntimeError("INJECTED_ACK_COMMIT_FAILURE")
+
+        self.payments._event = write_then_fail
+        try:
+            with self.assertRaisesRegex(RuntimeError, "INJECTED_ACK_COMMIT_FAILURE"):
+                self.payments.record_provider_ack("PAY-1", "EV-ACK-FAIL", "ACCEPTED")
+        finally:
+            self.payments._event = original_event
+
+        self.assertEqual(self.payments.get_payment("PAY-1")["status"], "INSTRUCTION_CREATED")
+        self.assertEqual(self.payments.history("PAY-1"), [
+            {
+                "event_id": "PAY-1:INSTRUCTION",
+                "payment_id": "PAY-1",
+                "event_type": "INSTRUCTION_CREATED",
+                "evidence": {
+                    "amount_minor": 50000,
+                    "currency": "UGX",
+                    "obligation_id": "OBL-1",
+                    "payment_id": "PAY-1",
+                },
+            }
+        ])
+        self.assertFalse(self.payments.db.in_transaction)
+
+    def test_reconciliation_event_failure_rolls_back_event_and_state(self):
+        self.payments.record_provider_ack("PAY-1", "EV-ACK-REC-FAIL", "UNKNOWN")
+        original_event = self.payments._event
+
+        def write_then_fail(*args, **kwargs):
+            original_event(*args, **kwargs)
+            if args[2] == "RECONCILIATION":
+                raise RuntimeError("INJECTED_RECONCILIATION_COMMIT_FAILURE")
+
+        self.payments._event = write_then_fail
+        try:
+            with self.assertRaisesRegex(RuntimeError, "INJECTED_RECONCILIATION_COMMIT_FAILURE"):
+                self.payments.record_reconciliation("PAY-1", "EV-REC-FAIL", "NOT_SETTLED")
+        finally:
+            self.payments._event = original_event
+
+        payment = self.payments.get_payment("PAY-1")
+        events = [
+            event for event in self.payments.history("PAY-1")
+            if event["event_type"] == "RECONCILIATION"
+        ]
+        self.assertEqual(payment["status"], "UNKNOWN_PENDING_RECONCILIATION")
+        self.assertIsNone(payment["last_reconciliation"])
+        self.assertEqual(events, [])
+        self.assertFalse(self.payments.db.in_transaction)
+
     def test_settlement_event_write_failure_rolls_back_event_and_state(self):
         self.payments.record_provider_ack("PAY-1", "EV-ACK-SETTLE-FAIL", "ACCEPTED")
         original_event = self.payments._event
