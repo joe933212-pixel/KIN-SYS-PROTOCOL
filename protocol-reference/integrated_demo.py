@@ -385,6 +385,30 @@ class IntegratedDemonstrator:
                 "funds_moved": False,
             }
 
+        payment_trace_status = (
+            payment_lifecycle_result["status"]
+            if payment_lifecycle_result
+            else "NOT_ATTEMPTED"
+        )
+        payment_trace_refs = []
+        if payment_lifecycle_result and payment_lifecycle_result.get("obligation_id"):
+            payment_trace_refs.append(payment_lifecycle_result["obligation_id"])
+        if payment and payment.get("payment_id"):
+            payment_trace_refs.append(payment["payment_id"])
+        trace.append(make_trace_event(
+            case_id=consignment_id,
+            operation_id=f"{consignment_id}:ECONOMIC-EFFECT:1",
+            component_id="economic_accounting_and_remittance",
+            status=payment_trace_status,
+            mode="LOCAL_SQLITE_AND_SIMULATED_PROVIDER" if payment_lifecycle_result else "PREREQUISITE_BLOCKED",
+            component_version="payment-lifecycle-0.1",
+            evidence_refs=payment_trace_refs,
+            reason=(
+                "SYNTHETIC_OR_SIMULATED_PAYMENT_ONLY"
+                if payment_lifecycle_result
+                else "NO_VALID_ASSESSMENT_OR_NO_PAYMENT_REQUIRED"
+            ),
+        ))
         if origin_result["status"] == "REJECTED" or destination_result["status"] == "REJECTED":
             final_status = "REJECTED_AUTHORITY_ACTION_INVALID"
         elif origin.get("outcome") == "REJECT" or destination.get("outcome") == "REJECT":
