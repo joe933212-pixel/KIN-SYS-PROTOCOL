@@ -4,6 +4,8 @@ import sys
 import tempfile
 import threading
 import unittest
+import os
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -148,6 +150,45 @@ class PaymentLifecycleTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNone(payment)
         self.assertEqual(obligation["status"], "RECORDED")
+
+    def test_process_exit_before_instruction_commit_leaves_no_partial_payment(self):
+        self.payments.create_obligation(
+            "OBL-CRASH", 80000, "UGX", "SYNTHETIC-CRASH-ASSESSMENT"
+        )
+        self.payments.close()
+        script = r"""
+import os
+import sys
+from payment_lifecycle import PaymentLifecycle
+store = PaymentLifecycle(sys.argv[1])
+original = store._event
+def write_then_crash(*args, **kwargs):
+    original(*args, **kwargs)
+    os._exit(77)
+store._event = write_then_crash
+store.create_instruction("PAY-CRASH", "OBL-CRASH")
+"""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT)
+        child = subprocess.run(
+            [sys.executable, "-c", script, self.db_path],
+            env=env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(child.returncode, 77, child.stderr)
+
+        self.payments = PaymentLifecycle(self.db_path)
+        payment = self.payments.db.execute(
+            "SELECT payment_id FROM payments WHERE obligation_id='OBL-CRASH'"
+        ).fetchone()
+        obligation = self.payments.db.execute(
+            "SELECT status FROM obligations WHERE obligation_id='OBL-CRASH'"
+        ).fetchone()
+        events = self.payments.db.execute(
+            "SELECT COUNT(*) FROM payment_events WHERE payment_id='PAY-CRASH'"
+        ).fetchone()[0]
+        self.assertIsNone(payment)
+        self.assertEqual(obligation["status"], "RECORDED")
+        self.assertEqual(events, 0)
 
     def test_payment_records_survive_database_reopen(self):
         self.payments.close()
