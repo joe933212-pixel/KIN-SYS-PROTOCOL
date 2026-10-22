@@ -75,7 +75,7 @@ def validate_component_response(
         raise ContractViolation("COMPONENT_RESPONSE_OPERATION_MISMATCH")
     if not isinstance(response["component_version"], str) or not response["component_version"].strip():
         raise ContractViolation("INVALID_COMPONENT_RESPONSE_METADATA")
-    if response["status"] not in _ALLOWED_STATUSES:
+    if not isinstance(response["status"], str) or response["status"] not in _ALLOWED_STATUSES:
         raise ContractViolation("INVALID_COMPONENT_RESPONSE_STATUS")
     if response["data"] is not None and not isinstance(response["data"], dict):
         raise ContractViolation("INVALID_COMPONENT_RESPONSE_DATA")
