@@ -60,7 +60,7 @@ class WholeSystemModelTests(unittest.TestCase):
             self.assertTrue(validate_system_trace(edge["system_trace"], case_id="SYSTEM-MODEL-EDGE"))
             self.assertEqual(
                 {response["component_id"] for response in central["component_responses"]},
-                {"identity_authority", "minah_ai", "rules_and_statutory_policy", "external_adapters"},
+                {"identity_authority", "minah_ai", "institutional_coordination", "rules_and_statutory_policy", "external_adapters"},
             )
             self.assertEqual(
                 {response["component_id"] for response in edge["component_responses"]},
@@ -79,6 +79,28 @@ class WholeSystemModelTests(unittest.TestCase):
                 "protocol_orchestration",
             }.issubset(central_components))
             self.assertIn("edge_operation", {event["component_id"] for event in edge["system_trace"]})
+        finally:
+            demo.close()
+
+    def test_institutional_response_contract_preserves_deferred_stage_without_success(self):
+        demo = IntegratedDemonstrator()
+        try:
+            result = demo.run_case(
+                consignment_id="CONTRACT-ORIGIN-REJECT",
+                origin_decision="REJECT",
+            )
+            decisions = [
+                response for response in result["component_responses"]
+                if response["component_id"] == "institutional_coordination"
+            ]
+            self.assertEqual(len(decisions), 2)
+            self.assertEqual(decisions[0]["status"], "ACCEPTED")
+            self.assertEqual(decisions[0]["data"]["status"], "ACCEPTED")
+            self.assertEqual(decisions[1]["status"], "DEFERRED")
+            self.assertEqual(decisions[1]["failure_code"], "ORIGIN_STAGE_NOT_APPROVED")
+            self.assertEqual(decisions[1]["data"]["status"], "NOT_ATTEMPTED")
+            self.assertIsNone(result["statutory_obligation"])
+            self.assertIsNone(result["payment"])
         finally:
             demo.close()
 
