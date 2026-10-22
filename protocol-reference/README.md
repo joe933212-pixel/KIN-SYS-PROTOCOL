@@ -28,7 +28,7 @@ The JSON report compares the original KIN-SYS SQLite slice with the independent 
 
 ## Integrated synthetic demonstrator
 
-The whole-system inventory lives in `protocol-reference/system_model.py` and is included in both central and disconnected-edge demo outputs. It explicitly lists implemented, simulated, specified, interface-modelled, and unresolved logical responsibilities; see the root `SYSTEM_INTEGRATION_ROADMAP.md` before treating the local slice as the system architecture. The inventory is descriptive and does not claim every component is implemented.\n\nRun the end-to-end synthetic demonstration from the repository root:
+The whole-system inventory lives in `protocol-reference/system_model.py` and is included in both central and disconnected-edge demo outputs. It explicitly lists implemented, simulated, specified, interface-modelled, and unresolved logical responsibilities. The `system_trace` output records selected case-linked component events using a shared event schema; validation checks schema/case linkage, not event truth or distributed trace completeness. See the root `SYSTEM_INTEGRATION_ROADMAP.md` before treating the local slice as the system architecture. Neither inventory nor trace claims every component is implemented.\n\nRun the end-to-end synthetic demonstration from the repository root:
 
 ```sh
 PYTHONPATH=protocol-reference python -m integrated_demo
