@@ -58,6 +58,31 @@ class PairedPaymentLifecycleTests(unittest.TestCase):
         self.assert_pair_equal(systems)
         self.assertEqual(self.vector(systems[0])["status"], "UNKNOWN_PENDING_RECONCILIATION")
 
+    def test_settlement_rejects_changed_obligation_in_both_implementations(self):
+        systems = self.make_pair()
+        for system in systems:
+            connection = getattr(system, "db", getattr(system, "connection", None))
+            connection.execute(
+                "UPDATE obligations SET amount_minor=51000 WHERE obligation_id='OBL-1'"
+            ) if hasattr(system, "db") else connection.execute(
+                "UPDATE liabilities SET value_minor=51000 WHERE liability_key='OBL-1'"
+            )
+            connection.commit()
+
+        errors = []
+        for system in systems:
+            try:
+                system.record_settlement(
+                    "PAY-1", "SET-MISMATCH", "SETTLEMENT-REF",
+                    amount_minor=50000, currency="UGX",
+                )
+            except ValueError as exc:
+                errors.append(str(exc))
+        self.assertEqual(errors, ["OBLIGATION_PAYMENT_MISMATCH"] * 2)
+        self.assert_pair_equal(systems)
+        self.assertEqual(self.vector(systems[0])["status"], "INSTRUCTION_CREATED")
+        self.assertEqual(self.vector(systems[0])["history_types"], ["INSTRUCTION_CREATED"])
+
     def test_matching_settlement_evidence_finalizes_both_local_records(self):
         systems = self.make_pair()
         for system in systems:
