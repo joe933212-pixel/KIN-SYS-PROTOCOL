@@ -274,14 +274,36 @@ class IntegratedDemonstrator:
         if revoke_origin_before_decision:
             self.workflow.set_authority_active(consignment_id, "ORIGIN", False)
 
-        origin_result = self.workflow.decide(
-            event_id=f"{consignment_id}:ORIGIN:1",
+        origin_operation_id = f"{consignment_id}:ORIGIN:1"
+        origin_raw_result = self.workflow.decide(
+            event_id=origin_operation_id,
             consignment_id=consignment_id,
             stage="ORIGIN",
             actor_id=origin_actor,
             decision=origin_decision,
             rule_version=DEMO_RULE_VERSION,
         )
+        origin_response_status = (
+            "ACCEPTED" if origin_raw_result.get("status") == "ACCEPTED"
+            else "REJECTED" if origin_raw_result.get("status") == "REJECTED"
+            else "DEFERRED"
+        )
+        origin_response = validate_component_response(
+            make_component_response(
+                component_id="institutional_coordination",
+                operation_id=origin_operation_id,
+                component_version="institutional-workflow-0.1",
+                status=origin_response_status,
+                data=origin_raw_result,
+                failure_code=None if origin_response_status == "ACCEPTED" else (
+                    origin_raw_result.get("reason") or "ORIGIN_DECISION_NOT_ACCEPTED"
+                ),
+            ),
+            expected_component_id="institutional_coordination",
+            expected_operation_id=origin_operation_id,
+        )
+        component_responses.append(origin_response)
+        origin_result = origin_response["data"]
         origin = self.workflow.stage(consignment_id, "ORIGIN")
         trace.append(make_trace_event(
             case_id=consignment_id,
@@ -292,9 +314,10 @@ class IntegratedDemonstrator:
             component_version="institutional-workflow-0.1",
             reason=origin_result.get("reason"),
         ))
+        destination_operation_id = f"{consignment_id}:DESTINATION:1"
         if origin_result["status"] == "ACCEPTED" and origin.get("outcome") == "APPROVE":
-            destination_result = self.workflow.decide(
-                event_id=f"{consignment_id}:DESTINATION:1",
+            destination_raw_result = self.workflow.decide(
+                event_id=destination_operation_id,
                 consignment_id=consignment_id,
                 stage="DESTINATION",
                 actor_id=destination_actor,
@@ -302,11 +325,32 @@ class IntegratedDemonstrator:
                 rule_version=DEMO_RULE_VERSION,
             )
         else:
-            destination_result = {
+            destination_raw_result = {
                 "status": "NOT_ATTEMPTED",
                 "reason": "ORIGIN_STAGE_NOT_APPROVED",
                 "duplicate": False,
             }
+        destination_response_status = (
+            "ACCEPTED" if destination_raw_result.get("status") == "ACCEPTED"
+            else "REJECTED" if destination_raw_result.get("status") == "REJECTED"
+            else "DEFERRED"
+        )
+        destination_response = validate_component_response(
+            make_component_response(
+                component_id="institutional_coordination",
+                operation_id=destination_operation_id,
+                component_version="institutional-workflow-0.1",
+                status=destination_response_status,
+                data=destination_raw_result,
+                failure_code=None if destination_response_status == "ACCEPTED" else (
+                    destination_raw_result.get("reason") or "DESTINATION_DECISION_NOT_ACCEPTED"
+                ),
+            ),
+            expected_component_id="institutional_coordination",
+            expected_operation_id=destination_operation_id,
+        )
+        component_responses.append(destination_response)
+        destination_result = destination_response["data"]
         destination = self.workflow.stage(consignment_id, "DESTINATION")
         trace.append(make_trace_event(
             case_id=consignment_id,
