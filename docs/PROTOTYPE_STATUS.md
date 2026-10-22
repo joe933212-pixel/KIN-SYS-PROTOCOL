@@ -1,6 +1,6 @@
 > **Authorship & rights:** Joel Kagoro · Copyright © 2026 Joel Kagoro · Licensed under Apache-2.0; see `LICENSE`, `NOTICE`, and `COPYRIGHT.md`.
 
-# Transition Slice Status
+# Prototype and Whole-System Integration Status
 
 **Date:** 2026-10-22  
 **Status:** Reference code and expanded tests committed. Test and CI claims below are limited to specific recorded runs.
@@ -13,6 +13,14 @@
 - `protocol-reference/tests/test_transition.py` — tests for acceptance, duplicates, conflicting event IDs, authority rejection/revocation, rule rejection/version pinning, undefined transitions, rollback before commit, and file-backed store reopen behaviour.
 - `protocol-reference/README.md` — run instructions and scope limitations.
 - `.github/workflows/protocol-conformance.yml` — GitHub Actions workflow for local contract tests, paired comparison, integrated demo smoke check, and artifact upload.
+
+## Whole-system-first alignment — 2026-10-22
+
+- Added [`SYSTEM_INTEGRATION_ROADMAP.md`](../SYSTEM_INTEGRATION_ROADMAP.md) as the whole-system architecture and development direction, plus [Decision 0002](../DECISIONS/0002-whole-system-first-development.md). The decision makes the end-to-end system contract the organising authority for future component work.
+- Added `protocol-reference/system_model.py`, a machine-readable inventory of 19 logical responsibilities spanning orchestration, identity/authority, message contracts, evidence, rules, MINAH, execution/history, institutional coordination, statutory remittance/payment, edge operation, network/federation, Nexus Pods, privacy/security, governance, external adapters, $KIN, conformance, and research lineage.
+- The central and disconnected-edge demonstrator outputs now expose the same whole-system manifest. Components are explicitly labelled as simulated, specified, interface-modelled, prototype, research input, or open design, with dependencies, invariant mappings, and limitations. This is an inventory and transparency step, not evidence that all listed components are implemented or fully integrated.
+- GitHub Actions run [39753220943](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39753220943) passed on 2026-10-22: 115 tests passed in 2.183 seconds; paired comparison, integrated demo, and paired integrated workflow reports were generated and checked.
+- Next system-level work: audit and refactor the demonstrator around versioned adapter contracts, make the orchestration layer consume explicit contract responses, add a shared trace of component inputs/outputs/failure propagation, and extend adversarial tests across the whole case lifecycle. The current system manifest does not itself implement these contracts or prove distributed behaviour.
 
 ## Source inventory and remaining reconciliation
 
