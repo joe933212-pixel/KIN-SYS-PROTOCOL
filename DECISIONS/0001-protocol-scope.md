@@ -25,6 +25,8 @@ The existing IVM research archive provides relevant work on executable instituti
 
 ## Consequences
 
+The initial instruction to build a narrow end-to-end slice is superseded as the ongoing development sequence by [Decision 0002 — Whole-system-first KIN-SYS development](0002-whole-system-first-development.md). The narrow slice remains useful evidence, but further implementation is organised by the complete system contract and integrated invariants.
+
 The repository begins with specifications, threat boundaries, use cases, invariants, and a research evidence register. It does not begin by selecting a blockchain, AI provider, hardware design, or token contract. Those decisions require explicit requirements and comparative evidence.
 
 Legacy repositories remain accessible as historical source material. Corrections to claims should be recorded through the evidence register rather than silently assumed.
