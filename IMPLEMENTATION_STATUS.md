@@ -26,6 +26,7 @@
 | State/history commitment and recovery | Prototype evidence reported in IVM archive | Re-verify artifacts; test concurrency, storage failures, and multi-node cases |
 | Offline edge behaviour | Requirements identified | Offline authority model and reconciliation tests |
 | Cross-institution trust | Open design | Trust federation, governance, and dispute model |
+| Integrated demonstrator | Initial synthetic end-to-end software slice implemented; 54-test CI suite passes; machine-readable report generated | Expand adversarial cases, add a matched conventional integrated flow, and review component interfaces; all non-protocol adapters remain simulated |
 | Statutory remittance | Integrated demonstrator requirement specified; not implemented | Authoritative rule pack, obligation calculation, payment evidence contract, exemptions/deferments, reconciliation, legal and fiscal review |
 | Economic accounting / $KIN | Open design; not assumed necessary for statutory remittance | Purpose, accounting rules, abuse model, and legal/economic review |
 | MINAH AI boundary | Conceptual boundary documented; integrated adapter specified in demonstrator plan | Implement deterministic adapter first; test uncertainty, source citation, model/version changes, and authority separation |
@@ -40,9 +41,9 @@ A legacy codebase or document describing a feature does not mark it implemented 
 
 ## Immediate next steps
 
-1. Use [the integrated demonstrator blueprint](docs/INTEGRATED_DEMONSTRATOR_BLUEPRINT.md) to freeze the case schema, state/result vocabulary, synthetic rule pack, and explicit simulation boundaries.
-2. Build one reproducible end-to-end software slice connecting synthetic identity/authority, origin and destination decisions, a deterministic MINAH AI adapter, statutory-obligation calculation, a simulated payment provider, and an auditable case result.
-3. Add the challenge scenarios from the blueprint before describing the integrated slice as demonstrated.
-4. Run the same cases against a fair conventional workflow and publish reproducible results, including equivalences and failures.
-5. Continue source-version reconciliation for CRS, CISA, IVM, and CEE alongside this integration work; do not treat those artifacts as the whole KIN-SYS system.
-6. Add a simulated edge/Nexus Pod deployment profile after the integrated software contract is stable; physical hardware and institutional integrations remain separate validation gates.
+1. Expand the integrated slice's challenge tests: conflicting rule versions, revocation timing, payment retries/reconciliation, corrupted or stale evidence, and restart/recovery across component boundaries.
+2. Implement the same end-to-end contract in the conventional comparator, not just the existing institutional-stage baseline, and compare outcomes and complexity fairly.
+3. Specify versioned interface contracts between the protocol, identity, MINAH AI, statutory remittance, payment, and edge adapters.
+4. Continue source-version reconciliation for CRS, CISA, IVM, and CEE alongside integration work; do not treat those artifacts as the whole KIN-SYS system.
+5. Add a richer simulated edge/Nexus Pod profile after interface contracts stabilise; physical hardware and institutional integrations remain separate validation gates.
+6. Prepare an external-review bundle with the demo script, synthetic rules, test reports, limitations, and unresolved decisions.
