@@ -16,9 +16,10 @@ class PaymentLifecycle:
     """SQLite-backed payment records; unknown outcomes require reconciliation."""
 
     def __init__(self, database: str = ":memory:"):
-        self.db = sqlite3.connect(database)
+        self.db = sqlite3.connect(database, timeout=10.0)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
+        self.db.execute("PRAGMA busy_timeout = 10000")
         self.db.executescript(
             """
             CREATE TABLE IF NOT EXISTS obligations (
@@ -78,31 +79,38 @@ class PaymentLifecycle:
         ).fetchone())
 
     def create_instruction(self, payment_id: str, obligation_id: str) -> dict[str, Any]:
-        """Create exactly one stable instruction for an obligation; never submits it."""
-        obligation = self.db.execute(
-            "SELECT * FROM obligations WHERE obligation_id=?", (obligation_id,)
-        ).fetchone()
-        if not obligation:
-            raise ValueError("OBLIGATION_NOT_FOUND")
-        request = {
-            "payment_id": payment_id,
-            "obligation_id": obligation_id,
-            "amount_minor": obligation["amount_minor"],
-            "currency": obligation["currency"],
-        }
-        fingerprint = hashlib.sha256(
-            json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        existing = self.db.execute(
-            "SELECT * FROM payments WHERE payment_id=?", (payment_id,)
-        ).fetchone()
-        if existing:
-            if existing["request_hash"] != fingerprint:
-                raise ValueError("PAYMENT_ID_CONFLICT")
-            return dict(existing)
+        """Create exactly one stable instruction for an obligation; never submits it.
+
+        BEGIN IMMEDIATE serializes competing writers before they inspect the
+        obligation, so concurrent callers cannot both pass a read-then-write
+        check and create separate instructions for one obligation.
+        """
         if not payment_id:
             raise ValueError("PAYMENT_ID_REQUIRED")
         try:
+            self.db.execute("BEGIN IMMEDIATE")
+            obligation = self.db.execute(
+                "SELECT * FROM obligations WHERE obligation_id=?", (obligation_id,)
+            ).fetchone()
+            if not obligation:
+                raise ValueError("OBLIGATION_NOT_FOUND")
+            request = {
+                "payment_id": payment_id,
+                "obligation_id": obligation_id,
+                "amount_minor": obligation["amount_minor"],
+                "currency": obligation["currency"],
+            }
+            fingerprint = hashlib.sha256(
+                json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            existing = self.db.execute(
+                "SELECT * FROM payments WHERE payment_id=?", (payment_id,)
+            ).fetchone()
+            if existing:
+                if existing["request_hash"] != fingerprint:
+                    raise ValueError("PAYMENT_ID_CONFLICT")
+                self.db.commit()
+                return dict(existing)
             self.db.execute(
                 """INSERT INTO payments
                    (payment_id, obligation_id, request_hash, amount_minor, currency, status)
@@ -118,6 +126,9 @@ class PaymentLifecycle:
         except sqlite3.IntegrityError as exc:
             self.db.rollback()
             raise ValueError("OBLIGATION_ALREADY_HAS_PAYMENT_INSTRUCTION") from exc
+        except Exception:
+            self.db.rollback()
+            raise
         return dict(self.db.execute(
             "SELECT * FROM payments WHERE payment_id=?", (payment_id,)
         ).fetchone())
