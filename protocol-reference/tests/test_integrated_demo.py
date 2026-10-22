@@ -35,6 +35,26 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(len(result["payment_lifecycle"]["history"]), 3)
         self.assertEqual(len(result["history"]), 2)
 
+    def test_origin_rejection_stops_cross_border_workflow_before_destination_or_payment(self):
+        result = self.run_case(
+            consignment_id="ORIGIN-REJECTION-CASE",
+            origin_decision="REJECT",
+            destination_decision="APPROVE",
+        )
+        self.assertEqual(result["institutional_decisions"]["origin"]["result"], "REJECT")
+        self.assertEqual(
+            result["institutional_decisions"]["destination"]["operation"]["status"],
+            "NOT_ATTEMPTED",
+        )
+        self.assertEqual(result["status"], "INSTITUTIONAL_DECISION_REJECTED")
+        self.assertIsNone(result["statutory_obligation"])
+        self.assertIsNone(result["payment"])
+        self.assertIsNone(result["payment_lifecycle"])
+        self.assertEqual(
+            [row["stage"] for row in result["history"]],
+            ["ORIGIN"],
+        )
+
     def test_destination_rejection_cannot_be_overridden_by_origin_approval(self):
         result = self.run_case(destination_decision="REJECT")
         self.assertEqual(result["status"], "INSTITUTIONAL_DECISION_REJECTED")
