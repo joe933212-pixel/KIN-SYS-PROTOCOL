@@ -272,6 +272,39 @@ store.create_instruction("PAY-CRASH", "OBL-CRASH")
         self.assertEqual(obligation["status"], "RECORDED")
         self.assertEqual(events, 0)
 
+    def test_settlement_event_write_failure_rolls_back_event_and_state(self):
+        self.payments.record_provider_ack("PAY-1", "EV-ACK-SETTLE-FAIL", "ACCEPTED")
+        original_event = self.payments._event
+
+        def write_then_fail(*args, **kwargs):
+            original_event(*args, **kwargs)
+            if args[2] == "SETTLEMENT_EVIDENCE":
+                raise RuntimeError("INJECTED_SETTLEMENT_COMMIT_FAILURE")
+
+        self.payments._event = write_then_fail
+        try:
+            with self.assertRaisesRegex(RuntimeError, "INJECTED_SETTLEMENT_COMMIT_FAILURE"):
+                self.payments.record_settlement(
+                    "PAY-1", "EV-SETTLE-FAIL", "SET-REF-FAIL",
+                    amount_minor=50000, currency="UGX",
+                )
+        finally:
+            self.payments._event = original_event
+
+        payment = self.payments.get_payment("PAY-1")
+        obligation = self.payments.db.execute(
+            "SELECT status FROM obligations WHERE obligation_id='OBL-1'"
+        ).fetchone()
+        events = [
+            event for event in self.payments.history("PAY-1")
+            if event["event_type"] == "SETTLEMENT_EVIDENCE"
+        ]
+        self.assertEqual(payment["status"], "PROVIDER_ACCEPTED_SETTLEMENT_UNCONFIRMED")
+        self.assertIsNone(payment["settlement_reference"])
+        self.assertEqual(obligation["status"], "PAYMENT_INSTRUCTED")
+        self.assertEqual(events, [])
+        self.assertFalse(self.payments.db.in_transaction)
+
     def test_process_exit_during_settlement_write_leaves_no_partial_settlement(self):
         self.payments.record_provider_ack("PAY-1", "EV-ACK-CRASH", "ACCEPTED", "PROVIDER-REF")
         self.payments.close()
