@@ -26,6 +26,10 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["statutory_obligation"]["assessed_amount_ugx"], 50_000)
         self.assertEqual(result["payment"]["status"], "SIMULATED_CONFIRMED")
         self.assertFalse(result["payment"]["funds_moved"])
+        self.assertEqual(result["payment_lifecycle"]["status"], "SIMULATED_SETTLED")
+        self.assertEqual(result["payment_lifecycle"]["recorded_status"], "SETTLED")
+        self.assertFalse(result["payment_lifecycle"]["funds_moved"])
+        self.assertEqual(len(result["payment_lifecycle"]["history"]), 3)
         self.assertEqual(len(result["history"]), 2)
 
     def test_destination_rejection_cannot_be_overridden_by_origin_approval(self):
@@ -41,6 +45,16 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["status"], "PENDING_PAYMENT_RECONCILIATION")
         self.assertEqual(result["payment"]["status"], "UNKNOWN_PENDING_RECONCILIATION")
         self.assertFalse(result["payment"]["funds_moved"])
+        self.assertEqual(result["payment_lifecycle"]["status"], "UNKNOWN_PENDING_RECONCILIATION")
+        self.assertEqual(result["payment_lifecycle"]["recorded_status"], "UNKNOWN_PENDING_RECONCILIATION")
+        self.assertFalse(result["payment_lifecycle"]["funds_moved"])
+
+    def test_declined_payment_is_not_settled(self):
+        result = self.run_case(payment_outcome="DECLINED")
+        self.assertEqual(result["status"], "PENDING_PAYMENT_RESOLUTION")
+        self.assertEqual(result["payment_lifecycle"]["status"], "SIMULATED_DECLINED")
+        self.assertEqual(result["payment_lifecycle"]["recorded_status"], "PROVIDER_DECLINED")
+        self.assertIsNone(result["payment_lifecycle"]["settlement_reference"])
 
     def test_minah_missing_evidence_does_not_create_institutional_approval(self):
         result = self.run_case(minah_evidence={"commodity": "SYNTHETIC_MAIZE"})
@@ -88,6 +102,7 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["status"], "DEMO_READY_UNDER_SYNTHETIC_EXEMPTION")
         self.assertEqual(result["statutory_obligation"]["assessed_amount_ugx"], 0)
         self.assertEqual(result["payment"]["status"], "NOT_REQUIRED_EXEMPT")
+        self.assertEqual(result["payment_lifecycle"]["status"], "NOT_REQUIRED_EXEMPT")
 
     def test_tax_calculator_rejects_negative_or_non_integer_amounts(self):
         rules = SyntheticTaxRules()
