@@ -42,6 +42,32 @@ class PaymentLifecycleTests(unittest.TestCase):
         self.assertEqual(result["status"], "PROVIDER_ACCEPTED_SETTLEMENT_UNCONFIRMED")
         self.assertIsNone(result["settlement_reference"])
 
+    def test_retrying_old_provider_ack_does_not_overwrite_reconciliation(self):
+        self.payments.record_provider_ack("PAY-1", "EV-ACK-STALE", "UNKNOWN")
+        self.payments.record_reconciliation("PAY-1", "EV-REC-LATEST", "NOT_SETTLED")
+
+        result = self.payments.record_provider_ack("PAY-1", "EV-ACK-STALE", "UNKNOWN")
+
+        self.assertEqual(result["status"], "RECONCILED_NOT_SETTLED")
+        self.assertEqual(result["last_reconciliation"], "NOT_SETTLED")
+        self.assertEqual(len([
+            event for event in self.payments.history("PAY-1")
+            if event["event_id"] == "EV-ACK-STALE"
+        ]), 1)
+
+    def test_retrying_old_reconciliation_does_not_overwrite_newer_finding(self):
+        self.payments.record_reconciliation("PAY-1", "EV-REC-OLD", "UNKNOWN")
+        self.payments.record_reconciliation("PAY-1", "EV-REC-NEW", "NOT_SETTLED")
+
+        result = self.payments.record_reconciliation("PAY-1", "EV-REC-OLD", "UNKNOWN")
+
+        self.assertEqual(result["status"], "RECONCILED_NOT_SETTLED")
+        self.assertEqual(result["last_reconciliation"], "NOT_SETTLED")
+        self.assertEqual(len([
+            event for event in self.payments.history("PAY-1")
+            if event["event_id"] == "EV-REC-OLD"
+        ]), 1)
+
     def test_timeout_unknown_stays_unknown_and_reconciliation_does_not_resubmit(self):
         self.payments.record_provider_ack("PAY-1", "EV-ACK-1", "UNKNOWN")
         result = self.payments.record_reconciliation("PAY-1", "EV-REC-1", "UNKNOWN")
