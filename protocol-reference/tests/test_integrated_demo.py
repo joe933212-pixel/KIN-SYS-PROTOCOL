@@ -56,6 +56,26 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["status"], "REJECTED_AUTHORITY_ACTION_INVALID")
         self.assertIsNone(result["statutory_obligation"])
 
+    def test_revoked_origin_authority_blocks_decision_and_downstream_stage(self):
+        result = self.run_case(revoke_origin_before_decision=True)
+        self.assertEqual(result["institutional_decisions"]["origin"]["operation"]["reason"],
+                         "AUTHORITY_REVOKED")
+        self.assertEqual(result["institutional_decisions"]["destination"]["operation"]["status"],
+                         "NOT_ATTEMPTED")
+        self.assertEqual(result["status"], "REJECTED_AUTHORITY_ACTION_INVALID")
+        self.assertIsNone(result["statutory_obligation"])
+        self.assertEqual(result["history"], [])
+
+    def test_rule_version_drift_blocks_origin_and_downstream_stage(self):
+        result = self.run_case(origin_rule_version_override="SYNTHETIC-OLD-RULE")
+        self.assertEqual(result["institutional_decisions"]["origin"]["operation"]["reason"],
+                         "RULE_VERSION_MISMATCH")
+        self.assertEqual(result["institutional_decisions"]["destination"]["operation"]["status"],
+                         "NOT_ATTEMPTED")
+        self.assertEqual(result["status"], "REJECTED_AUTHORITY_ACTION_INVALID")
+        self.assertEqual(result["institutional_decisions"]["destination"]["operation"]["status"], "NOT_ATTEMPTED")
+        self.assertIsNone(result["statutory_obligation"])
+
     def test_disconnected_edge_profile_defers_online_required_decisions(self):
         result = self.run_case(edge_connected=False)
         self.assertEqual(result["profile"], "SIMULATED_EDGE_DISCONNECTED")
