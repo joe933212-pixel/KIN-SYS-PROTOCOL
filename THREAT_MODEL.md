@@ -10,7 +10,7 @@ Objectives include authenticated participation, explicit authorisation, message/
 
 ## 2. Adversaries and failure sources
 
-Assume users, operators, devices, services, and external data sources may be compromised, negligent, unavailable, or malicious. Threats include credential theft and privilege escalation; stale/revoked authority; duplicate requests and replay; message tampering, reordering, or cross-domain confusion; malformed payloads and downgrade; storage corruption, partial writes, process termination, clock skew, and power loss; network partitions and conflicting local transitions; compromised edge hardware and insecure updates; insider misuse and governance capture; false physical-world assertions; AI hallucination, prompt injection, service compromise, or silent model changes; duplicate rewards and fraudulent redemption; and denial of service.
+Assume users, operators, devices, services, and external data sources may be compromised, negligent, unavailable, or malicious. Threats include credential theft and privilege escalation; stale/revoked authority; duplicate requests and replay; message tampering, reordering, or cross-domain confusion; malformed payloads and downgrade; storage corruption, partial writes, process termination, clock skew, and power loss; network partitions and conflicting local transitions; compromised edge hardware and insecure updates; insider misuse and governance capture; false physical-world assertions; AI hallucination, prompt injection, service compromise, or silent model changes; duplicate rewards and fraudulent redemption; denial of service; compromised HSMs or key custody; false or incomplete claims about hardware attestation; zero-knowledge proof replay, statement/case substitution, circuit or rule-version mismatch, weak/incorrect circuit constraints, prover/verifier implementation defects, proof-system setup or cryptographic assumption failure, resource-exhaustion attacks against proof generation, and privacy leakage through public inputs or metadata.
 
 ## 3. Trust assumptions
 
@@ -24,6 +24,9 @@ A signature authenticates a message under key and algorithm assumptions; it does
 - Fault injection at every persistence boundary and recovery verification.
 - Declared offline permissions and reconciliation semantics.
 - Key generation, storage, rotation, revocation, backup, and compromise recovery.
+- Nexus Pod HSM integration, secure boot/measured software, attestation validation, and explicit limits of hardware trust.
+- Zero-knowledge statement/circuit review, public/private input minimisation, proof-to-case and proof-to-version binding, freshness and replay prevention, verifier availability, and adversarial test vectors.
+- Measure proof generation/verification latency, compute/memory/energy cost, transmitted bytes, and retained storage against a fair conventional baseline; include denial-of-service and recovery behaviour.
 - Least privilege, separation of duties, auditable governance changes, and bounded emergency powers.
 - Privacy review, data minimisation, retention limits, and disclosure control.
 - Software provenance, reproducible builds where feasible, signed releases, and update rollback.
