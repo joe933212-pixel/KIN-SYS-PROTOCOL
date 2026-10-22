@@ -49,6 +49,16 @@ class DeterministicMinahAdapter:
             "model_version": self.version,
         }
 
+    def respond(self, operation_id: str, evidence: dict[str, Any]) -> dict[str, Any]:
+        """Return MINAH output using the same versioned envelope consumed by orchestration."""
+        return make_component_response(
+            component_id="minah_ai",
+            operation_id=operation_id,
+            component_version=self.version,
+            status="ACCEPTED",
+            data=self.review(evidence),
+        )
+
 
 class SyntheticTaxRules:
     """Fictional rules for demonstrating calculation provenance, not real tax law."""
@@ -97,8 +107,14 @@ class SimulatedPaymentProvider:
 class IntegratedDemonstrator:
     """Compose synthetic adapters and the current two-institution workflow slice."""
 
-    def __init__(self, database: str = ":memory:", *, database_prefix: str | None = None):
-        """Use in-memory stores by default or separate durable stores under a shared prefix."""
+    def __init__(
+        self,
+        database: str = ":memory:",
+        *,
+        database_prefix: str | None = None,
+        minah_adapter: Any | None = None,
+    ):
+        """Use in-memory stores by default; allow explicit MINAH adapter substitution for conformance tests."""
         if database_prefix is None:
             workflow_db = payment_db = edge_db = database
         else:
@@ -107,7 +123,7 @@ class IntegratedDemonstrator:
             edge_db = f"{database_prefix}.edge.sqlite3"
         self.workflow = InstitutionalWorkflow(workflow_db)
         self.identity = SyntheticIdentityGate()
-        self.minah = DeterministicMinahAdapter()
+        self.minah = minah_adapter if minah_adapter is not None else DeterministicMinahAdapter()
         self.tax_rules = SyntheticTaxRules()
         self.payment = SimulatedPaymentProvider()
         self.payment_lifecycle = PaymentLifecycle(payment_db)
@@ -173,13 +189,7 @@ class IntegratedDemonstrator:
             "rule_refs": ["SYNTHETIC-RULE-PACK-1"],
         }
         minah_operation_id = f"{consignment_id}:MINAH:REVIEW:1"
-        minah_raw = make_component_response(
-            component_id="minah_ai",
-            operation_id=minah_operation_id,
-            component_version=self.minah.version,
-            status="ACCEPTED",
-            data=self.minah.review(evidence),
-        )
+        minah_raw = self.minah.respond(minah_operation_id, evidence)
         minah_response = validate_component_response(
             minah_raw, expected_component_id="minah_ai",
             expected_operation_id=minah_operation_id,
