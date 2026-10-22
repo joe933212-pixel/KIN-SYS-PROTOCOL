@@ -82,6 +82,17 @@ class EdgeOperationQueue:
         ).fetchone()
         if row is None:
             raise KeyError("EDGE_OPERATION_NOT_FOUND")
+        actual_digest = hashlib.sha256(row["payload_json"].encode("utf-8")).hexdigest()
+        if actual_digest != row["payload_digest"]:
+            self.db.execute(
+                """UPDATE queued_operations
+                   SET status='QUARANTINED_PAYLOAD_INTEGRITY_FAILURE',
+                       replay_reason='PAYLOAD_DIGEST_MISMATCH'
+                   WHERE operation_id=?""",
+                (operation_id,),
+            )
+            self.db.commit()
+            return self.get(operation_id)
         if row["status"] == "READY_FOR_CENTRAL_REVIEW" and (
             row["evidence_version"] == current_evidence_version
             and row["rule_version"] == current_rule_version and authority_active
@@ -149,9 +160,16 @@ class EdgeOperationQueue:
 
     @staticmethod
     def _as_dict(row: sqlite3.Row) -> dict[str, Any]:
+        raw_payload = row["payload_json"]
+        actual_digest = hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+        try:
+            payload = json.loads(raw_payload)
+        except (TypeError, json.JSONDecodeError):
+            payload = None
         return {
             "operation_id": row["operation_id"],
-            "payload": json.loads(row["payload_json"]),
+            "payload": payload,
+            "payload_integrity_ok": actual_digest == row["payload_digest"],
             "evidence_version": row["evidence_version"],
             "rule_version": row["rule_version"],
             "status": row["status"],
