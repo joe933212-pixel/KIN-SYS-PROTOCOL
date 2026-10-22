@@ -43,6 +43,7 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 
 ## Start here
 
+0. [Whole-system integration roadmap: complete architecture, shared invariants, and build sequence](SYSTEM_INTEGRATION_ROADMAP.md)
 1. [Protocol specification](SPECIFICATION.md)
 2. [Architecture and trust boundaries](ARCHITECTURE.md)
 3. [Source crosswalk: CRS, CISA, IVM, CEE and prior art](docs/SOURCE_CROSSWALK.md)
