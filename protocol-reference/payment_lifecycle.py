@@ -136,28 +136,33 @@ class PaymentLifecycle:
     def record_provider_ack(
         self, payment_id: str, event_id: str, acknowledgement: str, provider_reference: str | None = None
     ) -> dict[str, Any]:
-        """Record provider response; acknowledgement is not settlement evidence."""
+        """Atomically record provider acknowledgement without confusing it with settlement."""
         allowed = {"ACCEPTED", "DECLINED", "UNKNOWN"}
         if acknowledgement not in allowed:
             raise ValueError("INVALID_PROVIDER_ACKNOWLEDGEMENT")
-        payment = self._payment(payment_id)
-        evidence = {"acknowledgement": acknowledgement, "provider_reference": provider_reference}
-        self._event(event_id, payment_id, "PROVIDER_ACKNOWLEDGEMENT", evidence)
-        if acknowledgement == "ACCEPTED":
-            status = "PROVIDER_ACCEPTED_SETTLEMENT_UNCONFIRMED"
-        elif acknowledgement == "DECLINED":
-            status = "PROVIDER_DECLINED"
-        else:
-            status = "UNKNOWN_PENDING_RECONCILIATION"
-        if payment["status"] == "SETTLED":
-            self.db.rollback()
-            raise ValueError("PAYMENT_ALREADY_SETTLED")
-        self.db.execute(
-            "UPDATE payments SET status=?, provider_reference=? WHERE payment_id=?",
-            (status, provider_reference, payment_id),
-        )
-        self.db.commit()
-        return self.get_payment(payment_id)
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            payment = self._payment(payment_id)
+            evidence = {"acknowledgement": acknowledgement, "provider_reference": provider_reference}
+            self._event(event_id, payment_id, "PROVIDER_ACKNOWLEDGEMENT", evidence)
+            if payment["status"] == "SETTLED":
+                raise ValueError("PAYMENT_ALREADY_SETTLED")
+            if acknowledgement == "ACCEPTED":
+                status = "PROVIDER_ACCEPTED_SETTLEMENT_UNCONFIRMED"
+            elif acknowledgement == "DECLINED":
+                status = "PROVIDER_DECLINED"
+            else:
+                status = "UNKNOWN_PENDING_RECONCILIATION"
+            self.db.execute(
+                "UPDATE payments SET status=?, provider_reference=? WHERE payment_id=?",
+                (status, provider_reference, payment_id),
+            )
+            self.db.commit()
+            return self.get_payment(payment_id)
+        except Exception:
+            if self.db.in_transaction:
+                self.db.rollback()
+            raise
 
     def record_settlement(
         self, payment_id: str, event_id: str, settlement_reference: str, *, amount_minor: int, currency: str
@@ -223,31 +228,35 @@ class PaymentLifecycle:
     def record_reconciliation(
         self, payment_id: str, event_id: str, finding: str, provider_reference: str | None = None
     ) -> dict[str, Any]:
-        """Reconciliation may establish settled/not-settled/unknown; it never resubmits."""
+        """Atomically record a reconciliation finding; never resubmit a payment."""
         if finding not in {"SETTLED", "NOT_SETTLED", "UNKNOWN"}:
             raise ValueError("INVALID_RECONCILIATION_FINDING")
-        payment = self._payment(payment_id)
-        evidence = {"finding": finding, "provider_reference": provider_reference}
-        self._event(event_id, payment_id, "RECONCILIATION", evidence)
-        if finding == "SETTLED" and payment["status"] != "SETTLED":
-            self.db.rollback()
-            raise ValueError("SETTLEMENT_EVIDENCE_REQUIRED")
-        if payment["status"] == "SETTLED" and finding != "SETTLED":
-            self.db.rollback()
-            raise ValueError("RECONCILIATION_CONFLICTS_WITH_SETTLEMENT")
-        if payment["status"] != "SETTLED":
-            status = "RECONCILED_NOT_SETTLED" if finding == "NOT_SETTLED" else "UNKNOWN_PENDING_RECONCILIATION"
-            self.db.execute(
-                "UPDATE payments SET status=?, last_reconciliation=? WHERE payment_id=?",
-                (status, finding, payment_id),
-            )
-        else:
-            self.db.execute(
-                "UPDATE payments SET last_reconciliation=? WHERE payment_id=?",
-                (finding, payment_id),
-            )
-        self.db.commit()
-        return self.get_payment(payment_id)
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            payment = self._payment(payment_id)
+            evidence = {"finding": finding, "provider_reference": provider_reference}
+            self._event(event_id, payment_id, "RECONCILIATION", evidence)
+            if finding == "SETTLED" and payment["status"] != "SETTLED":
+                raise ValueError("SETTLEMENT_EVIDENCE_REQUIRED")
+            if payment["status"] == "SETTLED" and finding != "SETTLED":
+                raise ValueError("RECONCILIATION_CONFLICTS_WITH_SETTLEMENT")
+            if payment["status"] != "SETTLED":
+                status = "RECONCILED_NOT_SETTLED" if finding == "NOT_SETTLED" else "UNKNOWN_PENDING_RECONCILIATION"
+                self.db.execute(
+                    "UPDATE payments SET status=?, last_reconciliation=? WHERE payment_id=?",
+                    (status, finding, payment_id),
+                )
+            else:
+                self.db.execute(
+                    "UPDATE payments SET last_reconciliation=? WHERE payment_id=?",
+                    (finding, payment_id),
+                )
+            self.db.commit()
+            return self.get_payment(payment_id)
+        except Exception:
+            if self.db.in_transaction:
+                self.db.rollback()
+            raise
 
     def get_payment(self, payment_id: str) -> dict[str, Any]:
         return dict(self._payment(payment_id))
