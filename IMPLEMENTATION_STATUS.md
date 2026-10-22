@@ -24,7 +24,7 @@
 | Identity and authority interfaces | Requirements identified | Credential, policy, revocation, and key-lifecycle specification |
 | Deterministic transition semantics | Narrow local contract and SQLite prototype committed; not yet cleanly verified | Compare against full IVM/CEE source semantics and Experiment 005 result vector |
 | State/history commitment and recovery | Prototype evidence reported in IVM archive | Re-verify artifacts; test concurrency, storage failures, and multi-node cases |
-| Offline edge behaviour | Requirements identified | Offline authority model and reconciliation tests |
+| Offline edge behaviour | Separate SQLite queue prototype tests stale evidence, rule drift, revocation, fresh operation IDs, and orderly reopen; not yet wired into the integrated flow | Integrate queued replay into the whole-flow demonstrator; test restart/reconnect failures, stale/corrupted evidence, and an independent conventional comparator |
 | Cross-institution trust | Open design | Trust federation, governance, and dispute model |
 | Integrated demonstrator | Synthetic end-to-end software slice implemented; 79-test CI suite passes; machine-readable candidate and paired conventional reports generated | Expand adversarial and recovery cases, extend the matched comparator, and review component interfaces; all non-protocol adapters remain simulated |
 | Statutory remittance | Fictional tax assessment and simulated payment lifecycle implemented in the demonstrator; production statutory remittance not implemented | Authoritative rule pack, institution-approved obligation calculation, real provider integration, exemptions/deferments, reconciliation, legal and fiscal review |
