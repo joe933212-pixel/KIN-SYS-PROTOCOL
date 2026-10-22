@@ -2,7 +2,7 @@
 
 # Decision 0002 — Whole-system-first KIN-SYS development
 
-- **Status:** Proposed for review; implementation direction to be adopted after repository consistency review.
+- **Status:** Accepted as the working development direction; revisable through a documented decision.
 - **Date:** 2026-10-22
 - **Decision owner:** Repository maintainer
 
