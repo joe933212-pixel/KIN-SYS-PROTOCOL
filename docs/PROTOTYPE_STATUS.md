@@ -2,7 +2,7 @@
 
 # Transition Slice Status
 
-**Date:** 2026-10-21  
+**Date:** 2026-10-22  
 **Status:** Prototype source committed; expanded tests committed; clean test execution and CI result are not yet verified.
 
 ## Added artifacts
@@ -32,6 +32,15 @@ The test commit is:
 https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/commit/2f87bb2e8579b9cc0841a91b5214979426b4083c
 
 The GitHub commit-status endpoint returned no status entries when checked, and the available workflow-run lookup did not expose a run for this commit. Therefore the suite must not yet be described as passing.
+
+## Integrated demonstrator slice — 2026-10-22
+
+- `docs/INTEGRATED_DEMONSTRATOR_BLUEPRINT.md` defines an end-to-end validation path spanning protocol orchestration, synthetic identity/authority, MINAH AI boundary, statutory remittance, simulated edge operation, and fair conventional comparison.
+- `protocol-reference/integrated_demo.py` composes the existing two-institution SQLite model with deterministic test adapters for identity, MINAH AI, fictional tax assessment, simulated payment, and an offline edge profile.
+- `protocol-reference/tests/test_integrated_demo.py` covers the happy path, separate origin/destination decisions, destination rejection, unauthorised actor, AI uncertainty not granting authority, payment timeout, synthetic exemption, disconnected edge behaviour, and invalid tax inputs.
+- Run from the repository root: `PYTHONPATH=protocol-reference python -m integrated_demo`.
+- This is an initial integrated **software** slice. Identity, AI, tax rules, payment, and edge conditions are synthetic/simulated. It is not a production system, legal tax implementation, live payment integration, real AI evaluation, physical Nexus Pod test, or distributed consensus implementation.
+- The corresponding GitHub Actions run must be checked before describing the newly added tests as passing: https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions
 
 ## Interpretation
 
