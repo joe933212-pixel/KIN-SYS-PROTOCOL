@@ -162,54 +162,63 @@ class PaymentLifecycle:
     def record_settlement(
         self, payment_id: str, event_id: str, settlement_reference: str, *, amount_minor: int, currency: str
     ) -> dict[str, Any]:
-        """Accept explicit matching settlement evidence, not a mere provider ACK."""
-        payment = self._payment(payment_id)
-        if not settlement_reference:
-            raise ValueError("SETTLEMENT_REFERENCE_REQUIRED")
-        if amount_minor != payment["amount_minor"] or currency != payment["currency"]:
-            raise ValueError("SETTLEMENT_AMOUNT_OR_CURRENCY_MISMATCH")
-        request = {
-            "payment_id": payment["payment_id"],
-            "obligation_id": payment["obligation_id"],
-            "amount_minor": payment["amount_minor"],
-            "currency": payment["currency"],
-        }
-        expected_hash = hashlib.sha256(
-            json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        if payment["request_hash"] != expected_hash:
-            raise ValueError("PAYMENT_RECORD_INTEGRITY_MISMATCH")
-        obligation = self.db.execute(
-            "SELECT amount_minor, currency FROM obligations WHERE obligation_id=?",
-            (payment["obligation_id"],),
-        ).fetchone()
-        if obligation is None or (
-            obligation["amount_minor"] != payment["amount_minor"]
-            or obligation["currency"] != payment["currency"]
-        ):
-            raise ValueError("OBLIGATION_PAYMENT_MISMATCH")
-        evidence = {
-            "settlement_reference": settlement_reference,
-            "amount_minor": amount_minor,
-            "currency": currency,
-        }
-        self._event(event_id, payment_id, "SETTLEMENT_EVIDENCE", evidence)
-        if payment["status"] == "SETTLED":
-            if payment["settlement_reference"] == settlement_reference:
+        """Atomically record matching settlement evidence and update both records.
+
+        A validation or storage failure must not leave an evidence event committed
+        without the corresponding payment/obligation state change (or vice versa).
+        """
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            payment = self._payment(payment_id)
+            if not settlement_reference:
+                raise ValueError("SETTLEMENT_REFERENCE_REQUIRED")
+            if amount_minor != payment["amount_minor"] or currency != payment["currency"]:
+                raise ValueError("SETTLEMENT_AMOUNT_OR_CURRENCY_MISMATCH")
+            request = {
+                "payment_id": payment["payment_id"],
+                "obligation_id": payment["obligation_id"],
+                "amount_minor": payment["amount_minor"],
+                "currency": payment["currency"],
+            }
+            expected_hash = hashlib.sha256(
+                json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            if payment["request_hash"] != expected_hash:
+                raise ValueError("PAYMENT_RECORD_INTEGRITY_MISMATCH")
+            obligation = self.db.execute(
+                "SELECT amount_minor, currency FROM obligations WHERE obligation_id=?",
+                (payment["obligation_id"],),
+            ).fetchone()
+            if obligation is None or (
+                obligation["amount_minor"] != payment["amount_minor"]
+                or obligation["currency"] != payment["currency"]
+            ):
+                raise ValueError("OBLIGATION_PAYMENT_MISMATCH")
+            evidence = {
+                "settlement_reference": settlement_reference,
+                "amount_minor": amount_minor,
+                "currency": currency,
+            }
+            self._event(event_id, payment_id, "SETTLEMENT_EVIDENCE", evidence)
+            if payment["status"] == "SETTLED":
+                if payment["settlement_reference"] != settlement_reference:
+                    raise ValueError("CONFLICTING_SETTLEMENT_EVIDENCE")
                 self.db.commit()
                 return self.get_payment(payment_id)
-            self.db.rollback()
-            raise ValueError("CONFLICTING_SETTLEMENT_EVIDENCE")
-        self.db.execute(
-            "UPDATE payments SET status='SETTLED', settlement_reference=? WHERE payment_id=?",
-            (settlement_reference, payment_id),
-        )
-        self.db.execute(
-            "UPDATE obligations SET status='SETTLED' WHERE obligation_id=?",
-            (payment["obligation_id"],),
-        )
-        self.db.commit()
-        return self.get_payment(payment_id)
+            self.db.execute(
+                "UPDATE payments SET status='SETTLED', settlement_reference=? WHERE payment_id=?",
+                (settlement_reference, payment_id),
+            )
+            self.db.execute(
+                "UPDATE obligations SET status='SETTLED' WHERE obligation_id=?",
+                (payment["obligation_id"],),
+            )
+            self.db.commit()
+            return self.get_payment(payment_id)
+        except Exception:
+            if self.db.in_transaction:
+                self.db.rollback()
+            raise
 
     def record_reconciliation(
         self, payment_id: str, event_id: str, finding: str, provider_reference: str | None = None
