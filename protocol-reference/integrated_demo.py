@@ -11,6 +11,7 @@ from typing import Any
 
 from workflows.institutional_workflow import InstitutionalWorkflow
 from payment_lifecycle import PaymentLifecycle
+from edge_queue import EdgeOperationQueue
 
 
 DEMO_RULE_VERSION = "UG-SYNTHETIC-1.0"
@@ -101,10 +102,12 @@ class IntegratedDemonstrator:
         self.tax_rules = SyntheticTaxRules()
         self.payment = SimulatedPaymentProvider()
         self.payment_lifecycle = PaymentLifecycle()
+        self.edge_queue = EdgeOperationQueue()
 
     def close(self) -> None:
         self.workflow.close()
         self.payment_lifecycle.close()
+        self.edge_queue.close()
 
     def run_case(
         self,
@@ -140,7 +143,13 @@ class IntegratedDemonstrator:
             destination_rule_version=DEMO_RULE_VERSION,
         )
         if not edge_connected:
-            # This first profile declares institutional decisions online-required.
+            # Queue a request for later central review; never decide institutionally offline.
+            queued = self.edge_queue.enqueue(
+                f"{consignment_id}:EDGE:SUBMIT:1",
+                {"case_id": consignment_id, "action": "REQUEST_CENTRAL_REVIEW"},
+                evidence_version="SYNTHETIC-EVIDENCE-1",
+                rule_version=DEMO_RULE_VERSION,
+            )
             return {
                 "case_id": consignment_id,
                 "profile": "SIMULATED_EDGE_DISCONNECTED",
@@ -149,8 +158,13 @@ class IntegratedDemonstrator:
                 "minah_advisory": advisory,
                 "identity_mode": "SYNTHETIC_TEST_IDENTITIES",
                 "payment": None,
+                "payment_lifecycle": None,
+                "edge_queue": {**queued, "history": self.edge_queue.history(queued["operation_id"])},
                 "history": [],
-                "claims": ["NO_PHYSICAL_NEXUS_POD", "NO_LIVE_IDENTITY", "NO_LIVE_PAYMENT"],
+                "claims": [
+                    "NO_PHYSICAL_NEXUS_POD", "NO_LIVE_IDENTITY", "NO_LIVE_PAYMENT",
+                    "OFFLINE_QUEUE_REPLAY_IS_NOT_INSTITUTIONAL_APPROVAL",
+                ],
             }
 
         if revoke_origin_before_decision:
@@ -274,6 +288,7 @@ class IntegratedDemonstrator:
             "statutory_obligation": tax,
             "payment": payment,
             "payment_lifecycle": payment_lifecycle_result,
+            "edge_queue": None,
             "history": self.workflow.history(consignment_id),
             "claims": [
                 "SYNTHETIC_RULES_NOT_LAW",
