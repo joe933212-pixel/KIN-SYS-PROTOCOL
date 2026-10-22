@@ -190,6 +190,81 @@ store.create_instruction("PAY-CRASH", "OBL-CRASH")
         self.assertEqual(obligation["status"], "RECORDED")
         self.assertEqual(events, 0)
 
+    def test_process_exit_during_settlement_write_leaves_no_partial_settlement(self):
+        self.payments.record_provider_ack("PAY-1", "EV-ACK-CRASH", "ACCEPTED", "PROVIDER-REF")
+        self.payments.close()
+        script = r"""
+import os
+import sys
+from payment_lifecycle import PaymentLifecycle
+store = PaymentLifecycle(sys.argv[1])
+original = store._event
+def write_then_crash(*args, **kwargs):
+    original(*args, **kwargs)
+    if args[2] == "SETTLEMENT_EVIDENCE":
+        os._exit(78)
+store._event = write_then_crash
+store.record_settlement(
+    "PAY-1", "EV-SETTLE-CRASH", "SET-REF-CRASH",
+    amount_minor=50000, currency="UGX"
+)
+"""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT)
+        child = subprocess.run(
+            [sys.executable, "-c", script, self.db_path],
+            env=env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(child.returncode, 78, child.stderr)
+
+        self.payments = PaymentLifecycle(self.db_path)
+        payment = self.payments.get_payment("PAY-1")
+        obligation = self.payments.db.execute(
+            "SELECT status FROM obligations WHERE obligation_id='OBL-1'"
+        ).fetchone()
+        settlement_events = [
+            event for event in self.payments.history("PAY-1")
+            if event["event_type"] == "SETTLEMENT_EVIDENCE"
+        ]
+        self.assertEqual(payment["status"], "PROVIDER_ACCEPTED_SETTLEMENT_UNCONFIRMED")
+        self.assertIsNone(payment["settlement_reference"])
+        self.assertEqual(obligation["status"], "PAYMENT_INSTRUCTED")
+        self.assertEqual(settlement_events, [])
+
+    def test_process_exit_during_reconciliation_write_leaves_prior_state(self):
+        self.payments.record_provider_ack("PAY-1", "EV-ACK-REC-CRASH", "UNKNOWN")
+        self.payments.close()
+        script = r"""
+import os
+import sys
+from payment_lifecycle import PaymentLifecycle
+store = PaymentLifecycle(sys.argv[1])
+original = store._event
+def write_then_crash(*args, **kwargs):
+    original(*args, **kwargs)
+    if args[2] == "RECONCILIATION":
+        os._exit(79)
+store._event = write_then_crash
+store.record_reconciliation("PAY-1", "EV-REC-CRASH", "NOT_SETTLED")
+"""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT)
+        child = subprocess.run(
+            [sys.executable, "-c", script, self.db_path],
+            env=env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(child.returncode, 79, child.stderr)
+
+        self.payments = PaymentLifecycle(self.db_path)
+        payment = self.payments.get_payment("PAY-1")
+        self.assertEqual(payment["status"], "UNKNOWN_PENDING_RECONCILIATION")
+        self.assertIsNone(payment["last_reconciliation"])
+        reconciliation_events = [
+            event for event in self.payments.history("PAY-1")
+            if event["event_type"] == "RECONCILIATION"
+        ]
+        self.assertEqual(reconciliation_events, [])
+
     def test_payment_records_survive_database_reopen(self):
         self.payments.close()
         self.payments = PaymentLifecycle(self.db_path)
