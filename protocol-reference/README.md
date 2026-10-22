@@ -4,7 +4,7 @@
 
 This repository contains small executable research models for two distinct questions: a local transition contract and a two-institution workflow in which origin and destination authorities retain separate decision rights.
 
-The current one-stage slice uses Python's standard-library SQLite support to exercise authority checks, rule outcomes, event idempotency, retained decisions, and atomic state/history commitment. A separate experimental multi-stage model now represents origin and destination decisions, stage-specific authority and rule versions, duplicate/conflicting operation IDs, and durable decision history. It is deliberately separate from the original `ProtocolStore` until its semantics and evidence are reviewed.
+The current one-stage slice uses Python's standard-library SQLite support to exercise authority checks, rule outcomes, event idempotency, retained decisions, and atomic state/history commitment. A separate experimental multi-stage model represents origin and destination decisions, stage-specific authority and rule versions, duplicate/conflicting operation IDs, and durable decision history. It is deliberately separate from the original `ProtocolStore` until its semantics and evidence are reviewed.
 
 ## Run tests
 
@@ -37,6 +37,12 @@ PYTHONPATH=protocol-reference python -m integrated_demo
 It composes the existing two-institution SQLite model with test-only identity/authority checks, a deterministic MINAH stand-in, a fictional versioned statutory-obligation calculator, a simulated payment provider, and a disconnected-edge profile. Test cases are in `protocol-reference/tests/test_integrated_demo.py`.
 
 The adapters are deliberately simulated. The tax rule is fictional, no money moves, no real national identity or institutional systems are contacted, MINAH is not a real AI model or legal authority, and the edge profile is not physical Nexus Pod hardware. The report states these limits. This is an initial integrated software slice, not the full KIN-SYS system.
+
+## Payment lifecycle boundary experiment
+
+`protocol-reference/payment_lifecycle.py` models separate records for an obligation, a stable payment instruction, a provider acknowledgement, settlement evidence, and reconciliation findings. It uses SQLite-backed IDs and request fingerprints to reject conflicting reuse; retries of the same instruction return the existing record rather than submitting anything to a provider. A provider's acceptance is explicitly **not** settlement. Unknown outcomes remain unresolved, and reconciliation does not resubmit a payment. Settlement requires matching amount/currency evidence and a settlement reference.
+
+Tests are in `protocol-reference/tests/test_payment_lifecycle.py`. This is a local reference model only: there is no provider adapter, real money movement, distributed transaction, cryptographic evidence validation, reversal/refund workflow, or production reconciliation service. The model is not yet wired into `integrated_demo.py`; that integration and a matched conventional comparator remain future work.
 
 ## Two-institution workflow experiment
 
