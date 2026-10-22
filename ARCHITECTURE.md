@@ -48,9 +48,13 @@ No stage should report success merely because a request was received or a mock f
 
 ## 4. Edge systems and Nexus Pods
 
-Nexus Pods are a conceptual physical deployment form for edge compute, connectivity, power, storage, and potentially protected key material. This repository does not assume a final bill of materials or claim a deployed Pod exists.
+Nexus Pods are intended to be secure local compute nodes with an inbuilt hardware security module (HSM) and the ability to generate and verify zero-knowledge proofs. The architectural objective is to process sensitive information locally and send a proof, commitment, signed attestation, or minimum necessary result across the network rather than routinely exporting the underlying raw records. This should reduce data movement and may reduce central storage demand, while allowing other participants to verify defined claims under the proof system's stated assumptions.
 
-Each profile must specify physical/cyber threat assumptions, boot integrity and software updates, key custody/recovery, data retention/deletion, power/network-loss behaviour, offline operation classes, telemetry, maintenance, decommissioning, and evidence of the running software profile.
+The HSM protects cryptographic keys and carries out supported operations such as signing and device/workload attestation; the Pod's CPU/GPU or other suitable compute generates the zero-knowledge proof. We must not assume an HSM itself can efficiently generate arbitrary proofs. Hardware choice, cryptographic APIs, secure boot, measured software, attestation, key rotation/revocation, recovery, and tamper assumptions require explicit specification and validation.
+
+Proof-based exchange does not mean zero storage. Depending on the use case, KIN-SYS may still need commitments, nullifiers/replay-prevention state, public inputs, circuit and rule versions, proof references, revocation/freshness information, minimal audit events, and records required for legal accountability or dispute resolution. A proof establishes a defined mathematical relation; it does not by itself establish the truth of an external fact or the correctness of the rule encoded in a circuit. Source provenance and trusted-input boundaries must remain explicit.
+
+This repository does not claim a deployed Pod or a completed proof pipeline. Each deployment profile must specify physical/cyber threat assumptions, boot integrity and software updates, key custody/recovery, proof-generation/verification limits, data retention/deletion, power/network-loss behaviour, offline operation classes, telemetry, maintenance, decommissioning, and evidence of the running software profile.
 
 ## 5. MINAH: jurisprudential oracle and sovereignty gatekeeper
 
