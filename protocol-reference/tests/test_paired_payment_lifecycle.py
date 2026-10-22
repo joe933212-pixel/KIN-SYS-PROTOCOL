@@ -58,6 +58,38 @@ class PairedPaymentLifecycleTests(unittest.TestCase):
         self.assert_pair_equal(systems)
         self.assertEqual(self.vector(systems[0])["status"], "UNKNOWN_PENDING_RECONCILIATION")
 
+    def test_settlement_rejects_payment_relinked_to_another_obligation_in_both(self):
+        systems = self.make_pair()
+        for system in systems:
+            if hasattr(system, "db"):
+                system.create_obligation("OBL-OTHER", 50000, "UGX", "OTHER-ASSESSMENT")
+                system.db.execute(
+                    "UPDATE payments SET obligation_id='OBL-OTHER' WHERE payment_id='PAY-1'"
+                )
+                system.db.commit()
+            else:
+                system.create_obligation("OBL-OTHER", 50000, "UGX", "OTHER-ASSESSMENT")
+                system.connection.execute(
+                    "UPDATE transfers SET liability_key='OBL-OTHER' WHERE transfer_key='PAY-1'"
+                )
+                system.connection.commit()
+
+        errors = []
+        for system in systems:
+            try:
+                system.record_settlement(
+                    "PAY-1", "SET-RELINKED", "SETTLEMENT-REF",
+                    amount_minor=50000, currency="UGX",
+                )
+            except ValueError as exc:
+                errors.append(str(exc))
+        self.assertEqual(errors, ["PAYMENT_RECORD_INTEGRITY_MISMATCH"] * 2)
+        for system in systems:
+            self.assertNotEqual(system.get_payment("PAY-1")["status"], "SETTLED")
+            self.assertNotIn(
+                "SET-RELINKED", [event["event_id"] for event in system.history("PAY-1")]
+            )
+
     def test_settlement_rejects_changed_obligation_in_both_implementations(self):
         systems = self.make_pair()
         for system in systems:
