@@ -47,4 +47,4 @@ The transition tests exercise local state/history properties using SQLite. The t
 
 Even if tests pass, they establish only the local properties exercised. They do not establish cryptographic authentication, the full CEE lifecycle, phase-by-phase crash recovery, concurrent multi-process correctness, distributed commitment, multi-institution trust, production readiness, novelty, or commercial superiority.
 
-Next engineering gates: verify the new payment lifecycle tests; wire this boundary into the integrated demonstrator without conflating instruction and settlement; then build the same observable contract in an independently implemented conventional comparator.
+Next engineering gates: extend the paired payment comparator to failure/retry/reopen and conflicting-ID cases; build a matched end-to-end conventional comparator spanning institutional decisions, synthetic tax assessment, payment lifecycle, and edge outcomes; then extend simulated edge queue/reconnect and stale-evidence tests.
