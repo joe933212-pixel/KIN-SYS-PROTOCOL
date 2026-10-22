@@ -121,6 +121,10 @@ class IntegratedDemonstrator:
         origin_actor: str = "ORIGIN-A",
         destination_actor: str = "DESTINATION-B",
         edge_connected: bool = True,
+        edge_reconnect: bool = False,
+        edge_current_evidence_version: str = "SYNTHETIC-EVIDENCE-1",
+        edge_current_rule_version: str = DEMO_RULE_VERSION,
+        edge_authority_active: bool = True,
         exempt: bool = False,
         revoke_origin_before_decision: bool = False,
         origin_rule_version_override: str | None = None,
@@ -150,11 +154,22 @@ class IntegratedDemonstrator:
                 evidence_version="SYNTHETIC-EVIDENCE-1",
                 rule_version=DEMO_RULE_VERSION,
             )
+            if edge_reconnect:
+                queued = self.edge_queue.replay(
+                    queued["operation_id"],
+                    current_evidence_version=edge_current_evidence_version,
+                    current_rule_version=edge_current_rule_version,
+                    authority_active=edge_authority_active,
+                )
             return {
                 "case_id": consignment_id,
-                "profile": "SIMULATED_EDGE_DISCONNECTED",
+                "profile": "SIMULATED_EDGE_RECONNECTED" if edge_reconnect else "SIMULATED_EDGE_DISCONNECTED",
                 "status": "PENDING",
-                "reason": "INSTITUTIONAL_DECISIONS_REQUIRE_CONNECTIVITY_IN_THIS_PROFILE",
+                "reason": (
+                    "READY_FOR_CENTRAL_REVIEW_NOT_INSTITUTIONAL_APPROVAL"
+                    if queued["status"] == "READY_FOR_CENTRAL_REVIEW"
+                    else queued["replay_reason"] or "INSTITUTIONAL_DECISIONS_REQUIRE_CONNECTIVITY_IN_THIS_PROFILE"
+                ),
                 "minah_advisory": advisory,
                 "identity_mode": "SYNTHETIC_TEST_IDENTITIES",
                 "payment": None,
