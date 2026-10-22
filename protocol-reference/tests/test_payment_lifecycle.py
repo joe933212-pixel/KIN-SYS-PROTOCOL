@@ -56,6 +56,31 @@ class PaymentLifecycleTests(unittest.TestCase):
             )
         self.assertNotEqual(self.payments.get_payment("PAY-1")["status"], "SETTLED")
 
+    def test_settlement_rejects_obligation_record_changed_after_instruction(self):
+        # Simulate stored-record corruption or an inconsistent downstream update.
+        self.payments.db.execute(
+            "UPDATE obligations SET amount_minor=51000 WHERE obligation_id='OBL-1'"
+        )
+        self.payments.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "OBLIGATION_PAYMENT_MISMATCH"):
+            self.payments.record_settlement(
+                "PAY-1", "EV-SETTLE-MISMATCH", "SET-REF-MISMATCH",
+                amount_minor=50000, currency="UGX",
+            )
+
+        payment = self.payments.get_payment("PAY-1")
+        self.assertNotEqual(payment["status"], "SETTLED")
+        self.assertIsNone(payment["settlement_reference"])
+        self.assertNotIn(
+            "EV-SETTLE-MISMATCH",
+            [event["event_id"] for event in self.payments.history("PAY-1")],
+        )
+        obligation = self.payments.db.execute(
+            "SELECT status FROM obligations WHERE obligation_id='OBL-1'"
+        ).fetchone()
+        self.assertNotEqual(obligation["status"], "SETTLED")
+
     def test_settlement_updates_payment_and_obligation_only_with_evidence(self):
         self.payments.record_settlement(
             "PAY-1", "EV-SETTLE-1", "SET-REF-1", amount_minor=50000, currency="UGX"
