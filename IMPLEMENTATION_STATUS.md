@@ -31,8 +31,8 @@
 | Statutory remittance | Fictional tax assessment and simulated payment lifecycle implemented in the demonstrator; production statutory remittance not implemented | Authoritative rule pack, institution-approved obligation calculation, real provider integration, exemptions/deferments, reconciliation, legal and fiscal review |
 | Economic accounting / $KIN | Open design; not assumed necessary for statutory remittance | Purpose, accounting rules, abuse model, and legal/economic review |
 | MINAH AI boundary | Deterministic non-authoritative stand-in integrated; no live AI model | Evaluate uncertainty, source citation, model/version changes, and authority separation with a real model only after the contract is agreed |
-| Nexus Pods / edge deployment | Conceptual deployment form; simulated edge profile specified | Offline action policy, resource bounds, key custody, update/maintenance profile, hardware and field testing |
-| Privacy-preserving proofs | Not established here | Define the claim and threat model before selecting a mechanism |
+| Nexus Pods / edge deployment | Conceptual deployment form; HSM and local zero-knowledge proof generation/verification now specified as architectural requirements; simulated edge profile only | Select hardware/proof system, define secure boot and attestation, key lifecycle, proof/circuit/version binding, resource limits, retention policy, hardware tests, and field validation |
+| Privacy-preserving proofs | Requirement and intended Pod role documented; no proof pipeline implemented or cryptographically validated in this repository | Define claims and threat model; select and review proof system/circuits; test soundness assumptions, verifier behaviour, input provenance, replay/freshness, metadata leakage, and compare storage/bandwidth/resource costs against a fair baseline |
 | Production deployment | Not established | Complete profile-specific security and operational gates |
 | Independent validation | Not yet recorded here | Independent review/reproduction report |
 
