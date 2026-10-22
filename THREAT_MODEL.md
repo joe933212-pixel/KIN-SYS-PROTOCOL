@@ -24,8 +24,8 @@ A signature authenticates a message under key and algorithm assumptions; it does
 - Fault injection at every persistence boundary and recovery verification.
 - Declared offline permissions and reconciliation semantics.
 - Key generation, storage, rotation, revocation, backup, and compromise recovery.
-- Nexus Pod HSM integration, secure boot/measured software, attestation validation, and explicit limits of hardware trust.
-- Zero-knowledge statement/circuit review, public/private input minimisation, proof-to-case and proof-to-version binding, freshness and replay prevention, verifier availability, and adversarial test vectors.
+- Where a deployment uses hardware roots of trust, validate key custody, secure boot/measured software, attestation and the limits of hardware trust; do not make a particular device a protocol prerequisite.
+- Where a deployment uses zero-knowledge proofs, review statements/circuits, minimise public/private inputs, bind proofs to case and version, enforce freshness/replay prevention, test verifier availability, and use adversarial test vectors.
 - Measure proof generation/verification latency, compute/memory/energy cost, transmitted bytes, and retained storage against a fair conventional baseline; include denial-of-service and recovery behaviour.
 - Least privilege, separation of duties, auditable governance changes, and bounded emergency powers.
 - Privacy review, data minimisation, retention limits, and disclosure control.
