@@ -133,6 +133,17 @@ class ConventionalPaymentLifecycle:
             raise ValueError("SETTLEMENT_REFERENCE_REQUIRED")
         if amount_minor != transfer["value_minor"] or currency != transfer["unit"]:
             raise ValueError("SETTLEMENT_AMOUNT_OR_CURRENCY_MISMATCH")
+        request = {
+            "payment_id": transfer["transfer_key"],
+            "obligation_id": transfer["liability_key"],
+            "amount_minor": transfer["value_minor"],
+            "currency": transfer["unit"],
+        }
+        expected_fingerprint = hashlib.sha256(
+            json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if transfer["fingerprint"] != expected_fingerprint:
+            raise ValueError("PAYMENT_RECORD_INTEGRITY_MISMATCH")
         liability = self.connection.execute(
             "SELECT value_minor, unit FROM liabilities WHERE liability_key=?",
             (transfer["liability_key"],),
