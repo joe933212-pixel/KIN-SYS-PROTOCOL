@@ -2,7 +2,7 @@
 import unittest
 
 from integrated_demo import IntegratedDemonstrator
-from system_model import SYSTEM_MODEL_VERSION, system_manifest
+from system_model import SYSTEM_MODEL_VERSION, system_manifest, validate_system_trace
 
 
 class WholeSystemModelTests(unittest.TestCase):
@@ -54,6 +54,36 @@ class WholeSystemModelTests(unittest.TestCase):
                 [item["id"] for item in central["system_model"]["components"]],
                 [item["id"] for item in edge["system_model"]["components"]],
             )
+            self.assertTrue(central["system_trace_valid"])
+            self.assertTrue(edge["system_trace_valid"])
+            self.assertTrue(validate_system_trace(central["system_trace"], case_id="SYSTEM-MODEL-CENTRAL"))
+            self.assertTrue(validate_system_trace(edge["system_trace"], case_id="SYSTEM-MODEL-EDGE"))
+            central_components = {event["component_id"] for event in central["system_trace"]}
+            self.assertTrue({
+                "identity_authority",
+                "minah_ai",
+                "institutional_coordination",
+                "rules_and_statutory_policy",
+                "economic_accounting_and_remittance",
+                "protocol_orchestration",
+            }.issubset(central_components))
+            self.assertIn("edge_operation", {event["component_id"] for event in edge["system_trace"]})
+
+    def test_system_trace_rejects_cross_case_or_incomplete_events(self):
+        event = {
+            "trace_contract_version": "kin-sys-component-trace-0.1",
+            "case_id": "CASE-A",
+            "operation_id": "CASE-A:OP:1",
+            "component_id": "identity_authority",
+            "status": "ACCEPTED",
+            "mode": "SYNTHETIC_IDENTITIES",
+            "component_version": "0.1",
+            "evidence_refs": [],
+            "reason": None,
+        }
+        self.assertTrue(validate_system_trace([event], case_id="CASE-A"))
+        self.assertFalse(validate_system_trace([event], case_id="CASE-B"))
+        self.assertFalse(validate_system_trace([{"case_id": "CASE-A"}], case_id="CASE-A"))
         finally:
             demo.close()
 
