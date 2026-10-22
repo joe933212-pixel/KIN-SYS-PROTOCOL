@@ -26,6 +26,18 @@ PYTHONPATH=protocol-reference python -m comparators.paired_harness
 
 The JSON report compares the original KIN-SYS SQLite slice with the independent conventional SQLite baseline across accepted transitions, duplicate replay, conflicting IDs, authority and rule rejection, pre-commit failure, concurrent identical submissions, process termination before commitment, and retry after commitment but before acknowledgement.
 
+## Integrated synthetic demonstrator
+
+Run the end-to-end synthetic demonstration from the repository root:
+
+```sh
+PYTHONPATH=protocol-reference python -m integrated_demo
+```
+
+It composes the existing two-institution SQLite model with test-only identity/authority checks, a deterministic MINAH stand-in, a fictional versioned statutory-obligation calculator, a simulated payment provider, and a disconnected-edge profile. Test cases are in `protocol-reference/tests/test_integrated_demo.py`.
+
+The adapters are deliberately simulated. The tax rule is fictional, no money moves, no real national identity or institutional systems are contacted, MINAH is not a real AI model or legal authority, and the edge profile is not physical Nexus Pod hardware. The report states these limits. This is an initial integrated software slice, not the full KIN-SYS system.
+
 ## Two-institution workflow experiment
 
 The experimental KIN-SYS research model is in `protocol-reference/workflows/institutional_workflow.py`; its independently implemented conventional baseline is `protocol-reference/comparators/conventional_workflow.py`. Matched contract tests are in `protocol-reference/tests/test_institutional_workflow.py`.
