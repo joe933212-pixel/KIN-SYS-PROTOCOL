@@ -23,7 +23,7 @@ class IntegratedDemonstratorTests(unittest.TestCase):
         self.assertEqual(result["institutional_decisions"]["destination"]["result"], "APPROVE")
         self.assertEqual(result["minah_advisory"]["may_authorise"], False)
         self.assertEqual(result["statutory_obligation"]["legal_status"], "SYNTHETIC_DEMO_RULE_NOT_LAW")
-        self.assertEqual(result["statutory_obligation"]["assessed_amount_minor"], 50_000)
+        self.assertEqual(result["statutory_obligation"]["assessed_amount_ugx"], 50_000)
         self.assertEqual(result["payment"]["status"], "SIMULATED_CONFIRMED")
         self.assertFalse(result["payment"]["funds_moved"])
         self.assertEqual(len(result["history"]), 2)
@@ -66,7 +66,7 @@ class IntegratedDemonstratorTests(unittest.TestCase):
     def test_synthetic_exemption_has_explicit_zero_obligation_without_payment(self):
         result = self.run_case(exempt=True)
         self.assertEqual(result["status"], "DEMO_READY_UNDER_SYNTHETIC_EXEMPTION")
-        self.assertEqual(result["statutory_obligation"]["assessed_amount_minor"], 0)
+        self.assertEqual(result["statutory_obligation"]["assessed_amount_ugx"], 0)
         self.assertEqual(result["payment"]["status"], "NOT_REQUIRED_EXEMPT")
 
     def test_tax_calculator_rejects_negative_or_non_integer_amounts(self):
