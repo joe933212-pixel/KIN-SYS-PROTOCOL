@@ -31,10 +31,14 @@
 | Statutory remittance | Fictional tax assessment and simulated payment lifecycle implemented in the demonstrator; production statutory remittance not implemented | Authoritative rule pack, institution-approved obligation calculation, real provider integration, exemptions/deferments, reconciliation, legal and fiscal review |
 | Economic accounting / $KIN | Open design; not assumed necessary for statutory remittance | Purpose, accounting rules, abuse model, and legal/economic review |
 | MINAH AI boundary | Deterministic non-authoritative stand-in integrated; no live AI model | Evaluate uncertainty, source citation, model/version changes, and authority separation with a real model only after the contract is agreed |
-| Deployment independence and constrained environments | Protocol-level need for declared disconnection, persistence, freshness, and recovery behaviour identified; Nexus Pods are optional and not a protocol dependency | Test protocol behaviour under declared power/network interruptions on suitable generic infrastructure; evaluate Pod hardware and proof pipeline separately only if/when needed |
+| Deployment profiles and hardware independence | Three machine-readable design targets and structural tests added: standard software, constrained connectivity/power, and optional hardware-enhanced security. Profiles are not certified and do not prove runtime conformance | Implement profile-specific runtime tests for power/network interruption, stale/revoked authority, restart, reconnect, and declared hardware failure; test on generic infrastructure before any Pod-specific field work |
 | Privacy-preserving proofs | Requirement and intended Pod role documented; no proof pipeline implemented or cryptographically validated in this repository | Define claims and threat model; select and review proof system/circuits; test soundness assumptions, verifier behaviour, input provenance, replay/freshness, metadata leakage, and compare storage/bandwidth/resource costs against a fair baseline |
 | Production deployment | Not established | Complete profile-specific security and operational gates |
 | Independent validation | Not yet recorded here | Independent review/reproduction report |
+
+## Deployment profiles
+
+The profile registry and tests are design-level structure checks only. No profile has yet been demonstrated end-to-end or independently certified. The software-only path remains the first implementation target; constrained power/connectivity and hardware-enhanced assurance require explicit runtime evidence.
 
 ## Whole-system-first direction
 
