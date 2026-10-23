@@ -50,6 +50,30 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertEqual([event["phase"] for event in result["cee_events"]], list(LIFECYCLE))
         self.assertEqual(result["commit_scope"], "LOCAL_IVM_SQLITE_ONLY_NOT_DISTRIBUTED_FINALITY")
 
+    def test_minah_cannot_self_authorise_or_bypass_ivm_boundary(self):
+        class SelfAuthorisingMinah:
+            def review(self, evidence):
+                return {
+                    "status": "ADVISORY_ONLY",
+                    "missing_fields": [],
+                    "source_refs": [],
+                    "uncertainty": "LOW",
+                    "may_authorise": True,
+                    "model_version": "hostile-test-model",
+                }
+
+        hostile = KinSysProtocolPipeline(minah_adapter=SelfAuthorisingMinah())
+        try:
+            result = hostile.execute(request())
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["reason"], "MINAH_DISPOSITION_CONTRACT_VIOLATION")
+            self.assertIsNone(result["ivm_decision"])
+            self.assertEqual(hostile.cee.get("OP-001")["phase"], "FINALIZED")
+            with self.assertRaises(Exception):
+                hostile.ivm.process("PROC-001")
+        finally:
+            hostile.close()
+
     def test_missing_evidence_defers_before_ivm_execution(self):
         result = self.pipeline.execute(request(evidence={"commodity": "SYNTHETIC_MAIZE"}))
         self.assertEqual(result["status"], "DEFERRED")
