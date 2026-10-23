@@ -207,12 +207,16 @@ class KinSysProtocolPipeline:
         self,
         *,
         cee_database: str = ":memory:",
-        ivm_database: str = ":memory:",
+        ivm_database: str | None = None,
         minah_adapter: Any | None = None,
         authority_active: bool = True,
     ):
+        if ivm_database is not None and ivm_database not in {cee_database, ":memory:"}:
+            raise ValueError("SPLIT_RUNTIME_STORAGE_NO_LONGER_SUPPORTED")
         self.cee = CEEJournal(cee_database)
-        self.ivm = ProtocolStore(ivm_database)
+        # CEE owns the connection. The transition implementation is a private
+        # runtime detail sharing CEE's local store, not a separate execution DB.
+        self.ivm = ProtocolStore(connection=self.cee.db)
         self.minah = minah_adapter or DeterministicMinahAdapter()
         self.authority_active = authority_active
 
