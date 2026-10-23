@@ -5,8 +5,10 @@ MINAH review is durably recorded before CEE admission. CEE is the sole
 externally visible execution boundary; the legacy transition store remains a
 private reference implementation detail behind that boundary.
 
-This prototype uses separate SQLite stores and does NOT claim cross-store
-atomicity, production identity/legal adapters, or distributed finality.
+The canonical instruction slice shares one CEE-owned SQLite connection for its
+lifecycle journal and private execution tables. It does NOT claim production
+identity/legal adapters or distributed finality; case-level adapters retain
+separate stores where documented.
 """
 from __future__ import annotations
 
