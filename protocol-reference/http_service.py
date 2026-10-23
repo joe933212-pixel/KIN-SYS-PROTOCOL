@@ -319,8 +319,8 @@ class KinSysPrototypeApplication:
                         "result": result,
                         "protocol_boundary": {
                             "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
-                            "ivm": "LOCAL_SQLITE_REFERENCE_RUNTIME",
-                            "cee": "LOCAL_SQLITE_LIFECYCLE_JOURNAL",
+                            "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
+                            "cee": "LOCAL_SQLITE_DURABLE_LIFECYCLE_JOURNAL",
                             "cross_store_atomicity": False,
                             "distributed_finality": False,
                             "funds_moved": False,
