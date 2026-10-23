@@ -496,7 +496,8 @@ class IntegratedDemonstrator:
                 lifecycle_status = "SIMULATED_DECLINED"
             else:
                 lifecycle = self.payment_lifecycle.record_reconciliation(
-                    payment_id, f"{payment_id}:RECONCILIATION:1", "UNKNOWN"
+                    payment_id, f"{payment_id}:RECONCILIATION:1", "UNKNOWN",
+                    source_sequence=1,
                 )
                 lifecycle_status = "UNKNOWN_PENDING_RECONCILIATION"
             payment_lifecycle_result = {
