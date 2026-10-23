@@ -518,21 +518,24 @@ class KinSysProtocolPipeline:
                     "contract_error": minah.get("contract_error"),
                 })
                 minah_inserted = True
-            if event["phase"] in {"COMMITTED", "FINALIZED"} and not ivm_inserted and isinstance(ivm, dict):
-                append("CEE_EXECUTION_DETAIL", str(ivm.get("status", "UNKNOWN")), {
+            detail = {
+                "phase": event["phase"],
+                "event_status": event["status"],
+                **event["detail"],
+            }
+            # The execution engine is an internal CEE implementation detail.
+            # Keep its result in the CEE trace rather than exposing a second path.
+            if event["phase"] in {"COMMITTED", "FINALIZED"} and isinstance(ivm, dict):
+                detail["execution_result"] = {
+                    "status": ivm.get("status"),
                     "event_id": ivm.get("event_id"),
                     "from_state": ivm.get("from_state"),
                     "to_state": ivm.get("to_state"),
                     "history_id": ivm.get("history_id"),
                     "reason": ivm.get("reason"),
                     "duplicate": ivm.get("duplicate", False),
-                })
-                ivm_inserted = True
-            append("CEE", event["phase"], {
-                "phase": event["phase"],
-                "event_status": event["status"],
-                **event["detail"],
-            })
+                }
+            append("CEE", event["phase"], detail)
         return {
             **result,
             "duplicate": duplicate,
