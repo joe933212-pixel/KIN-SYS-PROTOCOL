@@ -40,14 +40,14 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.pipeline = KinSysProtocolPipeline()
         self.addCleanup(self.pipeline.close)
 
-    def test_complete_path_runs_minah_ivm_and_cee_in_order(self):
+    def test_complete_path_runs_minah_then_cee_to_final_decision(self):
         result = self.pipeline.execute(request())
         self.assertEqual(result["status"], "PASSED")
         self.assertEqual(result["final_decision"], "PASSED")
         self.assertFalse(result["funds_moved"])
         self.assertEqual(result["minah_disposition"]["status"], "ADVISORY_ONLY")
         self.assertFalse(result["minah_disposition"]["may_authorise"])
-        self.assertEqual(result["ivm_decision"]["to_state"], "ACTIVE")
+        self.assertEqual(result["execution_result"]["to_state"], "ACTIVE")
         self.assertEqual([event["phase"] for event in result["cee_events"]], list(LIFECYCLE))
         components = [event["component"] for event in result["component_trace"]]
         self.assertEqual(components[0], "MINAH")
@@ -58,7 +58,7 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("ADMITTED"))
         self.assertEqual(result["component_trace"][-2]["detail"]["execution_result"]["to_state"], "ACTIVE")
         self.assertEqual(result["component_trace"][-1]["detail"]["phase"], "FINALIZED")
-        self.assertEqual(result["commit_scope"], "LOCAL_IVM_SQLITE_ONLY_NOT_DISTRIBUTED_FINALITY")
+        self.assertEqual(result["commit_scope"], "LOCAL_CEE_REFERENCE_STORE_ONLY_NOT_DISTRIBUTED_FINALITY")
 
     def test_minah_cannot_self_authorise_or_bypass_ivm_boundary(self):
         class SelfAuthorisingMinah:
@@ -80,7 +80,7 @@ class ProtocolPipelineTests(unittest.TestCase):
             self.assertEqual(result["reason"], "MINAH_DISPOSITION_CONTRACT_VIOLATION")
             phases = [event["phase"] for event in result["cee_events"]]
             self.assertNotIn("ADMITTED", phases)
-            self.assertIsNone(result["ivm_decision"])
+            self.assertIsNone(result["execution_result"])
             self.assertEqual(hostile.cee.get("OP-001")["phase"], "FINALIZED")
             with self.assertRaises(Exception):
                 hostile.ivm.process("PROC-001")
@@ -94,7 +94,7 @@ class ProtocolPipelineTests(unittest.TestCase):
         phases = [event["phase"] for event in result["cee_events"]]
         self.assertNotIn("ADMITTED", phases)
         self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("FINALIZED"))
-        self.assertIsNone(result["ivm_decision"])
+        self.assertIsNone(result["execution_result"])
         self.assertIn("MINAH", [event["component"] for event in result["component_trace"]])
         self.assertNotIn("IVM", [event["component"] for event in result["component_trace"]])
         self.assertEqual(self.pipeline.cee.get("OP-001")["phase"], "FINALIZED")
@@ -106,7 +106,7 @@ class ProtocolPipelineTests(unittest.TestCase):
         result = self.pipeline.execute(request(actor_id="UNAUTHORISED-ACTOR"))
         self.assertEqual(result["status"], "REJECTED")
         self.assertEqual(result["reason"], "AUTHORITY_MISMATCH")
-        self.assertIsNone(result["ivm_decision"]["to_state"])
+        self.assertIsNone(result["execution_result"]["to_state"])
         self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
 
     def test_revoked_authority_is_rejected(self):
