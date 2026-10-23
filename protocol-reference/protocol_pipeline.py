@@ -17,6 +17,7 @@ import json
 import sqlite3
 from typing import Any
 
+from authority_adapter import AuthorityGateDecision, SyntheticDemoAuthorityAdapter
 from integrated_demo import DeterministicMinahAdapter
 from transition import EventIdConflict, ProtocolStore
 
@@ -212,6 +213,7 @@ class KinSysProtocolPipeline:
         ivm_database: str | None = None,
         minah_adapter: Any | None = None,
         authority_active: bool = True,
+        authority_adapter: Any | None = None,
     ):
         if ivm_database is not None and ivm_database != cee_database:
             raise ValueError("SPLIT_RUNTIME_STORAGE_NO_LONGER_SUPPORTED")
@@ -220,6 +222,9 @@ class KinSysProtocolPipeline:
         # runtime detail sharing CEE's local store, not a separate execution DB.
         self.ivm = ProtocolStore(connection=self.cee.db)
         self.minah = minah_adapter or DeterministicMinahAdapter()
+        self.authority_gate = authority_adapter or SyntheticDemoAuthorityAdapter(
+            authority_active=authority_active
+        )
         self.authority_active = authority_active
 
     def close(self) -> None:
@@ -303,28 +308,30 @@ class KinSysProtocolPipeline:
                 )
             return self._response_result(operation_id, result, duplicate=False)
 
-        # Synthetic server-side pre-admission policy gate. This checks the
-        # configured demo authority and pinned demo rules; it is NOT identity
-        # verification against a national/enterprise registry.
+        # Authority/identity evaluation is injected behind one contract. The
+        # default local adapter is synthetic and explicitly does not authenticate.
         if operation["phase"] == "MINAH_REVIEWED":
-            gate_error = self._pre_admission_error(request)
-            if gate_error:
+            gate_decision = self._evaluate_authority_gate(request)
+            if gate_decision.outcome != "ALLOW":
+                final_decision = "REJECTED" if gate_decision.outcome == "REJECT" else "DEFERRED"
+                reason = gate_decision.reason or "AUTHORITY_GATE_UNRESOLVED"
                 result = {
                     "operation_id": operation_id,
-                    "status": "REJECTED",
-                    "final_decision": "REJECTED",
-                    "reason": gate_error,
+                    "status": final_decision,
+                    "final_decision": final_decision,
+                    "reason": reason,
                     "minah_disposition": disposition,
+                    "authority_gate": self._authority_gate_trace(gate_decision),
                     "execution_result": None,
                     "funds_moved": False,
                 }
                 self.cee.advance(
-                    operation_id, "FINALIZED", status="REJECTED",
-                    outcome="REJECTED", result=result,
+                    operation_id, "FINALIZED", status=final_decision,
+                    outcome=final_decision, result=result,
                     detail={
-                        "reason": gate_error,
-                        "cee_not_admitted": True,
-                        "pre_admission_gate": "SYNTHETIC_SERVER_SIDE_POLICY_ONLY",
+                        "reason": reason,
+                        "cee_admission": "NOT_GRANTED",
+                        "authority_gate": self._authority_gate_trace(gate_decision),
                     },
                 )
                 return self._response_result(operation_id, result, duplicate=False)
@@ -580,17 +587,27 @@ class KinSysProtocolPipeline:
             "component_trace": trace,
         }
 
-    def _pre_admission_error(self, request: dict[str, Any]) -> str | None:
-        """Return a fail-closed synthetic policy rejection before CEE admission."""
-        if request["actor_id"] != AUTHORITY_ID:
-            return "AUTHORITY_MISMATCH"
-        if not self.authority_active:
-            return "AUTHORITY_REVOKED"
-        if request["rule_set"] != RULE_SET or request["rule_version"] != RULE_VERSION:
-            return "UNSUPPORTED_RULE_VERSION"
-        if request["evidence"].get("commodity") == "SYNTHETIC_PROHIBITED_COMMODITY":
-            return "RULE_REJECTED"
-        return None
+    def _evaluate_authority_gate(self, request: dict[str, Any]) -> AuthorityGateDecision:
+        decision = self.authority_gate.evaluate(request)
+        if not isinstance(decision, AuthorityGateDecision):
+            return AuthorityGateDecision(
+                "DEFER", "INVALID_AUTHORITY_GATE_RESPONSE",
+                "UNTRUSTED_ADAPTER_OUTPUT", "NOT_ESTABLISHED", {},
+            )
+        if decision.outcome not in {"ALLOW", "REJECT", "DEFER"}:
+            return AuthorityGateDecision(
+                "DEFER", "INVALID_AUTHORITY_GATE_OUTCOME",
+                decision.adapter, "NOT_ESTABLISHED", {"reported_outcome": decision.outcome},
+            )
+        return decision
+
+    @staticmethod
+    def _authority_gate_trace(decision: AuthorityGateDecision) -> dict[str, Any]:
+        return {
+            "outcome": decision.outcome, "reason": decision.reason,
+            "adapter": decision.adapter, "assurance": decision.assurance,
+            "details": decision.details,
+        }
 
     @staticmethod
     def _minah_contract_error(disposition: Any) -> str | None:
