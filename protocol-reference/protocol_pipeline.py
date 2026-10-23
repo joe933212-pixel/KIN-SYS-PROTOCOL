@@ -1,0 +1,412 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+"""End-to-end MINAH -> IVM -> CEE execution slice, using synthetic adapters only.
+
+The CEE lifecycle journal and IVM transition store are separate SQLite stores.
+This prototype explicitly does NOT claim a distributed atomic commit across them.
+A retry after an IVM commit replays the same idempotency key and reconciles CEE
+from the durable IVM outcome. Production deployment requires an independently
+reviewed recovery protocol and real identity/legal/model/runtime adapters.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from typing import Any
+
+from integrated_demo import DeterministicMinahAdapter
+from transition import EventIdConflict, ProtocolStore
+
+
+RULE_SET = "KIN-SYS-DEMO-RULES"
+RULE_VERSION = "1.0"
+AUTHORITY_ID = "AUTHORITY-001"
+LIFECYCLE = (
+    "REQUESTED",
+    "ADMITTED",
+    "CONTEXT_ESTABLISHED",
+    "AUTHORITY_EVALUATED",
+    "EXECUTING",
+    "PREPARED",
+    "COMMITTING",
+    "COMMITTED",
+    "FINALIZED",
+)
+
+
+class ExecutionConflict(ValueError):
+    """An operation ID was reused with different instruction content."""
+
+
+class LifecycleViolation(RuntimeError):
+    """An illegal CEE lifecycle transition was requested."""
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+class CEEJournal:
+    """Durable local lifecycle journal with explicit phase and event history."""
+
+    def __init__(self, database: str = ":memory:"):
+        self.db = sqlite3.connect(database)
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA foreign_keys=ON")
+        self.db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS cee_operations (
+                operation_id TEXT PRIMARY KEY,
+                request_digest TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                minah_json TEXT,
+                ivm_json TEXT,
+                outcome TEXT,
+                result_json TEXT
+            );
+            CREATE TABLE IF NOT EXISTS cee_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_id TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail_json TEXT NOT NULL,
+                UNIQUE(operation_id, phase),
+                FOREIGN KEY(operation_id) REFERENCES cee_operations(operation_id)
+            );
+            """
+        )
+        self.db.commit()
+
+    def close(self) -> None:
+        self.db.close()
+
+    def get(self, operation_id: str) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT * FROM cee_operations WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        for key in ("request_json", "minah_json", "ivm_json", "result_json"):
+            if result[key] is not None:
+                result[key] = json.loads(result[key])
+        return result
+
+    def events(self, operation_id: str) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT phase,status,detail_json FROM cee_events WHERE operation_id=? ORDER BY event_id",
+            (operation_id,),
+        ).fetchall()
+        return [
+            {"phase": row["phase"], "status": row["status"], "detail": json.loads(row["detail_json"])}
+            for row in rows
+        ]
+
+    def start(self, operation_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        digest = _digest(request)
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self.db.execute(
+                "SELECT * FROM cee_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if existing:
+                if existing["request_digest"] != digest:
+                    raise ExecutionConflict("OPERATION_ID_REUSED_WITH_DIFFERENT_CONTENT")
+                self.db.commit()
+                return self.get(operation_id)  # type: ignore[return-value]
+            self.db.execute(
+                """INSERT INTO cee_operations
+                   (operation_id,request_digest,request_json,phase)
+                   VALUES(?,?,?,'REQUESTED')""",
+                (operation_id, digest, _canonical(request)),
+            )
+            self.db.execute(
+                "INSERT INTO cee_events(operation_id,phase,status,detail_json) VALUES(?,?,?,?)",
+                (operation_id, "REQUESTED", "ACCEPTED", _canonical({"request_digest": digest})),
+            )
+            self.db.commit()
+            return self.get(operation_id)  # type: ignore[return-value]
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def advance(
+        self,
+        operation_id: str,
+        next_phase: str,
+        *,
+        status: str = "ACCEPTED",
+        detail: dict[str, Any] | None = None,
+        minah: dict[str, Any] | None = None,
+        ivm: dict[str, Any] | None = None,
+        outcome: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if next_phase not in LIFECYCLE:
+            raise LifecycleViolation("UNKNOWN_CEE_PHASE")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute(
+                "SELECT * FROM cee_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if row is None:
+                raise LifecycleViolation("OPERATION_NOT_FOUND")
+            current = row["phase"]
+            if current == next_phase:
+                self.db.commit()
+                return self.get(operation_id)  # type: ignore[return-value]
+            if current == "FINALIZED":
+                raise LifecycleViolation("FINALIZED_OPERATION_IS_IMMUTABLE")
+            current_index = LIFECYCLE.index(current)
+            next_index = LIFECYCLE.index(next_phase)
+            allowed = next_index == current_index + 1
+            terminal_branch = (
+                next_phase == "FINALIZED"
+                and current == "AUTHORITY_EVALUATED"
+                and outcome in {"DEFERRED", "REJECTED"}
+            )
+            if not allowed and not terminal_branch:
+                raise LifecycleViolation(f"ILLEGAL_CEE_TRANSITION:{current}->{next_phase}")
+            self.db.execute(
+                """UPDATE cee_operations SET phase=?,minah_json=COALESCE(?,minah_json),
+                   ivm_json=COALESCE(?,ivm_json),outcome=COALESCE(?,outcome),
+                   result_json=COALESCE(?,result_json) WHERE operation_id=?""",
+                (
+                    next_phase,
+                    _canonical(minah) if minah is not None else None,
+                    _canonical(ivm) if ivm is not None else None,
+                    outcome,
+                    _canonical(result) if result is not None else None,
+                    operation_id,
+                ),
+            )
+            self.db.execute(
+                "INSERT INTO cee_events(operation_id,phase,status,detail_json) VALUES(?,?,?,?)",
+                (operation_id, next_phase, status, _canonical(detail or {})),
+            )
+            self.db.commit()
+            return self.get(operation_id)  # type: ignore[return-value]
+        except Exception:
+            self.db.rollback()
+            raise
+
+
+class KinSysProtocolPipeline:
+    """Synthetic full-path harness that makes MINAH, IVM and CEE boundaries observable."""
+
+    def __init__(
+        self,
+        *,
+        cee_database: str = ":memory:",
+        ivm_database: str = ":memory:",
+        minah_adapter: Any | None = None,
+    ):
+        self.cee = CEEJournal(cee_database)
+        self.ivm = ProtocolStore(ivm_database)
+        self.minah = minah_adapter or DeterministicMinahAdapter()
+
+    def close(self) -> None:
+        self.cee.close()
+        self.ivm.close()
+
+    def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
+        self._validate(request)
+        operation_id = request["operation_id"]
+        operation = self.cee.start(operation_id, request)
+        if operation["phase"] == "FINALIZED":
+            result = operation["result_json"]
+            return {**result, "duplicate": True, "cee_events": self.cee.events(operation_id)}
+
+        evidence = request["evidence"]
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+
+        # MINAH is evaluated once, then the disposition is pinned in the CEE journal.
+        if operation["minah_json"] is None:
+            disposition = self.minah.review(evidence)
+            self.cee.advance(
+                operation_id, "ADMITTED",
+                detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
+            )
+            self.cee.advance(
+                operation_id, "CONTEXT_ESTABLISHED",
+                detail={
+                    "jurisdiction": request["jurisdiction"],
+                    "rule_set": request["rule_set"],
+                    "rule_version": request["rule_version"],
+                    "evidence_digest": _digest(evidence),
+                },
+            )
+            self.cee.advance(
+                operation_id, "AUTHORITY_EVALUATED",
+                status="DEFERRED" if disposition["status"] == "NEEDS_INFORMATION" else "EVALUATED",
+                detail={"minah_is_advisory": True, "may_authorise": False},
+                minah=disposition,
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        disposition = operation["minah_json"]
+
+        if disposition["status"] == "NEEDS_INFORMATION":
+            result = {
+                "operation_id": operation_id,
+                "status": "DEFERRED",
+                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE",
+                "minah_disposition": disposition,
+                "ivm_decision": None,
+                "funds_moved": False,
+            }
+            if operation["phase"] == "AUTHORITY_EVALUATED":
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="DEFERRED",
+                    outcome="DEFERRED", result=result,
+                    detail={"reason": result["reason"], "ivm_not_invoked": True},
+                )
+            return {**result, "duplicate": False, "cee_events": self.cee.events(operation_id)}
+
+        # Resume safely from any durable phase. The IVM operation key is stable across retries.
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "AUTHORITY_EVALUATED":
+            self.cee.advance(operation_id, "EXECUTING", detail={"executor": "IVM_REFERENCE_RUNTIME"})
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+
+        if operation["phase"] == "EXECUTING":
+            process_id = request["process_id"]
+            try:
+                existing_process = self.ivm.process(process_id)
+            except Exception as exc:
+                from transition import ProcessNotFound
+                if not isinstance(exc, ProcessNotFound):
+                    raise
+                self.ivm.create_process(
+                    process_id=process_id,
+                    initial_state="PENDING",
+                    authority_id=AUTHORITY_ID,
+                    authority_active=request["authority_active"],
+                    rule_set=request["rule_set"],
+                    rule_version=request["rule_version"],
+                    eligible=request["eligible"],
+                )
+            else:
+                expected = (
+                    AUTHORITY_ID, int(request["authority_active"]),
+                    request["rule_set"], request["rule_version"], int(request["eligible"]),
+                )
+                actual = (
+                    existing_process["authority_id"], existing_process["authority_active"],
+                    existing_process["rule_set"], existing_process["rule_version"],
+                    existing_process["eligible"],
+                )
+                if expected != actual:
+                    raise ExecutionConflict("PROCESS_CONTEXT_DIFFERS_FROM_PINNED_CONTEXT")
+            self.cee.advance(
+                operation_id, "PREPARED",
+                detail={"ivm_preconditions_pinned": True, "process_id": process_id},
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+
+        if operation["phase"] == "PREPARED":
+            self.cee.advance(operation_id, "COMMITTING", detail={"commit_boundary": "IVM_TRANSACTION"})
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+
+        ivm_result: dict[str, Any]
+        if operation["phase"] == "COMMITTING":
+            decision = self.ivm.execute({
+                "event_id": request["event_id"],
+                "process_id": request["process_id"],
+                "actor_id": request["actor_id"],
+                "event_type": request["event_type"],
+                "rule_set": request["rule_set"],
+                "rule_version": request["rule_version"],
+            })
+            ivm_result = {
+                "status": decision.status,
+                "event_id": decision.event_id,
+                "process_id": decision.process_id,
+                "from_state": decision.from_state,
+                "to_state": decision.to_state,
+                "history_id": decision.history_id,
+                "reason": decision.reason,
+                "duplicate": decision.duplicate,
+            }
+            if fail_after_ivm_commit and decision.status == "ACCEPTED":
+                raise RuntimeError("INJECTED_FAILURE_AFTER_IVM_COMMIT_BEFORE_CEE_ACK")
+            if decision.status != "ACCEPTED":
+                result = {
+                    "operation_id": operation_id,
+                    "status": "REJECTED",
+                    "reason": decision.reason or "IVM_REJECTED",
+                    "minah_disposition": disposition,
+                    "ivm_decision": ivm_result,
+                    "funds_moved": False,
+                }
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="REJECTED", outcome="REJECTED",
+                    ivm=ivm_result, result=result,
+                    detail={"reason": result["reason"], "no_authoritative_transition": True},
+                )
+                return {**result, "duplicate": False, "cee_events": self.cee.events(operation_id)}
+            self.cee.advance(
+                operation_id, "COMMITTED", ivm=ivm_result,
+                detail={"ivm_commit_observed": True, "history_id": decision.history_id},
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+
+        if operation["phase"] == "COMMITTED":
+            ivm_result = operation["ivm_json"]
+            result = {
+                "operation_id": operation_id,
+                "status": "COMMITTED",
+                "reason": None,
+                "minah_disposition": disposition,
+                "ivm_decision": ivm_result,
+                "funds_moved": False,
+                "commit_scope": "LOCAL_IVM_SQLITE_ONLY_NOT_DISTRIBUTED_FINALITY",
+            }
+            self.cee.advance(
+                operation_id, "FINALIZED", status="FINALIZED", outcome="COMMITTED",
+                result=result,
+                detail={"result_status": "COMMITTED", "distributed_finality": False},
+            )
+            return {**result, "duplicate": bool(ivm_result.get("duplicate")), "cee_events": self.cee.events(operation_id)}
+
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "FINALIZED":
+            result = operation["result_json"]
+            return {**result, "duplicate": True, "cee_events": self.cee.events(operation_id)}
+        raise LifecycleViolation(f"UNHANDLED_RESUMABLE_PHASE:{operation['phase']}")
+
+    @staticmethod
+    def _validate(request: dict[str, Any]) -> None:
+        required = {
+            "operation_id", "event_id", "process_id", "actor_id", "event_type",
+            "jurisdiction", "rule_set", "rule_version", "evidence",
+            "authority_active", "eligible",
+        }
+        if not isinstance(request, dict) or required - set(request):
+            missing = sorted(required - set(request)) if isinstance(request, dict) else sorted(required)
+            raise ValueError("MISSING_REQUIRED_FIELDS:" + ",".join(missing))
+        for key in (
+            "operation_id", "event_id", "process_id", "actor_id", "event_type",
+            "jurisdiction", "rule_set", "rule_version",
+        ):
+            if not isinstance(request[key], str) or not request[key]:
+                raise ValueError("INVALID_FIELD:" + key)
+        if request["event_type"] != "ACTIVATE":
+            raise ValueError("UNSUPPORTED_EVENT_TYPE")
+        if not isinstance(request["evidence"], dict):
+            raise ValueError("EVIDENCE_MUST_BE_OBJECT")
+        for key in ("authority_active", "eligible"):
+            if type(request[key]) is not bool:
+                raise ValueError("INVALID_BOOLEAN:" + key)
