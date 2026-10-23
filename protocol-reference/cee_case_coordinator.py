@@ -1,9 +1,9 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
-"""CEE-owned case coordinator for a synthetic institutional/payment workflow.
+"""CEE case coordinator for a synthetic institutional/payment workflow.
 
-Research prototype only. CEE, IVM, institutional workflow and payment records use
-separate SQLite stores. This is a recoverable local orchestration model, not a
-distributed transaction or production payment service.
+MINAH review precedes CEE admission. The private execution runtime shares the
+CEE case-journal connection; institution and payment adapters retain their own
+stores. This is not a distributed transaction or production payment service.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any
 
 from integrated_demo import DEMO_RULE_VERSION, DeterministicMinahAdapter, SyntheticTaxRules, SimulatedPaymentProvider
 from payment_lifecycle import PaymentLifecycle
-from protocol_pipeline import AUTHORITY_ID, RULE_SET, RULE_VERSION, CEEJournal, KinSysProtocolPipeline
+from protocol_pipeline import AUTHORITY_ID, RULE_SET, RULE_VERSION, KinSysProtocolPipeline
 from transition import ProtocolStore, ProcessNotFound
 from workflows.institutional_workflow import InstitutionalWorkflow
 
@@ -32,18 +32,20 @@ class CaseConflict(ValueError):
 
 
 class CEECaseCoordinator:
-    """Orchestrate one synthetic case through CEE, MINAH, institutions, IVM and payment."""
+    """Orchestrate one synthetic case through MINAH, CEE and final disposition."""
 
     def __init__(
         self,
         *,
         cee_database: str = ":memory:",
-        ivm_database: str = ":memory:",
+        ivm_database: str | None = None,
         workflow_database: str = ":memory:",
         payment_database: str = ":memory:",
         minah_adapter: Any | None = None,
         authority_active: bool = True,
     ):
+        if ivm_database is not None and ivm_database != cee_database:
+            raise ValueError("SPLIT_CASE_RUNTIME_STORAGE_NO_LONGER_SUPPORTED")
         self.cee_db = sqlite3.connect(cee_database, timeout=10.0)
         self.cee_db.row_factory = sqlite3.Row
         self.cee_db.execute("PRAGMA busy_timeout=10000")
@@ -76,7 +78,7 @@ class CEECaseCoordinator:
                WHERE component='PAYMENT' AND phase='SUBMISSION_INTENT'"""
         )
         self.cee_db.commit()
-        self.ivm = ProtocolStore(ivm_database)
+        self.ivm = ProtocolStore(connection=self.cee_db)
         self.workflow = InstitutionalWorkflow(workflow_database)
         self.payments = PaymentLifecycle(payment_database)
         self.minah = minah_adapter or DeterministicMinahAdapter()
@@ -85,8 +87,8 @@ class CEECaseCoordinator:
         self.authority_active = authority_active
 
     def close(self) -> None:
-        self.cee_db.close()
         self.ivm.close()
+        self.cee_db.close()
         self.workflow.close()
         self.payments.close()
 
@@ -143,32 +145,78 @@ class CEECaseCoordinator:
 
         case_id = request["case_id"]
         evidence = request["evidence"]
-        self._set_phase(operation_id, "ADMITTED", "ACCEPTED", {"schema_validated": True})
-        self._set_phase(operation_id, "CONTEXT_PINNED", "ACCEPTED", {
-            "jurisdiction": request["jurisdiction"],
-            "rule_version": DEMO_RULE_VERSION,
-            "evidence_digest": _digest(evidence),
-        })
 
+        # MINAH is the first protocol-facing component. REQUESTED is only a
+        # durable ingress receipt; no CEE admission/context is created yet.
         state = self._case_row(operation_id)
         minah = state.get("minah")
         if minah is None:
             raw = self.minah.review(evidence)
-            if not isinstance(raw, dict) or raw.get("may_authorise") is not False or raw.get("status") not in {"ADVISORY_ONLY", "NEEDS_INFORMATION"}:
-                return self._finish(operation_id, "REJECTED", "REJECTED", {"reason": "MINAH_CONTRACT_VIOLATION", "minah_disposition": {"status": "INVALID_DISPOSITION", "may_authorise": False}, "funds_moved": False})
-            minah = raw
+            contract_error = KinSysProtocolPipeline._minah_contract_error(raw)
+            if contract_error:
+                minah = {
+                    "status": "INVALID_DISPOSITION", "missing_fields": [],
+                    "source_refs": [], "uncertainty": "HIGH",
+                    "may_authorise": False, "model_version": "UNTRUSTED_OUTPUT",
+                    "contract_error": contract_error,
+                }
+            else:
+                minah = raw
             self._event(operation_id, "MINAH", "DISPOSITION_RECORDED", minah["status"], {
                 "advisory_only": True, "may_authorise": False,
                 "model_version": minah.get("model_version"),
                 "source_refs": minah.get("source_refs", []),
                 "uncertainty": minah.get("uncertainty"),
+                "contract_error": minah.get("contract_error"),
             })
             self._save_component(operation_id, "minah", minah)
-        if minah["status"] == "NEEDS_INFORMATION":
-            return self._finish(operation_id, "DEFERRED", "DEFERRED", {
-                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE", "minah_disposition": minah, "institutional_decisions": None,
+
+        if minah.get("status") == "INVALID_DISPOSITION":
+            self._set_phase(operation_id, "MINAH_REVIEWED", "REJECTED", {
+                "cee_admission": "NOT_GRANTED",
+                "reason": "MINAH_CONTRACT_VIOLATION",
+            })
+            return self._finish(operation_id, "REJECTED", "REJECTED", {
+                "reason": "MINAH_CONTRACT_VIOLATION", "minah_disposition": minah,
+                "institutional_decisions": None, "execution_result": None,
                 "payment_lifecycle": None, "funds_moved": False,
             })
+
+        if minah["status"] == "NEEDS_INFORMATION":
+            self._set_phase(operation_id, "MINAH_REVIEWED", "DEFERRED", {
+                "cee_admission": "NOT_GRANTED",
+                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE",
+            })
+            return self._finish(operation_id, "DEFERRED", "DEFERRED", {
+                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE",
+                "minah_disposition": minah, "institutional_decisions": None,
+                "execution_result": None, "payment_lifecycle": None, "funds_moved": False,
+            })
+
+        # Server-configured synthetic checks run before CEE admission. These are
+        # not identity verification against an authorised external registry.
+        pre_admission_error = self._pre_admission_error(request)
+        if pre_admission_error:
+            self._set_phase(operation_id, "MINAH_REVIEWED", "REJECTED", {
+                "cee_admission": "NOT_GRANTED", "reason": pre_admission_error,
+            })
+            return self._finish(operation_id, "REJECTED", "REJECTED", {
+                "reason": pre_admission_error, "minah_disposition": minah,
+                "institutional_decisions": None, "execution_result": None,
+                "payment_lifecycle": None, "funds_moved": False,
+            })
+
+        self._set_phase(operation_id, "MINAH_REVIEWED", "REVIEWED", {
+            "cee_admission": "NOT_YET_GRANTED", "may_authorise": False,
+        })
+        self._set_phase(operation_id, "ADMITTED", "ACCEPTED", {
+            "schema_validated": True, "minah_review_pinned": True,
+        })
+        self._set_phase(operation_id, "CONTEXT_PINNED", "ACCEPTED", {
+            "jurisdiction": request["jurisdiction"],
+            "rule_version": DEMO_RULE_VERSION,
+            "evidence_digest": _digest(evidence),
+        })
 
         self.workflow.create_case(
             case_id, origin_authority="ORIGIN-A", destination_authority="DESTINATION-B",
@@ -248,11 +296,11 @@ class CEECaseCoordinator:
             "from_state": decision.from_state, "to_state": decision.to_state,
             "duplicate": decision.duplicate,
         }
-        self._event(operation_id, "IVM", "ECONOMIC_GATE", decision.status, ivm_result)
+        self._event(operation_id, "CEE", "EXECUTION_GATE", decision.status, ivm_result)
         if decision.status != "ACCEPTED":
-            return self._finish(operation_id, "REJECTED", "IVM_ECONOMIC_GATE_REJECTED", {
+            return self._finish(operation_id, "REJECTED", "CEE_EXECUTION_GATE_REJECTED", {
                 "minah_disposition": minah, "institutional_decisions": stages,
-                "ivm_decision": ivm_result, "obligation": None, "payment_lifecycle": None,
+                "execution_result": ivm_result, "obligation": None, "payment_lifecycle": None,
                 "funds_moved": False,
             })
 
@@ -343,7 +391,7 @@ class CEECaseCoordinator:
         terminal_phase = "PENDING_RECONCILIATION" if final_status == "PENDING_PAYMENT_RECONCILIATION" else ("PENDING_PAYMENT_RESOLUTION" if final_status == "PENDING_PAYMENT_RESOLUTION" else "FINALIZED")
         return self._finish(operation_id, terminal_phase, final_status, {
             "minah_disposition": minah, "institutional_decisions": stages,
-            "ivm_decision": ivm_result, "assessment": assessment,
+            "execution_result": ivm_result, "assessment": assessment,
             "obligation": obligation, "payment_lifecycle": payment_result,
             "funds_moved": False, "production_ready": False,
         })
@@ -560,9 +608,9 @@ class CEECaseCoordinator:
 
     def _set_phase(self, operation_id: str, phase: str, status: str, detail: dict[str, Any]) -> None:
         order = {
-            "REQUESTED": 0, "ADMITTED": 1, "CONTEXT_PINNED": 2,
-            "FINALIZED": 3, "DEFERRED": 3, "REJECTED": 3,
-            "PENDING_RECONCILIATION": 3, "PENDING_PAYMENT_RESOLUTION": 3,
+            "REQUESTED": 0, "MINAH_REVIEWED": 1, "ADMITTED": 2, "CONTEXT_PINNED": 3,
+            "FINALIZED": 4, "DEFERRED": 4, "REJECTED": 4,
+            "PENDING_RECONCILIATION": 4, "PENDING_PAYMENT_RESOLUTION": 4,
         }
         row = self.cee_db.execute(
             "SELECT phase FROM cee_cases WHERE operation_id=?", (operation_id,)
@@ -600,10 +648,28 @@ class CEECaseCoordinator:
         }
 
     def _trace(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [{
-            "sequence": event["sequence"], "component": event["component"],
-            "phase": event["phase"], "status": event["status"], "detail": event["detail"],
-        } for event in events]
+        """Expose MINAH -> CEE; retain internal stages as CEE trace metadata."""
+        trace = []
+        for event in events:
+            original_component = event["component"]
+            component = "MINAH" if original_component == "MINAH" else "CEE"
+            detail = dict(event["detail"])
+            if original_component not in {"MINAH", "CEE"}:
+                detail["internal_stage"] = original_component
+            trace.append({
+                "sequence": event["sequence"], "component": component,
+                "phase": event["phase"], "status": event["status"], "detail": detail,
+            })
+        return trace
+
+    def _pre_admission_error(self, request: dict[str, Any]) -> str | None:
+        if request["execution_actor"] != AUTHORITY_ID:
+            return "AUTHORITY_MISMATCH"
+        if not self.authority_active:
+            return "AUTHORITY_REVOKED"
+        if request["evidence"].get("commodity") == "SYNTHETIC_PROHIBITED_COMMODITY":
+            return "RULE_REJECTED"
+        return None
 
     @staticmethod
     def _validate(request: dict[str, Any]) -> None:
