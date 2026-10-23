@@ -134,6 +134,22 @@ class ProtocolPipelineTests(unittest.TestCase):
         finally:
             pipeline.close()
 
+    def test_authority_adapter_exception_defers_closed(self):
+        class BrokenAdapter:
+            def evaluate(self, request):
+                raise TimeoutError("sensitive backend details must not leak")
+
+        pipeline = KinSysProtocolPipeline(authority_adapter=BrokenAdapter())
+        try:
+            result = pipeline.execute(request())
+            self.assertEqual(result["final_decision"], "DEFERRED")
+            self.assertEqual(result["reason"], "AUTHORITY_GATE_UNAVAILABLE")
+            self.assertEqual(result["authority_gate"]["adapter"], "ADAPTER_ERROR")
+            self.assertEqual(result["authority_gate"]["details"], {"error_type": "TimeoutError"})
+            self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+        finally:
+            pipeline.close()
+
     def test_invalid_authority_adapter_output_defers_closed(self):
         class InvalidAdapter:
             def evaluate(self, request):
