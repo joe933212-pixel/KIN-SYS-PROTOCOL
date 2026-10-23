@@ -588,7 +588,14 @@ class KinSysProtocolPipeline:
         }
 
     def _evaluate_authority_gate(self, request: dict[str, Any]) -> AuthorityGateDecision:
-        decision = self.authority_gate.evaluate(request)
+        try:
+            decision = self.authority_gate.evaluate(request)
+        except Exception as exc:
+            return AuthorityGateDecision(
+                "DEFER", "AUTHORITY_GATE_UNAVAILABLE",
+                "ADAPTER_ERROR", "NOT_ESTABLISHED",
+                {"error_type": type(exc).__name__},
+            )
         if not isinstance(decision, AuthorityGateDecision):
             return AuthorityGateDecision(
                 "DEFER", "INVALID_AUTHORITY_GATE_RESPONSE",
