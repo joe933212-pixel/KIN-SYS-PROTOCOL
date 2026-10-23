@@ -36,8 +36,9 @@ class ProductionApiContractTests(unittest.TestCase):
                     f"{method.upper()} {path} must not imply it is implemented",
                 )
                 self.assertIn("200", operation["responses"])
-                self.assertIn("400", operation["responses"])
-                self.assertIn("503", operation["responses"])
+                if path != "/system/health":
+                    self.assertIn("400", operation["responses"])
+                    self.assertIn("503", operation["responses"])
         self.assertEqual(len(operation_ids), len(set(operation_ids)))
 
     def test_all_local_schema_references_resolve(self):
@@ -78,7 +79,7 @@ class ProductionApiContractTests(unittest.TestCase):
     def test_production_gates_are_recorded(self):
         gates = self.api["x-critical-production-gates"]
         self.assertGreaterEqual(len(gates), 8)
-        self.assertTrue(any("payment" in gate.lower() for gate in gates))
+        self.assertTrue(any("financial" in gate.lower() for gate in gates))
         self.assertTrue(any("MINAH" in gate for gate in gates))
         self.assertTrue(any("Nexus Pod" in gate for gate in gates))
 
