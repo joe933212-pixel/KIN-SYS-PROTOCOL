@@ -14,6 +14,14 @@ The repository currently contains three related but separate execution paths:
 
 These are useful reference components, but the legacy integrated demonstrator does **not** run its institutional, payment and edge stages inside the CEE journal / IVM execution lifecycle. Its trace is not proof that the full case has been executed by the newer CEE/IVM path. Do not describe the components as fully integrated or production-ready.
 
+## 1A. Implementation progress since this design baseline
+
+A first CEE-owned synthetic case coordinator has now been implemented in `protocol-reference/cee_case_coordinator.py`, exposed through `POST /cee/cases` and read-only `GET /cee/operations/{operation_id}`. It coordinates MINAH advisory review, origin/destination decisions, an IVM economic gate after both current approvals, fictional assessment and the simulated payment lifecycle. `POST /cee/reconciliation` records source-sequenced synthetic findings.
+
+CI run [#234](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39922195554) passed 185 tests, including rejection gates, missing-evidence deferral, replay/conflict, uncertain payment submission recovery, reconciliation sequencing and HTTP inspection. This is a local synthetic implementation, not proof of production integration.
+
+Remaining gaps include: independent SQLite stores without cross-store atomicity; no production transactional outbox/dispatcher or authenticated provider idempotency; no authenticated/authoritative reconciliation source; no production identity or legal-rule source; limited crash injection around every stage; no settlement-evidence HTTP route; no real MINAH service, distributed finality, or Nexus Pod integration. Caller-supplied reconciliation is demonstrator input only and must not be treated as trusted external evidence.
+
 ## 2. Non-negotiable execution invariants
 
 1. **CEE owns orchestration.** Every accepted top-level instruction has a stable operation ID, a pinned request digest, explicit lifecycle events, a durable result and a read-only inspection endpoint.
@@ -93,4 +101,4 @@ The current payment model stores its own records in a separate SQLite database f
 
 For each component, the implementation handoff must specify the interface/schema, authority source, trust boundary, failure semantics, idempotency key, durable state, observability, threat model, test fixture, acceptance criteria, operational owner and what remains synthetic. Required reviewers include MINAH/AI and legal engineering, IVM/runtime, CEE/orchestration, identity/security, institutional systems, fintech/provider integration, edge/hardware, distributed systems, DevSecOps/SRE and API/client engineering.
 
-This plan is a design baseline, not evidence that the listed integration is implemented. The next code milestone is the CEE-owned case journal and stage-by-stage recovery harness, followed by crash-injection tests before wiring a public-facing route.
+This plan is a design baseline, not evidence that the listed integration is implemented. The next code milestone is a reviewed recovery design for settlement evidence, cross-store consistency and production-grade outbox/dispatcher semantics, plus crash-injection tests at every persisted boundary. Only after those boundaries and their security contracts are reviewed should production API routes or real provider adapters be implemented.
