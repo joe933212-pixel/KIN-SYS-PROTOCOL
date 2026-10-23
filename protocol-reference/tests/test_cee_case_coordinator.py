@@ -72,6 +72,22 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SPLIT_CASE_RUNTIME_STORAGE_NO_LONGER_SUPPORTED"):
             CEECaseCoordinator(cee_database="case-cee.sqlite3", ivm_database="case-runtime.sqlite3")
 
+    def test_authority_adapter_exception_defers_case_before_admission(self):
+        class BrokenAdapter:
+            def evaluate(self, request):
+                raise TimeoutError("sensitive backend details must not leak")
+
+        coordinator = CEECaseCoordinator(authority_adapter=BrokenAdapter())
+        try:
+            result = coordinator.execute(request("CASE-AUTH-TIMEOUT"))
+            self.assertEqual(result["final_decision"], "DEFERRED")
+            self.assertEqual(result["reason"], "AUTHORITY_GATE_UNAVAILABLE")
+            self.assertEqual(result["authority_gate"]["adapter"], "ADAPTER_ERROR")
+            self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+            self.assertIsNone(result["institutional_decisions"])
+        finally:
+            coordinator.close()
+
     def test_unavailable_authority_adapter_defers_case_before_admission(self):
         coordinator = CEECaseCoordinator(authority_adapter=UnavailableAuthorityAdapter())
         try:
