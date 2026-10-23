@@ -179,7 +179,10 @@ def _conventional(scenario: str) -> dict[str, Any]:
                     lifecycle_status = "SIMULATED_DECLINED"
                 elif scenario == "payment_unknown":
                     payments.record_provider_ack(payment_id, f"{payment_id}:ACK:1", "UNKNOWN")
-                    payments.record_reconciliation(payment_id, f"{payment_id}:RECONCILIATION:1", "UNKNOWN")
+                    payments.record_reconciliation(
+                        payment_id, f"{payment_id}:RECONCILIATION:1", "UNKNOWN",
+                        source_sequence=1,
+                    )
                     payment = {"status": "UNKNOWN_PENDING_RECONCILIATION", "funds_moved": False}
                     lifecycle_status = "UNKNOWN_PENDING_RECONCILIATION"
                 else:
