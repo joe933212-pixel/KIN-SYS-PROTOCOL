@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from authority_adapter import UnavailableAuthorityAdapter
 from cee_case_coordinator import CEECaseCoordinator, CaseConflict
 
 
@@ -70,6 +71,19 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.assertIs(self.coordinator.cee_db, self.coordinator.ivm.db)
         with self.assertRaisesRegex(ValueError, "SPLIT_CASE_RUNTIME_STORAGE_NO_LONGER_SUPPORTED"):
             CEECaseCoordinator(cee_database="case-cee.sqlite3", ivm_database="case-runtime.sqlite3")
+
+    def test_unavailable_authority_adapter_defers_case_before_admission(self):
+        coordinator = CEECaseCoordinator(authority_adapter=UnavailableAuthorityAdapter())
+        try:
+            result = coordinator.execute(request("CASE-AUTH-UNAVAILABLE"))
+            self.assertEqual(result["final_decision"], "DEFERRED")
+            self.assertEqual(result["reason"], "AUTHORITY_VERIFICATION_UNAVAILABLE")
+            self.assertEqual(result["authority_gate"]["outcome"], "DEFER")
+            self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+            self.assertIsNone(result["institutional_decisions"])
+            self.assertIsNone(result["payment_lifecycle"])
+        finally:
+            coordinator.close()
 
     def test_execution_authority_is_rejected_before_cee_admission(self):
         result = self.coordinator.execute(request("CASE-AUTH-REJECT", execution_actor="UNAUTHORISED-ACTOR"))
