@@ -38,7 +38,7 @@ PYTHONPATH=protocol-reference python -m integrated_demo
 
 It composes the existing two-institution SQLite model with test-only identity/authority checks, a deterministic MINAH stand-in, a fictional versioned statutory-obligation calculator, a simulated payment provider, and a disconnected-edge profile. Test cases are in `protocol-reference/tests/test_integrated_demo.py`.
 
-The adapters are deliberately simulated. The tax rule is fictional, no money moves, no real national identity or institutional systems are contacted, MINAH is not a real AI model or legal authority, and the edge profile is not physical Nexus Pod hardware. The report states these limits. This is an initial integrated software slice, not the full KIN-SYS system.
+The adapters are deliberately simulated. The tax rule is fictional, no money moves, no real national identity or institutional systems are contacted, MINAH is not a real AI model or legal authority, and the edge profile is not physical Nexus Pod hardware. In particular, this research demonstrator does not implement the required MINAH-first ingress, national/enterprise registry API identity verification, or pre-handoff scoped authority checks. In particular, this research demonstrator does not implement the required MINAH-first ingress, national/enterprise registry API identity verification, or pre-handoff scoped authority checks. The report states these limits. This is an initial integrated software slice, not the full KIN-SYS system.
 
 ## CEE-controlled institutional/payment coordinator
 
