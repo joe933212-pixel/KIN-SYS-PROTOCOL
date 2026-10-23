@@ -348,6 +348,98 @@ class CEECaseCoordinator:
             "funds_moved": False, "production_ready": False,
         })
 
+    def record_settlement_evidence(
+        self, operation_id: str, event_id: str, settlement_reference: str,
+        *, amount_minor: int, currency: str,
+    ) -> dict[str, Any]:
+        """Record caller-supplied synthetic settlement evidence with replay recovery.
+
+        PaymentLifecycle commits first in its own store. If the CEE journal write
+        is interrupted, retrying the same event replays the identical payment
+        event and repairs the CEE result/event without creating a second effect.
+        This is not authenticated provider evidence or a cross-store transaction.
+        """
+        if not operation_id or not event_id:
+            raise ValueError("SETTLEMENT_IDENTIFIERS_REQUIRED")
+        if not isinstance(settlement_reference, str) or not settlement_reference.strip():
+            raise ValueError("SETTLEMENT_REFERENCE_REQUIRED")
+        if type(amount_minor) is not int or amount_minor < 0:
+            raise ValueError("INVALID_SETTLEMENT_AMOUNT")
+        if not isinstance(currency, str) or not currency:
+            raise ValueError("INVALID_SETTLEMENT_CURRENCY")
+        row = self.cee_db.execute(
+            "SELECT phase, result_json FROM cee_cases WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        if row is None or not row["result_json"]:
+            raise KeyError("CEE_CASE_RESULT_NOT_FOUND")
+        result = json.loads(row["result_json"])
+        payment_info = result.get("payment_lifecycle")
+        obligation = result.get("obligation")
+        if not isinstance(payment_info, dict) or not payment_info.get("payment_id"):
+            raise ValueError("CASE_HAS_NO_SETTLEABLE_PAYMENT")
+        if not isinstance(obligation, dict):
+            raise ValueError("CASE_HAS_NO_PINNED_OBLIGATION")
+        payment_id = payment_info["payment_id"]
+        evidence = {
+            "event_id": event_id, "settlement_reference": settlement_reference,
+            "amount_minor": amount_minor, "currency": currency,
+            "evidence_source": "CALLER_SUPPLIED_SYNTHETIC_UNAUTHENTICATED",
+        }
+        existing_event = None
+        for prior in self.cee_db.execute(
+            "SELECT detail_json FROM cee_case_events WHERE operation_id=? AND component='PAYMENT' AND phase='SETTLEMENT_EVIDENCE'",
+            (operation_id,),
+        ):
+            previous = json.loads(prior["detail_json"])
+            if previous.get("event_id") == event_id:
+                if previous != evidence:
+                    raise CaseConflict("SETTLEMENT_EVENT_ID_CONFLICT")
+                existing_event = previous
+                break
+
+        # The payment lifecycle independently checks the exact pinned obligation
+        # amount/currency and stable event ID; retry repairs CEE after a split-store crash.
+        lifecycle = self.payments.record_settlement(
+            payment_id, event_id, settlement_reference,
+            amount_minor=amount_minor, currency=currency,
+        )
+        if amount_minor != obligation.get("amount_minor") or currency != obligation.get("currency"):
+            # Normally PaymentLifecycle rejects this first; retain an explicit
+            # coordinator-level contract guard for corrupted result envelopes.
+            raise ValueError("SETTLEMENT_DOES_NOT_MATCH_PINNED_OBLIGATION")
+        payment_info = {
+            **payment_info, "status": "COMPLETED_WITH_RECONCILIATION_CONFIRMED_SETTLEMENT",
+            "recorded_status": lifecycle["status"],
+            "settlement_reference": lifecycle.get("settlement_reference"),
+            "history": self.payments.history(payment_id), "funds_moved": False,
+        }
+        final_status = "COMPLETED_WITH_RECONCILIATION_CONFIRMED_SETTLEMENT"
+        result = {
+            **result, "status": final_status, "payment_lifecycle": payment_info,
+            "funds_moved": False,
+        }
+        self.cee_db.execute("BEGIN IMMEDIATE")
+        try:
+            self.cee_db.execute(
+                "UPDATE cee_cases SET phase='FINALIZED', result_json=? WHERE operation_id=?",
+                (_canonical(result), operation_id),
+            )
+            if existing_event is None:
+                self.cee_db.execute(
+                    "INSERT INTO cee_case_events(operation_id,component,phase,status,detail_json) VALUES(?,?,?,?,?)",
+                    (operation_id, "PAYMENT", "SETTLEMENT_EVIDENCE", lifecycle["status"], _canonical(evidence)),
+                )
+            self.cee_db.commit()
+        except Exception:
+            self.cee_db.rollback()
+            raise
+        snapshot = self.inspect(operation_id)
+        assert snapshot is not None
+        return {
+            **result, "operation_id": operation_id, "duplicate": existing_event is not None,
+            "cee_events": snapshot["events"], "component_trace": self._trace(snapshot["events"]),
+        }
+
     def reconcile(
         self, operation_id: str, event_id: str, finding: str,
         *, source_sequence: int, provider_reference: str | None = None,
