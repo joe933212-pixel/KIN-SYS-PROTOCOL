@@ -137,7 +137,7 @@ class KinSysPrototypeApplication:
                     "instruction_flow": [
                         "POST /demo/instructions: legacy integrated synthetic demonstration",
                         "POST /protocol/instructions: MINAH review -> CEE execution boundary -> final decision (PASSED/REJECTED/DEFERRED)",
-                        "POST /cee/cases: CEE orchestration of MINAH, origin/destination decisions, IVM economic gate and simulated payment lifecycle",
+                        "POST /cee/cases: legacy synthetic institutional/payment demonstrator; not yet migrated to the canonical MINAH-first instruction boundary",
                     ],
                     "protocol_pipeline": {
                         "status": "SYNTHETIC_MINAH_CEE_BOUNDARY_IMPLEMENTED",
