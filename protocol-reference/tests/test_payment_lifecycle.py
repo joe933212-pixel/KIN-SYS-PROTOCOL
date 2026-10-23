@@ -68,6 +68,30 @@ class PaymentLifecycleTests(unittest.TestCase):
             if event["event_id"] == "EV-REC-OLD"
         ]), 1)
 
+    def test_new_provider_ack_after_reconciliation_requires_fresh_reconciliation(self):
+        self.payments.record_provider_ack("PAY-1", "EV-ACK-INITIAL", "UNKNOWN")
+        self.payments.record_reconciliation("PAY-1", "EV-REC-NOT-SETTLED", "NOT_SETTLED")
+
+        result = self.payments.record_provider_ack(
+            "PAY-1", "EV-ACK-LATE-NEW", "ACCEPTED", "PROVIDER-REF-LATE"
+        )
+
+        self.assertEqual(result["status"], "UNKNOWN_PENDING_RECONCILIATION")
+        self.assertEqual(result["last_reconciliation"], "NOT_SETTLED")
+        history = self.payments.history("PAY-1")
+        self.assertIn("EV-ACK-LATE-NEW", [event["event_id"] for event in history])
+        self.assertEqual(
+            [event["evidence"]["acknowledgement"] for event in history
+             if event["event_id"] == "EV-ACK-LATE-NEW"],
+            ["ACCEPTED"],
+        )
+
+        resolved = self.payments.record_reconciliation(
+            "PAY-1", "EV-REC-REFRESHED", "NOT_SETTLED"
+        )
+        self.assertEqual(resolved["status"], "RECONCILED_NOT_SETTLED")
+        self.assertEqual(resolved["last_reconciliation"], "NOT_SETTLED")
+
     def test_timeout_unknown_stays_unknown_and_reconciliation_does_not_resubmit(self):
         self.payments.record_provider_ack("PAY-1", "EV-ACK-1", "UNKNOWN")
         result = self.payments.record_reconciliation("PAY-1", "EV-REC-1", "UNKNOWN")
