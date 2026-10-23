@@ -41,18 +41,31 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.coordinator = CEECaseCoordinator()
         self.addCleanup(self.coordinator.close)
 
-    def test_happy_path_records_ordered_cee_minah_institution_ivm_and_payment_trace(self):
+    def test_happy_path_exposes_minah_then_cee_and_final_decision(self):
         result = self.coordinator.execute(request())
         self.assertEqual(result["status"], "COMPLETED_WITH_SIMULATED_SETTLEMENT")
+        self.assertEqual(result["final_decision"], "PASSED")
         self.assertFalse(result["funds_moved"])
         self.assertFalse(result["minah_disposition"]["may_authorise"])
         self.assertEqual(result["assessment"]["legal_status"], "SYNTHETIC_DEMO_RULE_NOT_LAW")
         self.assertEqual(result["payment_lifecycle"]["recorded_status"], "SETTLED")
         components = [event["component"] for event in result["component_trace"]]
-        self.assertLess(components.index("MINAH"), components.index("INSTITUTIONAL"))
-        self.assertLess(components.index("INSTITUTIONAL"), components.index("IVM"))
-        self.assertLess(components.index("IVM"), components.index("PAYMENT"))
-        self.assertEqual(result["ivm_decision"]["to_state"], "ACTIVE")
+        self.assertEqual(components[0], "MINAH")
+        self.assertTrue(all(component == "CEE" for component in components[1:]))
+        self.assertEqual(result["execution_result"]["to_state"], "ACTIVE")
+
+    def test_case_runtime_shares_cee_store_and_rejects_split_store_configuration(self):
+        self.assertIs(self.coordinator.cee_db, self.coordinator.ivm.db)
+        with self.assertRaisesRegex(ValueError, "SPLIT_CASE_RUNTIME_STORAGE_NO_LONGER_SUPPORTED"):
+            CEECaseCoordinator(cee_database="case-cee.sqlite3", ivm_database="case-runtime.sqlite3")
+
+    def test_execution_authority_is_rejected_before_cee_admission(self):
+        result = self.coordinator.execute(request("CASE-AUTH-REJECT", execution_actor="UNAUTHORISED-ACTOR"))
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["final_decision"], "REJECTED")
+        self.assertEqual(result["reason"], "AUTHORITY_MISMATCH")
+        self.assertIsNone(result["institutional_decisions"])
+        self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
 
     def test_origin_rejection_prevents_destination_and_payment(self):
         result = self.coordinator.execute(request("CASE-ORIGIN-REJECT", origin_decision="REJECT"))
@@ -66,7 +79,7 @@ class CEECaseCoordinatorTests(unittest.TestCase):
     def test_destination_rejection_prevents_ivm_economic_gate_and_payment(self):
         result = self.coordinator.execute(request("CASE-DEST-REJECT", destination_decision="REJECT"))
         self.assertEqual(result["status"], "REJECTED")
-        self.assertNotIn("ivm_decision", result)
+        self.assertNotIn("execution_result", result)
         self.assertIsNone(result["obligation"])
         self.assertIsNone(result["payment_lifecycle"])
         with self.assertRaises(ValueError):
@@ -76,7 +89,9 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         payload = request("CASE-MINAH-DEFER", evidence={"commodity": "SYNTHETIC_MAIZE"})
         result = self.coordinator.execute(payload)
         self.assertEqual(result["status"], "DEFERRED")
+        self.assertEqual(result["final_decision"], "DEFERRED")
         self.assertEqual(result["reason"], "MINAH_REQUIRES_ADDITIONAL_EVIDENCE")
+        self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
         self.assertIsNone(result["institutional_decisions"])
         self.assertIsNone(result["payment_lifecycle"])
         self.assertFalse(result["funds_moved"])
