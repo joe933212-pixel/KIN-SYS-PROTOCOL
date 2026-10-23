@@ -73,7 +73,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["protocol_boundary"]["ivm"], "NOT_WIRED_AS_SEPARATE_RUNTIME")
         self.assertEqual(body["protocol_boundary"]["cee"], "NOT_WIRED_AS_SEPARATE_LIFECYCLE_ENGINE")
 
-    def test_protocol_route_returns_full_minah_ivm_cee_trace(self):
+    def test_protocol_route_returns_minah_cee_final_decision_trace(self):
         payload = {
             "operation_id": "HTTP-PIPE-1",
             "event_id": "HTTP-EVENT-1",
