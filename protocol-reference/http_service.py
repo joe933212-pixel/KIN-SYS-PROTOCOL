@@ -319,6 +319,7 @@ class KinSysPrototypeApplication:
                         "result": result,
                         "protocol_boundary": {
                             "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
+                            "pre_admission_gate": "SYNTHETIC_SERVER_SIDE_POLICY_ONLY_NOT_IDENTITY_VERIFICATION",
                             "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
                             "cee": "LOCAL_SQLITE_DURABLE_LIFECYCLE_JOURNAL",
                             "cross_store_atomicity": False,
