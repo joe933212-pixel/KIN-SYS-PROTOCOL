@@ -1,6 +1,7 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Payment-boundary lifecycle tests; no real provider or funds."""
 import sys
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -550,6 +551,56 @@ store.record_reconciliation("PAY-1", "EV-REC-CRASH", "NOT_SETTLED", source_seque
             if event["event_type"] == "RECONCILIATION"
         ]
         self.assertEqual(reconciliation_events, [])
+
+    def test_legacy_database_adds_reconciliation_sequence_column(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy_path = str(Path(directory) / "legacy.sqlite")
+            legacy = sqlite3.connect(legacy_path)
+            legacy.executescript(
+                """
+                CREATE TABLE obligations (
+                    obligation_id TEXT PRIMARY KEY,
+                    amount_minor INTEGER NOT NULL CHECK(amount_minor >= 0),
+                    currency TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    status TEXT NOT NULL
+                );
+                CREATE TABLE payments (
+                    payment_id TEXT PRIMARY KEY,
+                    obligation_id TEXT NOT NULL UNIQUE REFERENCES obligations(obligation_id),
+                    request_hash TEXT NOT NULL,
+                    amount_minor INTEGER NOT NULL CHECK(amount_minor >= 0),
+                    currency TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    provider_reference TEXT,
+                    settlement_reference TEXT,
+                    last_reconciliation TEXT
+                );
+                CREATE TABLE payment_events (
+                    event_id TEXT PRIMARY KEY,
+                    payment_id TEXT NOT NULL REFERENCES payments(payment_id),
+                    event_type TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL
+                );
+                """
+            )
+            legacy.commit()
+            legacy.close()
+
+            migrated = PaymentLifecycle(legacy_path)
+            try:
+                columns = {
+                    row["name"] for row in migrated.db.execute("PRAGMA table_info(payments)")
+                }
+                self.assertIn("last_reconciliation_sequence", columns)
+                self.assertEqual(
+                    migrated.db.execute(
+                        "SELECT last_reconciliation_sequence FROM payments"
+                    ).description[0][0],
+                    "last_reconciliation_sequence",
+                )
+            finally:
+                migrated.close()
 
     def test_payment_records_survive_database_reopen(self):
         self.payments.close()
