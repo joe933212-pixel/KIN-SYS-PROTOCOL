@@ -1,0 +1,2482 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "KIN-SYS Production Integration API",
+    "version": "0.1.0-draft",
+    "summary": "Proposed machine-readable API contract for production implementation teams.",
+    "description": "CONTRACT DRAFT ONLY. These routes are target interfaces, not a running HTTP server. Existing repository components are local research prototypes and simulated adapters. Live identity registries, MINAH model services, authoritative rule sources, payment providers, distributed messaging, cryptographic verification and Nexus Pod hardware are not connected by this document.",
+    "contact": {
+      "name": "KIN-SYS Protocol Engineering"
+    }
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "servers": [
+    {
+      "url": "https://{deployment-host}/kin-sys/v1",
+      "description": "Placeholder deployment base URL; replace per environment.",
+      "variables": {
+        "deployment-host": {
+          "default": "api.example.invalid",
+          "description": "Must be replaced before deployment."
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "name": "System",
+      "description": "Liveness, readiness and capability discovery."
+    },
+    {
+      "name": "Identity & Authority",
+      "description": "Principal, credential, permission and revocation checks."
+    },
+    {
+      "name": "Cases & Institutions",
+      "description": "Case lifecycle and institution-owned decisions."
+    },
+    {
+      "name": "MINAH",
+      "description": "Jurisprudential evaluation boundary; no authority to commit decisions."
+    },
+    {
+      "name": "Evidence & Rules",
+      "description": "Evidence provenance and versioned rule-pack management."
+    },
+    {
+      "name": "Finance",
+      "description": "Obligations, payment instructions, provider events and reconciliation."
+    },
+    {
+      "name": "Edge & Nodes",
+      "description": "Offline queue, synchronization and node/pod health."
+    },
+    {
+      "name": "Audit",
+      "description": "Case-linked event history and integrity metadata."
+    },
+    {
+      "name": "Governance",
+      "description": "Proposed changes, approvals and controlled activation."
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/system/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "getHealth",
+        "summary": "Liveness probe",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Process is alive."
+          }
+        },
+        "security": []
+      }
+    },
+    "/system/readiness": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "getReadiness",
+        "summary": "Dependency readiness",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Readiness status; must not expose secrets."
+          },
+          "503": {
+            "description": "Not ready."
+          }
+        }
+      }
+    },
+    "/system/capabilities": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "operationId": "getCapabilities",
+        "summary": "Advertised API and adapter capabilities",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        }
+      }
+    },
+    "/identity/authority/check": {
+      "post": {
+        "tags": [
+          "Identity & Authority"
+        ],
+        "operationId": "checkAuthority",
+        "summary": "Check current authority for a specific action and purpose",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorityDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrincipalCheck"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/identity/credentials/{credential_ref}/status": {
+      "get": {
+        "tags": [
+          "Identity & Authority"
+        ],
+        "operationId": "getCredentialStatus",
+        "summary": "Check credential validity, expiry and revocation",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorityDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "name": "credential_ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/cases": {
+      "post": {
+        "tags": [
+          "Cases & Institutions"
+        ],
+        "operationId": "createCase",
+        "summary": "Create a case after authorised submission",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseCreate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cases/{case_id}": {
+      "get": {
+        "tags": [
+          "Cases & Institutions"
+        ],
+        "operationId": "getCase",
+        "summary": "Read case state",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/caseId"
+          }
+        ]
+      }
+    },
+    "/cases/{case_id}/stages/{stage}/decisions": {
+      "post": {
+        "tags": [
+          "Cases & Institutions"
+        ],
+        "operationId": "recordInstitutionDecision",
+        "summary": "Record a decision made by the institution owning this stage",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/caseId"
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cases/{case_id}/corrections": {
+      "post": {
+        "tags": [
+          "Cases & Institutions"
+        ],
+        "operationId": "proposeCorrection",
+        "summary": "Propose a linked correction without erasing original history",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/caseId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/minah/dispositions": {
+      "post": {
+        "tags": [
+          "MINAH"
+        ],
+        "operationId": "evaluateMinah",
+        "summary": "Request a traceable jurisprudential disposition; never directly commits a protected transition",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MinahDisposition"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MinahRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/minah/dispositions/{disposition_id}": {
+      "get": {
+        "tags": [
+          "MINAH"
+        ],
+        "operationId": "getMinahDisposition",
+        "summary": "Retrieve a prior disposition",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MinahDisposition"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "name": "disposition_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/evidence": {
+      "post": {
+        "tags": [
+          "Evidence & Rules"
+        ],
+        "operationId": "registerEvidence",
+        "summary": "Register evidence metadata and provenance",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvidenceCreate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/evidence/{evidence_id}": {
+      "get": {
+        "tags": [
+          "Evidence & Rules"
+        ],
+        "operationId": "getEvidence",
+        "summary": "Retrieve evidence metadata without bypassing purpose-based access",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "name": "evidence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/rules/packs": {
+      "post": {
+        "tags": [
+          "Evidence & Rules"
+        ],
+        "operationId": "createRulePack",
+        "summary": "Register a draft rule pack",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RulePack"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rules/packs/{rule_pack_id}/{version}": {
+      "get": {
+        "tags": [
+          "Evidence & Rules"
+        ],
+        "operationId": "getRulePack",
+        "summary": "Retrieve immutable versioned rule pack metadata",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulePack"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "name": "rule_pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/rules/packs/{rule_pack_id}/{version}/activate": {
+      "post": {
+        "tags": [
+          "Evidence & Rules"
+        ],
+        "operationId": "activateRulePack",
+        "summary": "Activate only after required approval and effective-date checks",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulePack"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "name": "rule_pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/finance/obligations": {
+      "post": {
+        "tags": [
+          "Finance"
+        ],
+        "operationId": "createObligation",
+        "summary": "Create an obligation from an approved assessment",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObligationCreate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/finance/obligations/{obligation_id}": {
+      "get": {
+        "tags": [
+          "Finance"
+        ],
+        "operationId": "getObligation",
+        "summary": "Retrieve obligation and assessment provenance",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "name": "obligation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/finance/payments": {
+      "post": {
+        "tags": [
+          "Finance"
+        ],
+        "operationId": "createPaymentInstruction",
+        "summary": "Create an idempotent payment instruction; does not itself move funds",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentInstruction"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/finance/payments/{payment_id}": {
+      "get": {
+        "tags": [
+          "Finance"
+        ],
+        "operationId": "getPayment",
+        "summary": "Retrieve durable payment state",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/paymentId"
+          }
+        ]
+      }
+    },
+    "/finance/payments/{payment_id}/provider-events": {
+      "post": {
+        "tags": [
+          "Finance"
+        ],
+        "operationId": "recordProviderEvent",
+        "summary": "Record authenticated provider evidence; duplicate/conflicting event IDs must be handled safely",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/paymentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderEvent"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/finance/payments/{payment_id}/reconciliations": {
+      "post": {
+        "tags": [
+          "Finance"
+        ],
+        "operationId": "reconcilePayment",
+        "summary": "Record source-versioned reconciliation; stale sequences must be rejected",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/paymentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconciliationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/edge/nodes/{node_id}/queue": {
+      "post": {
+        "tags": [
+          "Edge & Nodes"
+        ],
+        "operationId": "enqueueEdgeOperation",
+        "summary": "Queue an explicitly classified operation for offline handling",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/nodeId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EdgeEnqueue"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/edge/nodes/{node_id}/sync": {
+      "post": {
+        "tags": [
+          "Edge & Nodes"
+        ],
+        "operationId": "synchronizeEdgeNode",
+        "summary": "Reconnect and revalidate authority, evidence, rule versions and replay state",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/nodeId"
+          }
+        ]
+      }
+    },
+    "/edge/nodes/{node_id}/health": {
+      "get": {
+        "tags": [
+          "Edge & Nodes"
+        ],
+        "operationId": "getEdgeNodeHealth",
+        "summary": "Read node health and synchronization state",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/nodeId"
+          }
+        ]
+      }
+    },
+    "/audit/cases/{case_id}/events": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "operationId": "listCaseEvents",
+        "summary": "Read authorised case-linked audit events",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/caseId"
+          }
+        ]
+      }
+    },
+    "/audit/events/{event_id}": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "operationId": "getAuditEvent",
+        "summary": "Retrieve event and integrity metadata",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/eventId"
+          }
+        ]
+      }
+    },
+    "/governance/changes": {
+      "post": {
+        "tags": [
+          "Governance"
+        ],
+        "operationId": "proposeGovernanceChange",
+        "summary": "Propose a versioned policy or protocol change",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        }
+      }
+    },
+    "/governance/changes/{change_id}/approvals": {
+      "post": {
+        "tags": [
+          "Governance"
+        ],
+        "operationId": "approveGovernanceChange",
+        "summary": "Record approval from a separately authorised approver",
+        "description": "Target interface only; not currently served by a production HTTP service.",
+        "x-implementation-status": "CONTRACT_DRAFT_NOT_ROUTED",
+        "responses": {
+          "200": {
+            "description": "Operation completed or current state returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Result"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or invalid state transition.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated."
+          },
+          "403": {
+            "description": "Authenticated but not authorised."
+          },
+          "409": {
+            "description": "Idempotency conflict, stale version, or conflicting state."
+          },
+          "422": {
+            "description": "Semantic validation failed."
+          },
+          "503": {
+            "description": "Required dependency unavailable; protected operations must defer or fail closed."
+          }
+        },
+        "parameters": [
+          {
+            "name": "change_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Target auth mechanism only. Issuer, audience, algorithms, key rotation, token profile and revocation semantics remain implementation decisions."
+      }
+    },
+    "parameters": {
+      "caseId": {
+        "name": "case_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "operationId": {
+        "name": "operation_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "paymentId": {
+        "name": "payment_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "eventId": {
+        "name": "event_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "nodeId": {
+        "name": "node_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error_code",
+          "message",
+          "request_id"
+        ],
+        "properties": {
+          "error_code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "OperationMeta": {
+        "type": "object",
+        "required": [
+          "contract_version",
+          "operation_id",
+          "idempotency_key",
+          "actor_ref",
+          "purpose"
+        ],
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "kin-sys-api-0.1"
+          },
+          "operation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 8
+          },
+          "actor_ref": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "type": "string"
+          },
+          "expected_rule_pack_version": {
+            "type": "string"
+          },
+          "expected_prior_state_version": {
+            "type": "string"
+          }
+        }
+      },
+      "Result": {
+        "type": "object",
+        "required": [
+          "status",
+          "operation_id"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACCEPTED",
+              "REJECTED",
+              "DEFERRED",
+              "PENDING",
+              "UNKNOWN",
+              "COMMITTED",
+              "FINALIZED",
+              "NOT_ATTEMPTED"
+            ]
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "state_version": {
+            "type": "string"
+          },
+          "event_ref": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "PrincipalCheck": {
+        "type": "object",
+        "required": [
+          "principal_ref",
+          "action",
+          "resource_ref",
+          "purpose"
+        ],
+        "properties": {
+          "principal_ref": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "resource_ref": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "credential_ref": {
+            "type": "string"
+          },
+          "jurisdiction": {
+            "type": "string"
+          }
+        }
+      },
+      "AuthorityDecision": {
+        "type": "object",
+        "required": [
+          "decision",
+          "reason_code",
+          "policy_version",
+          "checked_at"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "ALLOW",
+              "DENY",
+              "DEFER"
+            ]
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "policy_version": {
+            "type": "string"
+          },
+          "credential_status": {
+            "type": "string",
+            "enum": [
+              "VALID",
+              "EXPIRED",
+              "REVOKED",
+              "UNKNOWN"
+            ]
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "valid_until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CaseCreate": {
+        "type": "object",
+        "required": [
+          "case_type",
+          "origin_institution",
+          "jurisdiction",
+          "rule_pack_version",
+          "submission"
+        ],
+        "properties": {
+          "case_type": {
+            "type": "string"
+          },
+          "origin_institution": {
+            "type": "string"
+          },
+          "destination_institution": {
+            "type": "string"
+          },
+          "jurisdiction": {
+            "type": "string"
+          },
+          "rule_pack_version": {
+            "type": "string"
+          },
+          "submission": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "DecisionRequest": {
+        "type": "object",
+        "required": [
+          "operation",
+          "actor_ref",
+          "decision",
+          "rule_pack_version"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/OperationMeta"
+          },
+          "actor_ref": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVE",
+              "REJECT",
+              "DEFER"
+            ]
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "reasoning_summary": {
+            "type": "string"
+          },
+          "rule_pack_version": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prior_decision_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "MinahRequest": {
+        "type": "object",
+        "required": [
+          "operation",
+          "jurisdiction",
+          "question",
+          "evidence_refs",
+          "rule_pack_version"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/OperationMeta"
+          },
+          "jurisdiction": {
+            "type": "string"
+          },
+          "governing_domain": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rule_pack_version": {
+            "type": "string"
+          },
+          "effective_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "requested_disposition_type": {
+            "type": "string"
+          }
+        }
+      },
+      "MinahDisposition": {
+        "type": "object",
+        "required": [
+          "disposition_id",
+          "status",
+          "summary",
+          "source_refs",
+          "uncertainties",
+          "model_version",
+          "rule_pack_version"
+        ],
+        "properties": {
+          "disposition_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "SUPPORTED",
+              "NOT_SUPPORTED",
+              "CONFLICT",
+              "INSUFFICIENT_EVIDENCE",
+              "DEFER_TO_AUTHORITY"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "source_refs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "source_id",
+                "version"
+              ],
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                },
+                "effective_from": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "locator": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "uncertainties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing_evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model_version": {
+            "type": "string"
+          },
+          "prompt_policy_version": {
+            "type": "string"
+          },
+          "rule_pack_version": {
+            "type": "string"
+          },
+          "human_review_required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "EvidenceCreate": {
+        "type": "object",
+        "required": [
+          "evidence_type",
+          "source_ref",
+          "source_version",
+          "observed_at",
+          "purpose"
+        ],
+        "properties": {
+          "evidence_type": {
+            "type": "string"
+          },
+          "source_ref": {
+            "type": "string"
+          },
+          "source_version": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "content_digest": {
+            "type": "string"
+          },
+          "storage_ref": {
+            "type": "string"
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "PUBLIC",
+              "INTERNAL",
+              "CONFIDENTIAL",
+              "RESTRICTED"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "RulePack": {
+        "type": "object",
+        "required": [
+          "rule_pack_id",
+          "version",
+          "jurisdiction",
+          "status",
+          "source_refs"
+        ],
+        "properties": {
+          "rule_pack_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "jurisdiction": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "UNDER_REVIEW",
+              "APPROVED",
+              "ACTIVE",
+              "RETIRED"
+            ]
+          },
+          "effective_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "effective_to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "digest": {
+            "type": "string"
+          },
+          "approved_by": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ObligationCreate": {
+        "type": "object",
+        "required": [
+          "operation",
+          "case_id",
+          "source_assessment_ref",
+          "amount_minor",
+          "currency",
+          "rule_pack_version"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/OperationMeta"
+          },
+          "case_id": {
+            "type": "string"
+          },
+          "source_assessment_ref": {
+            "type": "string"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "rule_pack_version": {
+            "type": "string"
+          },
+          "exemption_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "PaymentInstruction": {
+        "type": "object",
+        "required": [
+          "operation",
+          "obligation_id",
+          "amount_minor",
+          "currency",
+          "provider_route"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/OperationMeta"
+          },
+          "obligation_id": {
+            "type": "string"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "provider_route": {
+            "type": "string"
+          },
+          "callback_ref": {
+            "type": "string"
+          },
+          "customer_reference": {
+            "type": "string"
+          }
+        }
+      },
+      "ProviderEvent": {
+        "type": "object",
+        "required": [
+          "provider_event_id",
+          "provider_reference",
+          "event_type",
+          "observed_at",
+          "amount_minor",
+          "currency"
+        ],
+        "properties": {
+          "provider_event_id": {
+            "type": "string"
+          },
+          "provider_reference": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string",
+            "enum": [
+              "ACCEPTED",
+              "DECLINED",
+              "SETTLEMENT_CONFIRMED",
+              "REVERSAL",
+              "REFUND",
+              "UNKNOWN"
+            ]
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "provider_signature": {
+            "type": "string"
+          },
+          "raw_payload_ref": {
+            "type": "string"
+          }
+        }
+      },
+      "ReconciliationRequest": {
+        "type": "object",
+        "required": [
+          "provider_event_id",
+          "finding",
+          "source_sequence",
+          "source_ref"
+        ],
+        "properties": {
+          "provider_event_id": {
+            "type": "string"
+          },
+          "finding": {
+            "type": "string",
+            "enum": [
+              "SETTLED",
+              "NOT_SETTLED",
+              "UNKNOWN"
+            ]
+          },
+          "source_sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_ref": {
+            "type": "string"
+          },
+          "provider_reference": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "EdgeEnqueue": {
+        "type": "object",
+        "required": [
+          "operation",
+          "node_id",
+          "operation_type",
+          "payload_ref",
+          "evidence_version",
+          "rule_pack_version",
+          "offline_class"
+        ],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/OperationMeta"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "operation_type": {
+            "type": "string"
+          },
+          "payload_ref": {
+            "type": "string"
+          },
+          "evidence_version": {
+            "type": "string"
+          },
+          "rule_pack_version": {
+            "type": "string"
+          },
+          "offline_class": {
+            "type": "string",
+            "enum": [
+              "OFFLINE_SAFE_BOUNDED",
+              "DEFER_UNTIL_ONLINE",
+              "PROHIBIT_OFFLINE"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "case_id",
+          "event_type",
+          "occurred_at",
+          "actor_ref",
+          "payload_digest"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "case_id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "actor_ref": {
+            "type": "string"
+          },
+          "authority_ref": {
+            "type": "string"
+          },
+          "prior_state_version": {
+            "type": "string"
+          },
+          "new_state_version": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "integrity_ref": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "x-critical-production-gates": [
+    "Define and implement authentication, authorisation, service-to-service identity, key rotation and revocation.",
+    "Define canonical error codes, idempotency persistence, retry windows, request size limits, pagination and rate limits.",
+    "Specify wire schemas and compatibility policy; generate SDKs only after contract review.",
+    "Connect MINAH only behind the jurisprudential disposition contract, with approved jurisdictional sources, evaluation, human escalation and model/version governance.",
+    "Connect financial providers through provider-specific adapters and independently verified callbacks/webhooks; no API route implies settlement finality.",
+    "Specify authority federation, message signing, delivery guarantees, distributed state/consensus model and recovery semantics.",
+    "Define evidence storage, classification, retention, legal hold, encryption and data-subject/access controls.",
+    "Define Nexus Pod hardware and firmware interfaces separately; never treat a node's health response as proof of hardware integrity.",
+    "Run contract, integration, adversarial, load, resilience, security and deployment-profile acceptance suites before production."
+  ]
+}
