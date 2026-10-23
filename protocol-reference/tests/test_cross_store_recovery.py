@@ -93,7 +93,7 @@ class CrossStoreRecoveryTests(unittest.TestCase):
 
         self.coordinator.payments.record_reconciliation = commit_then_crash
         args = (payload["operation_id"], "RECON-CRASH-EVENT-1", "NOT_SETTLED")
-        kwargs = {"source_sequence": 1, "provider_reference": "SYNTHETIC-RECON"}
+        kwargs = {"source_sequence": 2, "provider_reference": "SYNTHETIC-RECON"}
         with self.assertRaisesRegex(RuntimeError, "after payment reconciliation commit"):
             self.coordinator.reconcile(*args, **kwargs)
 
