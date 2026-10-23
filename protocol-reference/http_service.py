@@ -21,6 +21,7 @@ from typing import Any, Callable
 from wsgiref.simple_server import make_server
 
 from integrated_demo import IntegratedDemonstrator
+from cee_case_coordinator import CEECaseCoordinator, CaseConflict
 from protocol_pipeline import ExecutionConflict, KinSysProtocolPipeline
 from transition import EventIdConflict
 
@@ -41,6 +42,11 @@ _ALLOWED_FIELDS = {
     "exempt",
 }
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
+_CEE_CASE_FIELDS = {
+    "operation_id", "case_id", "jurisdiction", "evidence", "origin_actor",
+    "destination_actor", "execution_actor", "origin_decision", "destination_decision",
+    "declared_value_minor", "payment_outcome", "exempt", "revoke_origin_before_decision",
+}
 _PROTOCOL_FIELDS = {
     "operation_id", "event_id", "process_id", "actor_id", "event_type",
     "jurisdiction", "rule_set", "rule_version", "evidence",
@@ -78,13 +84,16 @@ class KinSysPrototypeApplication:
     """Small WSGI application exposing only the local synthetic vertical slice."""
 
     def __init__(self, demonstrator: IntegratedDemonstrator | None = None,
-                 pipeline: KinSysProtocolPipeline | None = None):
+                 pipeline: KinSysProtocolPipeline | None = None,
+                 case_coordinator: CEECaseCoordinator | None = None):
         self.demonstrator = demonstrator or IntegratedDemonstrator()
         self.pipeline = pipeline or KinSysProtocolPipeline()
+        self.case_coordinator = case_coordinator or CEECaseCoordinator()
 
     def close(self) -> None:
         self.demonstrator.close()
         self.pipeline.close()
+        self.case_coordinator.close()
 
     def __call__(self, environ: dict[str, Any], start_response: Callable):
         request_id = environ.get("HTTP_X_REQUEST_ID", "")
@@ -118,10 +127,13 @@ class KinSysPrototypeApplication:
                         "POST /demo/instructions",
                         "POST /protocol/instructions",
                         "GET /protocol/operations/{operation_id}",
+                        "POST /cee/cases",
+                        "GET /cee/operations/{operation_id}",
                     ],
                     "instruction_flow": [
                         "POST /demo/instructions: legacy integrated synthetic demonstration",
                         "POST /protocol/instructions: MINAH disposition -> IVM transition checks -> CEE lifecycle journal",
+                        "POST /cee/cases: CEE orchestration of MINAH, origin/destination decisions, IVM economic gate and simulated payment lifecycle",
                     ],
                     "protocol_pipeline": {
                         "status": "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED",
@@ -140,6 +152,47 @@ class KinSysPrototypeApplication:
                 },
                 request_id,
             )
+        cee_operation_prefix = "/cee/operations/"
+        if path.startswith(cee_operation_prefix):
+            if method != "GET":
+                return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use GET to inspect a CEE case operation."}}, request_id)
+            operation_id = path[len(cee_operation_prefix):]
+            if not _ID_RE.fullmatch(operation_id):
+                return _response(start_response, 400, {"error": {"code": "INVALID_OPERATION_ID", "message": "Operation ID has an invalid format."}}, request_id)
+            operation = self.case_coordinator.inspect(operation_id)
+            if operation is None:
+                return _response(start_response, 404, {"error": {"code": "OPERATION_NOT_FOUND", "message": "No CEE case operation matches this ID."}}, request_id)
+            return _response(start_response, 200, {"status": operation["phase"], "operation": operation, "production_ready": False}, request_id)
+
+        if path == "/cee/cases":
+            if method != "POST":
+                return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit a CEE case."}}, request_id)
+            try:
+                payload = self._read_json(environ, allowed_fields=_CEE_CASE_FIELDS)
+                for field in ("operation_id", "case_id"):
+                    if not isinstance(payload.get(field), str) or not _ID_RE.fullmatch(payload[field]):
+                        raise HttpServiceError(422, "INVALID_IDENTIFIER", f"{field} is required and must be 1-120 safe identifier characters.")
+                result = self.case_coordinator.execute(payload)
+                return _response(start_response, 200, {
+                    "status": result["status"], "production_ready": False, "result": result,
+                    "protocol_boundary": {
+                        "cee": "LOCAL_SQLITE_CASE_ORCHESTRATOR",
+                        "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
+                        "ivm": "LOCAL_SQLITE_REFERENCE_ECONOMIC_GATE",
+                        "institutions": "SYNTHETIC_TWO_STAGE_WORKFLOW",
+                        "payment": "SIMULATED_ONLY_NO_FUNDS_MOVED",
+                        "cross_store_atomicity": False, "distributed_finality": False,
+                    },
+                }, request_id)
+            except HttpServiceError as exc:
+                return _response(start_response, exc.status, {"error": {"code": exc.code, "message": exc.message}}, request_id)
+            except CaseConflict as exc:
+                return _response(start_response, 409, {"error": {"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)}}, request_id)
+            except (ValueError, TypeError) as exc:
+                return _response(start_response, 422, {"error": {"code": "INVALID_CEE_CASE", "message": str(exc)[:240]}}, request_id)
+            except Exception:
+                return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR", "message": "The CEE case could not be completed."}}, request_id)
+
         operation_prefix = "/protocol/operations/"
         if path.startswith(operation_prefix):
             if method != "GET":
@@ -338,8 +391,9 @@ class KinSysPrototypeApplication:
 def create_app(
     demonstrator: IntegratedDemonstrator | None = None,
     pipeline: KinSysProtocolPipeline | None = None,
+    case_coordinator: CEECaseCoordinator | None = None,
 ) -> KinSysPrototypeApplication:
-    return KinSysPrototypeApplication(demonstrator, pipeline)
+    return KinSysPrototypeApplication(demonstrator, pipeline, case_coordinator)
 
 
 def main() -> None:
@@ -361,8 +415,20 @@ def main() -> None:
         cee_database=cee_database,
         ivm_database=ivm_database,
     )
-    app = create_app(pipeline=pipeline)
-    for database in (cee_database, ivm_database):
+    case_db = os.environ.get("KIN_SYS_CASE_CEE_DB", str(data_dir / "case-cee.sqlite3"))
+    case_ivm_db = os.environ.get("KIN_SYS_CASE_IVM_DB", str(data_dir / "case-ivm.sqlite3"))
+    case_workflow_db = os.environ.get("KIN_SYS_CASE_WORKFLOW_DB", str(data_dir / "case-workflow.sqlite3"))
+    case_payment_db = os.environ.get("KIN_SYS_CASE_PAYMENT_DB", str(data_dir / "case-payments.sqlite3"))
+    case_databases = (case_db, case_ivm_db, case_workflow_db, case_payment_db)
+    for database in case_databases:
+        if database != ":memory:":
+            Path(database).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    case_coordinator = CEECaseCoordinator(
+        cee_database=case_db, ivm_database=case_ivm_db,
+        workflow_database=case_workflow_db, payment_database=case_payment_db,
+    )
+    app = create_app(pipeline=pipeline, case_coordinator=case_coordinator)
+    for database in (cee_database, ivm_database, *case_databases):
         if database != ":memory:" and Path(database).exists():
             try:
                 os.chmod(database, 0o600)
@@ -370,6 +436,7 @@ def main() -> None:
                 pass
     print(f"KIN-SYS local synthetic prototype listening on http://{host}:{port}")
     print(f"CEE journal: {cee_database}; IVM store: {ivm_database}")
+    print(f"CEE case journal: {case_db}; case IVM: {case_ivm_db}; workflow: {case_workflow_db}; payments: {case_payment_db}")
     print("WARNING: this is not a production API; do not expose it to the public internet.")
     try:
         with make_server(host, port, app) as server:
