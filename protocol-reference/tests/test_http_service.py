@@ -50,11 +50,15 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], 200)
         self.assertFalse(body["production_ready"])
 
-    def test_capabilities_explicitly_disclose_ivm_and_cee_gap(self):
+    def test_capabilities_disclose_synthetic_ivm_cee_pipeline_and_production_gaps(self):
         response, body = self.request("/system/capabilities")
         self.assertEqual(response["status"], 200)
-        self.assertIn("IVM runtime", body["not_yet_wired_as_separate_runtime_components"])
-        self.assertIn("CEE lifecycle engine", body["not_yet_wired_as_separate_runtime_components"])
+        self.assertEqual(body["protocol_pipeline"]["status"], "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED")
+        self.assertFalse(body["protocol_pipeline"]["cross_store_atomicity"])
+        self.assertIn(
+            "production identity and cryptographic authentication",
+            body["not_yet_wired_as_production_components"],
+        )
 
     def test_complete_synthetic_instruction_returns_trace_and_never_moves_funds(self):
         response, body = self.request("/demo/instructions", "POST", {"consignment_id": "HTTP-HAPPY-1"})
