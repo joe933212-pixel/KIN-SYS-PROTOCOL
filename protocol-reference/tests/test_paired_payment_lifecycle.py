@@ -54,7 +54,7 @@ class PairedPaymentLifecycleTests(unittest.TestCase):
         systems = self.make_pair()
         for system in systems:
             system.record_provider_ack("PAY-1", "ACK-1", "UNKNOWN")
-            system.record_reconciliation("PAY-1", "REC-1", "UNKNOWN")
+            system.record_reconciliation("PAY-1", "REC-1", "UNKNOWN", source_sequence=1)
         self.assert_pair_equal(systems)
         self.assertEqual(self.vector(systems[0])["status"], "UNKNOWN_PENDING_RECONCILIATION")
 
@@ -136,12 +136,30 @@ class PairedPaymentLifecycleTests(unittest.TestCase):
         self.assert_pair_equal(systems)
         self.assertEqual(self.vector(systems[0])["status"], "INSTRUCTION_CREATED")
 
+    def test_out_of_order_reconciliation_is_rejected_by_both(self):
+        systems = self.make_pair()
+        errors = []
+        for system in systems:
+            system.record_reconciliation(
+                "PAY-1", "REC-SEQ-2", "NOT_SETTLED", source_sequence=2
+            )
+            try:
+                system.record_reconciliation(
+                    "PAY-1", "REC-SEQ-1-LATE", "UNKNOWN", source_sequence=1
+                )
+            except ValueError as exc:
+                errors.append(str(exc))
+        self.assertEqual(errors, ["STALE_RECONCILIATION_SEQUENCE"] * 2)
+        self.assert_pair_equal(systems)
+        for system in systems:
+            self.assertEqual(system.get_payment("PAY-1")["last_reconciliation_sequence"], 2)
+
     def test_reconciliation_cannot_invent_settlement(self):
         systems = self.make_pair()
         errors = []
         for system in systems:
             try:
-                system.record_reconciliation("PAY-1", "REC-SETTLED", "SETTLED")
+                system.record_reconciliation("PAY-1", "REC-SETTLED", "SETTLED", source_sequence=1)
             except ValueError as exc:
                 errors.append(str(exc))
         self.assertEqual(errors, ["SETTLEMENT_EVIDENCE_REQUIRED"] * 2)
