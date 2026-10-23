@@ -38,7 +38,8 @@ class PaymentLifecycle:
                 status TEXT NOT NULL,
                 provider_reference TEXT,
                 settlement_reference TEXT,
-                last_reconciliation TEXT
+                last_reconciliation TEXT,
+                last_reconciliation_sequence INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS payment_events (
                 event_id TEXT PRIMARY KEY,
@@ -48,6 +49,16 @@ class PaymentLifecycle:
             );
             """
         )
+        # Upgrade databases created before reconciliation source ordering was
+        # recorded. Legacy findings start at sequence zero.
+        payment_columns = {
+            row["name"] for row in self.db.execute("PRAGMA table_info(payments)")
+        }
+        if "last_reconciliation_sequence" not in payment_columns:
+            self.db.execute(
+                "ALTER TABLE payments ADD COLUMN "
+                "last_reconciliation_sequence INTEGER NOT NULL DEFAULT 0"
+            )
         self.db.commit()
 
     def close(self) -> None:
@@ -243,21 +254,34 @@ class PaymentLifecycle:
             raise
 
     def record_reconciliation(
-        self, payment_id: str, event_id: str, finding: str, provider_reference: str | None = None
+        self, payment_id: str, event_id: str, finding: str,
+        provider_reference: str | None = None, *, source_sequence: int
     ) -> dict[str, Any]:
-        """Atomically record a reconciliation finding; never resubmit a payment."""
+        """Record source-versioned reconciliation evidence; never resubmit payment.
+
+        source_sequence must be a positive, monotonically increasing version
+        from the authoritative reconciliation source for this payment. Local
+        arrival order alone cannot distinguish a delayed old response.
+        """
         if finding not in {"SETTLED", "NOT_SETTLED", "UNKNOWN"}:
             raise ValueError("INVALID_RECONCILIATION_FINDING")
+        if type(source_sequence) is not int or source_sequence < 1:
+            raise ValueError("INVALID_RECONCILIATION_SEQUENCE")
         self.db.execute("BEGIN IMMEDIATE")
         try:
             payment = self._payment(payment_id)
-            evidence = {"finding": finding, "provider_reference": provider_reference}
+            evidence = {
+                "finding": finding,
+                "provider_reference": provider_reference,
+                "source_sequence": source_sequence,
+            }
             duplicate = self._event(event_id, payment_id, "RECONCILIATION", evidence)
             if duplicate:
-                # Do not let a delayed retry of an older reconciliation finding
-                # overwrite a newer result already recorded for this payment.
+                # A retry of the same source event returns current durable state.
                 self.db.commit()
                 return self.get_payment(payment_id)
+            if source_sequence <= payment["last_reconciliation_sequence"]:
+                raise ValueError("STALE_RECONCILIATION_SEQUENCE")
             if finding == "SETTLED" and payment["status"] != "SETTLED":
                 raise ValueError("SETTLEMENT_EVIDENCE_REQUIRED")
             if payment["status"] == "SETTLED" and finding != "SETTLED":
@@ -265,13 +289,15 @@ class PaymentLifecycle:
             if payment["status"] != "SETTLED":
                 status = "RECONCILED_NOT_SETTLED" if finding == "NOT_SETTLED" else "UNKNOWN_PENDING_RECONCILIATION"
                 self.db.execute(
-                    "UPDATE payments SET status=?, last_reconciliation=? WHERE payment_id=?",
-                    (status, finding, payment_id),
+                    "UPDATE payments SET status=?, last_reconciliation=?, "
+                    "last_reconciliation_sequence=? WHERE payment_id=?",
+                    (status, finding, source_sequence, payment_id),
                 )
             else:
                 self.db.execute(
-                    "UPDATE payments SET last_reconciliation=? WHERE payment_id=?",
-                    (finding, payment_id),
+                    "UPDATE payments SET last_reconciliation=?, "
+                    "last_reconciliation_sequence=? WHERE payment_id=?",
+                    (finding, source_sequence, payment_id),
                 )
             self.db.commit()
             return self.get_payment(payment_id)
