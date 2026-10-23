@@ -489,14 +489,13 @@ def main() -> None:
         raise SystemExit("KIN_SYS_PORT must be between 1 and 65535")
     data_dir = Path(os.environ.get("KIN_SYS_DATA_DIR", ".kin-sys-prototype"))
     cee_database = os.environ.get("KIN_SYS_CEE_DB", str(data_dir / "cee.sqlite3"))
-    ivm_database = os.environ.get("KIN_SYS_IVM_DB", str(data_dir / "ivm.sqlite3"))
-    for database in (cee_database, ivm_database):
+    legacy_ivm_database = os.environ.get("KIN_SYS_IVM_DB")
+    if legacy_ivm_database and legacy_ivm_database not in {cee_database, ":memory:"}:
+        raise SystemExit("KIN_SYS_IVM_DB is no longer a separate store; set it equal to KIN_SYS_CEE_DB or unset it.")
+    for database in (cee_database,):
         if database != ":memory:":
             Path(database).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    pipeline = KinSysProtocolPipeline(
-        cee_database=cee_database,
-        ivm_database=ivm_database,
-    )
+    pipeline = KinSysProtocolPipeline(cee_database=cee_database)
     case_db = os.environ.get("KIN_SYS_CASE_CEE_DB", str(data_dir / "case-cee.sqlite3"))
     case_ivm_db = os.environ.get("KIN_SYS_CASE_IVM_DB", str(data_dir / "case-ivm.sqlite3"))
     case_workflow_db = os.environ.get("KIN_SYS_CASE_WORKFLOW_DB", str(data_dir / "case-workflow.sqlite3"))
@@ -510,14 +509,14 @@ def main() -> None:
         workflow_database=case_workflow_db, payment_database=case_payment_db,
     )
     app = create_app(pipeline=pipeline, case_coordinator=case_coordinator)
-    for database in (cee_database, ivm_database, *case_databases):
+    for database in (cee_database, *case_databases):
         if database != ":memory:" and Path(database).exists():
             try:
                 os.chmod(database, 0o600)
             except OSError:
                 pass
     print(f"KIN-SYS local synthetic prototype listening on http://{host}:{port}")
-    print(f"CEE journal: {cee_database}; IVM store: {ivm_database}")
+    print(f"CEE runtime store: {cee_database}")
     print(f"CEE case journal: {case_db}; case IVM: {case_ivm_db}; workflow: {case_workflow_db}; payments: {case_payment_db}")
     print("WARNING: this is not a production API; do not expose it to the public internet.")
     try:
