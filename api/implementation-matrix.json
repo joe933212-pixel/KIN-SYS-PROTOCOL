@@ -1,0 +1,313 @@
+{
+  "schema_version": "kin-sys-api-implementation-matrix-0.1",
+  "status": "ENGINEERING_PLAN_NOT_EVIDENCE_OF_IMPLEMENTATION",
+  "source_contract": "api/openapi.json",
+  "route_count": 29,
+  "status_definitions": {
+    "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE": "No production HTTP route is currently claimed. Local prototype functions or simulators do not count as this route being implemented.",
+    "IMPLEMENTED_BEHIND_SIMULATOR": "Route is served but delegates only to a labelled simulator; not production-connected.",
+    "IMPLEMENTED_SANDBOX": "Route is connected to a provider/institution sandbox and has recorded contract evidence.",
+    "PRODUCTION_ACCEPTED": "Route has deployment-specific security, integration, operational and domain acceptance evidence."
+  },
+  "routes": {
+    "getHealth": {
+      "path": "/system/health",
+      "method": "GET",
+      "owner_team": "Platform API / SRE",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "HTTP service, deployment configuration, monitoring",
+      "route_specific_requirement": "Return liveness only; no dependency or secret detail.",
+      "acceptance_gate": "Probe behaviour is correct; readiness checks dependencies without exposing secrets; capabilities report only actually enabled features.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getReadiness": {
+      "path": "/system/readiness",
+      "method": "GET",
+      "owner_team": "Platform API / SRE",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "HTTP service, deployment configuration, monitoring",
+      "route_specific_requirement": "Check mandatory dependencies; distinguish alive from ready.",
+      "acceptance_gate": "Probe behaviour is correct; readiness checks dependencies without exposing secrets; capabilities report only actually enabled features.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getCapabilities": {
+      "path": "/system/capabilities",
+      "method": "GET",
+      "owner_team": "Platform API / SRE",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "HTTP service, deployment configuration, monitoring",
+      "route_specific_requirement": "Advertise only routes and adapters actually enabled in this deployment.",
+      "acceptance_gate": "Probe behaviour is correct; readiness checks dependencies without exposing secrets; capabilities report only actually enabled features.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "checkAuthority": {
+      "path": "/identity/authority/check",
+      "method": "POST",
+      "owner_team": "Identity, security and IAM",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Credential issuer, trust roots, policy store, revocation source, key management",
+      "route_specific_requirement": "Check identity and authority for exact action, resource, purpose and current policy.",
+      "acceptance_gate": "Authentication and action/purpose-scoped authorization, expiry/revocation races, rotation and fail-closed behaviour pass tests.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getCredentialStatus": {
+      "path": "/identity/credentials/{credential_ref}/status",
+      "method": "GET",
+      "owner_team": "Identity, security and IAM",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Credential issuer, trust roots, policy store, revocation source, key management",
+      "route_specific_requirement": "Return credential state with source and freshness; unknown is not valid.",
+      "acceptance_gate": "Authentication and action/purpose-scoped authorization, expiry/revocation races, rotation and fail-closed behaviour pass tests.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "createCase": {
+      "path": "/cases",
+      "method": "POST",
+      "owner_team": "Protocol runtime and institutional integration",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Case state store, authority engine, rule version registry, institution adapters",
+      "route_specific_requirement": "Authorise submission and persist a versioned case envelope.",
+      "acceptance_gate": "Institution-owned decision, prerequisite ordering, idempotency, correction history and authority changes are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getCase": {
+      "path": "/cases/{case_id}",
+      "method": "GET",
+      "owner_team": "Protocol runtime and institutional integration",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Case state store, authority engine, rule version registry, institution adapters",
+      "route_specific_requirement": "Enforce case-level access and return state/version plus unresolved status.",
+      "acceptance_gate": "Institution-owned decision, prerequisite ordering, idempotency, correction history and authority changes are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "recordInstitutionDecision": {
+      "path": "/cases/{case_id}/stages/{stage}/decisions",
+      "method": "POST",
+      "owner_team": "Protocol runtime and institutional integration",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Case state store, authority engine, rule version registry, institution adapters",
+      "route_specific_requirement": "Only the owning institution may decide its stage; check expected state/rule version.",
+      "acceptance_gate": "Institution-owned decision, prerequisite ordering, idempotency, correction history and authority changes are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "proposeCorrection": {
+      "path": "/cases/{case_id}/corrections",
+      "method": "POST",
+      "owner_team": "Protocol runtime and institutional integration",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Case state store, authority engine, rule version registry, institution adapters",
+      "route_specific_requirement": "Create linked correction request; never erase prior decision/history.",
+      "acceptance_gate": "Institution-owned decision, prerequisite ordering, idempotency, correction history and authority changes are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "evaluateMinah": {
+      "path": "/minah/dispositions",
+      "method": "POST",
+      "owner_team": "MINAH AI / legal engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Governed model gateway, jurisdiction profile, approved source corpus, evaluation set, human escalation",
+      "route_specific_requirement": "Return disposition only; no automatic approval, authority grant or state commit.",
+      "acceptance_gate": "Traceable source citations and versions, uncertainty/conflict handling, prompt-injection resistance, model outage handling and no direct state commitment are demonstrated.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getMinahDisposition": {
+      "path": "/minah/dispositions/{disposition_id}",
+      "method": "GET",
+      "owner_team": "MINAH AI / legal engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Governed model gateway, jurisdiction profile, approved source corpus, evaluation set, human escalation",
+      "route_specific_requirement": "Return immutable prior disposition with model and source versions.",
+      "acceptance_gate": "Traceable source citations and versions, uncertainty/conflict handling, prompt-injection resistance, model outage handling and no direct state commitment are demonstrated.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "registerEvidence": {
+      "path": "/evidence",
+      "method": "POST",
+      "owner_team": "Evidence platform and legal/rule engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Evidence store, source registry, versioned rule-pack registry and approval workflow",
+      "route_specific_requirement": "Record provenance and metadata; avoid unnecessary raw sensitive data in event envelopes.",
+      "acceptance_gate": "Provenance, freshness, access purpose, effective dates, immutability and authorised activation are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getEvidence": {
+      "path": "/evidence/{evidence_id}",
+      "method": "GET",
+      "owner_team": "Evidence platform and legal/rule engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Evidence store, source registry, versioned rule-pack registry and approval workflow",
+      "route_specific_requirement": "Enforce purpose-bound access and evidence classification.",
+      "acceptance_gate": "Provenance, freshness, access purpose, effective dates, immutability and authorised activation are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "createRulePack": {
+      "path": "/rules/packs",
+      "method": "POST",
+      "owner_team": "Evidence platform and legal/rule engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Evidence store, source registry, versioned rule-pack registry and approval workflow",
+      "route_specific_requirement": "Create draft only; activation is a separate authorised operation.",
+      "acceptance_gate": "Provenance, freshness, access purpose, effective dates, immutability and authorised activation are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getRulePack": {
+      "path": "/rules/packs/{rule_pack_id}/{version}",
+      "method": "GET",
+      "owner_team": "Evidence platform and legal/rule engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Evidence store, source registry, versioned rule-pack registry and approval workflow",
+      "route_specific_requirement": "Return immutable version metadata and source references.",
+      "acceptance_gate": "Provenance, freshness, access purpose, effective dates, immutability and authorised activation are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "activateRulePack": {
+      "path": "/rules/packs/{rule_pack_id}/{version}/activate",
+      "method": "POST",
+      "owner_team": "Evidence platform and legal/rule engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Evidence store, source registry, versioned rule-pack registry and approval workflow",
+      "route_specific_requirement": "Require independent approval, effective-date checks and an explicit activation record.",
+      "acceptance_gate": "Provenance, freshness, access purpose, effective dates, immutability and authorised activation are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "createObligation": {
+      "path": "/finance/obligations",
+      "method": "POST",
+      "owner_team": "Fintech / financial systems",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Approved obligation source, provider sandbox, authenticated callbacks, settlement/reconciliation source",
+      "route_specific_requirement": "Use approved assessment and exact amount/currency; block unapproved or synthetic rules in production.",
+      "acceptance_gate": "Instruction idempotency, provider signature verification, amount/currency binding, late/duplicate callbacks, refunds/reversals and reconciliation pass provider-backed tests.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getObligation": {
+      "path": "/finance/obligations/{obligation_id}",
+      "method": "GET",
+      "owner_team": "Fintech / financial systems",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Approved obligation source, provider sandbox, authenticated callbacks, settlement/reconciliation source",
+      "route_specific_requirement": "Return amount, currency, source assessment and lifecycle status.",
+      "acceptance_gate": "Instruction idempotency, provider signature verification, amount/currency binding, late/duplicate callbacks, refunds/reversals and reconciliation pass provider-backed tests.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "createPaymentInstruction": {
+      "path": "/finance/payments",
+      "method": "POST",
+      "owner_team": "Fintech / financial systems",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Approved obligation source, provider sandbox, authenticated callbacks, settlement/reconciliation source",
+      "route_specific_requirement": "Persist stable idempotency before provider dispatch; instruction is not settlement.",
+      "acceptance_gate": "Instruction idempotency, provider signature verification, amount/currency binding, late/duplicate callbacks, refunds/reversals and reconciliation pass provider-backed tests.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getPayment": {
+      "path": "/finance/payments/{payment_id}",
+      "method": "GET",
+      "owner_team": "Fintech / financial systems",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Approved obligation source, provider sandbox, authenticated callbacks, settlement/reconciliation source",
+      "route_specific_requirement": "Return durable state and distinguish accepted, settled and unknown.",
+      "acceptance_gate": "Instruction idempotency, provider signature verification, amount/currency binding, late/duplicate callbacks, refunds/reversals and reconciliation pass provider-backed tests.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "recordProviderEvent": {
+      "path": "/finance/payments/{payment_id}/provider-events",
+      "method": "POST",
+      "owner_team": "Fintech / financial systems",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Approved obligation source, provider sandbox, authenticated callbacks, settlement/reconciliation source",
+      "route_specific_requirement": "Verify provider authenticity before accepting evidence; bind event to payment, amount and currency.",
+      "acceptance_gate": "Instruction idempotency, provider signature verification, amount/currency binding, late/duplicate callbacks, refunds/reversals and reconciliation pass provider-backed tests.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "reconcilePayment": {
+      "path": "/finance/payments/{payment_id}/reconciliations",
+      "method": "POST",
+      "owner_team": "Fintech / financial systems",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Approved obligation source, provider sandbox, authenticated callbacks, settlement/reconciliation source",
+      "route_specific_requirement": "Require authoritative source sequence and reject stale/repeated conflicting findings.",
+      "acceptance_gate": "Instruction idempotency, provider signature verification, amount/currency binding, late/duplicate callbacks, refunds/reversals and reconciliation pass provider-backed tests.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "enqueueEdgeOperation": {
+      "path": "/edge/nodes/{node_id}/queue",
+      "method": "POST",
+      "owner_team": "Distributed systems / edge runtime / hardware interface",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Durable local queue, node identity, message transport, central synchronization endpoint",
+      "route_specific_requirement": "Apply offline class and expiry; persist operation before acknowledging queue acceptance.",
+      "acceptance_gate": "Offline policy, expiry, stale authority/rule checks, replay prevention, partitions, restart and rejoin are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "synchronizeEdgeNode": {
+      "path": "/edge/nodes/{node_id}/sync",
+      "method": "POST",
+      "owner_team": "Distributed systems / edge runtime / hardware interface",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Durable local queue, node identity, message transport, central synchronization endpoint",
+      "route_specific_requirement": "Revalidate authority, evidence/rule versions and replay state; queue replay is not approval.",
+      "acceptance_gate": "Offline policy, expiry, stale authority/rule checks, replay prevention, partitions, restart and rejoin are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getEdgeNodeHealth": {
+      "path": "/edge/nodes/{node_id}/health",
+      "method": "GET",
+      "owner_team": "Distributed systems / edge runtime / hardware interface",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Durable local queue, node identity, message transport, central synchronization endpoint",
+      "route_specific_requirement": "Report operational state separately from attestation or proof of integrity.",
+      "acceptance_gate": "Offline policy, expiry, stale authority/rule checks, replay prevention, partitions, restart and rejoin are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "listCaseEvents": {
+      "path": "/audit/cases/{case_id}/events",
+      "method": "GET",
+      "owner_team": "Protocol runtime / security / privacy",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Append-only event store, authorization and integrity metadata",
+      "route_specific_requirement": "Paginate and authorize access to case-linked history.",
+      "acceptance_gate": "Case-scoped access, completeness, integrity verification, retention and tamper-evidence tests pass.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "getAuditEvent": {
+      "path": "/audit/events/{event_id}",
+      "method": "GET",
+      "owner_team": "Protocol runtime / security / privacy",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Append-only event store, authorization and integrity metadata",
+      "route_specific_requirement": "Return event/integrity metadata without claiming truth of external assertions.",
+      "acceptance_gate": "Case-scoped access, completeness, integrity verification, retention and tamper-evidence tests pass.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "proposeGovernanceChange": {
+      "path": "/governance/changes",
+      "method": "POST",
+      "owner_team": "Governance, protocol and security engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Versioned change registry, role separation, signing/approval mechanism",
+      "route_specific_requirement": "Record proposed versioned change and proposer identity.",
+      "acceptance_gate": "Separation of proposer/approver, quorum/policy checks, activation timing, rollback and immutable decision history are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    },
+    "approveGovernanceChange": {
+      "path": "/governance/changes/{change_id}/approvals",
+      "method": "POST",
+      "owner_team": "Governance, protocol and security engineering",
+      "implementation_status": "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+      "dependencies": "Versioned change registry, role separation, signing/approval mechanism",
+      "route_specific_requirement": "Require separate authorized approver and preserve immutable approval history.",
+      "acceptance_gate": "Separation of proposer/approver, quorum/policy checks, activation timing, rollback and immutable decision history are tested.",
+      "contract_review_status": "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW"
+    }
+  },
+  "global_gates": [
+    "Every protected request has authenticated service/principal identity and operation-level authorization.",
+    "All mutating routes define idempotency, conflict handling, transaction boundary, durable audit record and retry semantics.",
+    "Every route validates contract version, request size, content type, schema and expected prior/rule version where relevant.",
+    "Unknown, deferred, rejected, simulated and final results remain distinguishable in API responses and logs.",
+    "Production routes have rate limits, timeouts, bounded retries, pagination where collections are returned, and correlation IDs.",
+    "Secrets, full credentials, raw identity documents and unrestricted sensitive payloads are excluded from generic logs and audit envelopes.",
+    "Every route has unit, contract, integration and relevant adversarial/failure-injection tests plus a named owner."
+  ]
+}
