@@ -209,6 +209,25 @@ class PaymentLifecycleTests(unittest.TestCase):
         event_ids = [event["event_id"] for event in self.payments.history("PAY-1")]
         self.assertNotIn("EV-ACK-AFTER-SETTLE", event_ids)
 
+    def test_retrying_original_provider_ack_after_settlement_returns_current_state(self):
+        self.payments.record_provider_ack("PAY-1", "EV-ACK-ORIGINAL", "ACCEPTED", "PROVIDER-REF")
+        self.payments.record_settlement(
+            "PAY-1", "EV-SETTLE-AFTER-ACK", "SET-REF-AFTER-ACK",
+            amount_minor=50000, currency="UGX",
+        )
+
+        result = self.payments.record_provider_ack(
+            "PAY-1", "EV-ACK-ORIGINAL", "ACCEPTED", "PROVIDER-REF"
+        )
+
+        self.assertEqual(result["status"], "SETTLED")
+        self.assertEqual(result["settlement_reference"], "SET-REF-AFTER-ACK")
+        history = self.payments.history("PAY-1")
+        self.assertEqual(
+            len([event for event in history if event["event_id"] == "EV-ACK-ORIGINAL"]),
+            1,
+        )
+
     def test_payment_id_cannot_be_reused_for_different_request(self):
         self.payments.create_obligation("OBL-2", 60000, "UGX", "SYNTHETIC-ASSESSMENT-2")
         with self.assertRaisesRegex(ValueError, "PAYMENT_ID_CONFLICT"):
