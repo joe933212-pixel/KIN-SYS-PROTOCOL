@@ -190,6 +190,70 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], 422)
         self.assertEqual(body["error"]["code"], "INVALID_CONSIGNMENT_ID")
 
+    def test_cee_case_route_runs_institutional_ivm_payment_path_and_inspection(self):
+        payload = {
+            "operation_id": "HTTP-CEE-CASE-1",
+            "case_id": "HTTP-CEE-CONSIGNMENT-1",
+            "jurisdiction": "UG-DEMO",
+            "evidence": {
+                "consignment_id": "HTTP-CEE-CONSIGNMENT-1",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+            "origin_actor": "ORIGIN-A",
+            "destination_actor": "DESTINATION-B",
+            "execution_actor": "AUTHORITY-001",
+            "origin_decision": "APPROVE",
+            "destination_decision": "APPROVE",
+            "declared_value_minor": 1000000,
+            "payment_outcome": "CONFIRMED",
+            "exempt": False,
+            "revoke_origin_before_decision": False,
+        }
+        response, body = self.request("/cee/cases", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "COMPLETED_WITH_SIMULATED_SETTLEMENT")
+        self.assertFalse(body["production_ready"])
+        self.assertFalse(body["result"]["funds_moved"])
+        self.assertEqual(body["protocol_boundary"]["cross_store_atomicity"], False)
+        inspected, operation = self.request("/cee/operations/HTTP-CEE-CASE-1")
+        self.assertEqual(inspected["status"], 200)
+        self.assertEqual(operation["operation"]["phase"], "FINALIZED")
+        components = [event["component"] for event in operation["operation"]["events"]]
+        self.assertIn("MINAH", components)
+        self.assertIn("INSTITUTIONAL", components)
+        self.assertIn("IVM", components)
+        self.assertIn("PAYMENT", components)
+
+    def test_cee_case_route_rejects_destination_before_payment(self):
+        payload = {
+            "operation_id": "HTTP-CEE-REJECT-1",
+            "case_id": "HTTP-CEE-REJECT-CASE",
+            "jurisdiction": "UG-DEMO",
+            "evidence": {
+                "consignment_id": "HTTP-CEE-REJECT-CASE",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+            },
+            "origin_actor": "ORIGIN-A",
+            "destination_actor": "DESTINATION-B",
+            "execution_actor": "AUTHORITY-001",
+            "origin_decision": "APPROVE",
+            "destination_decision": "REJECT",
+            "declared_value_minor": 1000000,
+            "payment_outcome": "CONFIRMED",
+            "exempt": False,
+            "revoke_origin_before_decision": False,
+        }
+        response, body = self.request("/cee/cases", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "REJECTED")
+        self.assertIsNone(body["result"]["obligation"])
+        self.assertIsNone(body["result"]["payment_lifecycle"])
+
     def test_unknown_fields_fail_closed(self):
         response, body = self.request("/demo/instructions", "POST", {"consignment_id": "HTTP-X", "skip_minah": True})
         self.assertEqual(response["status"], 422)
