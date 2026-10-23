@@ -22,6 +22,8 @@ from typing import Any, Callable
 from wsgiref.simple_server import make_server
 
 from integrated_demo import IntegratedDemonstrator
+from protocol_pipeline import ExecutionConflict, KinSysProtocolPipeline
+from transition import EventIdConflict
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -40,6 +42,11 @@ _ALLOWED_FIELDS = {
     "exempt",
 }
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
+_PROTOCOL_FIELDS = {
+    "operation_id", "event_id", "process_id", "actor_id", "event_type",
+    "jurisdiction", "rule_set", "rule_version", "evidence",
+    "authority_active", "eligible",
+}
 
 
 class HttpServiceError(Exception):
@@ -72,11 +79,14 @@ def _response(start_response: Callable, status: int, body: dict[str, Any], reque
 class KinSysPrototypeApplication:
     """Small WSGI application exposing only the local synthetic vertical slice."""
 
-    def __init__(self, demonstrator: IntegratedDemonstrator | None = None):
+    def __init__(self, demonstrator: IntegratedDemonstrator | None = None,
+                 pipeline: KinSysProtocolPipeline | None = None):
         self.demonstrator = demonstrator or IntegratedDemonstrator()
+        self.pipeline = pipeline or KinSysProtocolPipeline()
 
     def close(self) -> None:
         self.demonstrator.close()
+        self.pipeline.close()
 
     def __call__(self, environ: dict[str, Any], start_response: Callable):
         request_id = environ.get("HTTP_X_REQUEST_ID", "")
@@ -108,17 +118,21 @@ class KinSysPrototypeApplication:
                         "GET /system/readiness",
                         "GET /system/capabilities",
                         "POST /demo/instructions",
+                        "POST /protocol/instructions",
                     ],
                     "instruction_flow": [
-                        "synthetic identity gate",
-                        "MINAH deterministic advisory review",
-                        "institutional workflow authority/rule checks",
-                        "synthetic statutory calculation",
-                        "simulated payment lifecycle when eligible",
+                        "POST /demo/instructions: legacy integrated synthetic demonstration",
+                        "POST /protocol/instructions: MINAH disposition -> IVM transition checks -> CEE lifecycle journal",
                     ],
-                    "not_yet_wired_as_separate_runtime_components": [
-                        "IVM runtime",
-                        "CEE lifecycle engine",
+                    "protocol_pipeline": {
+                        "status": "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED",
+                        "ivm": "LOCAL_SQLITE_REFERENCE_TRANSITION_RUNTIME",
+                        "cee": "LOCAL_SQLITE_DURABLE_LIFECYCLE_JOURNAL",
+                        "cross_store_atomicity": False,
+                        "distributed_finality": False,
+                        "funds_moved": False,
+                    },
+                    "not_yet_wired_as_production_components": [
                         "production identity and cryptographic authentication",
                         "authoritative legal sources and live MINAH model service",
                         "live payment providers, distributed consensus, and Nexus Pod hardware",
@@ -127,6 +141,57 @@ class KinSysPrototypeApplication:
                 },
                 request_id,
             )
+        if path == "/protocol/instructions":
+            if method != "POST":
+                return _response(
+                    start_response, 405,
+                    {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST for this protocol route."}},
+                    request_id,
+                )
+            try:
+                payload = self._read_json(environ, allowed_fields=_PROTOCOL_FIELDS)
+                result = self.pipeline.execute(payload)
+                return _response(
+                    start_response, 200,
+                    {
+                        "status": result["status"],
+                        "production_ready": False,
+                        "result": result,
+                        "protocol_boundary": {
+                            "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
+                            "ivm": "LOCAL_SQLITE_REFERENCE_RUNTIME",
+                            "cee": "LOCAL_SQLITE_LIFECYCLE_JOURNAL",
+                            "cross_store_atomicity": False,
+                            "distributed_finality": False,
+                            "funds_moved": False,
+                        },
+                    },
+                    request_id,
+                )
+            except HttpServiceError as exc:
+                return _response(
+                    start_response, exc.status,
+                    {"error": {"code": exc.code, "message": exc.message}},
+                    request_id,
+                )
+            except (ExecutionConflict, EventIdConflict) as exc:
+                return _response(
+                    start_response, 409,
+                    {"error": {"code": "IDEMPOTENCY_OR_STATE_CONFLICT", "message": str(exc)[:240]}},
+                    request_id,
+                )
+            except (ValueError, TypeError) as exc:
+                return _response(
+                    start_response, 422,
+                    {"error": {"code": "INVALID_PROTOCOL_INSTRUCTION", "message": str(exc)[:240]}},
+                    request_id,
+                )
+            except Exception:
+                return _response(
+                    start_response, 500,
+                    {"error": {"code": "INTERNAL_ERROR", "message": "The protocol instruction could not be completed."}},
+                    request_id,
+                )
         if path == "/demo/instructions":
             if method != "POST":
                 return _response(
@@ -178,7 +243,7 @@ class KinSysPrototypeApplication:
                     {"error": {"code": "INTERNAL_ERROR", "message": "The demo instruction could not be completed."}},
                     request_id,
                 )
-        if path.startswith("/system/") or path.startswith("/demo/"):
+        if path.startswith("/system/") or path.startswith("/demo/") or path.startswith("/protocol/"):
             return _response(
                 start_response, 404,
                 {"error": {"code": "ROUTE_NOT_FOUND", "message": "No implemented prototype route matches this path."}},
@@ -191,7 +256,7 @@ class KinSysPrototypeApplication:
         )
 
     @staticmethod
-    def _read_json(environ: dict[str, Any]) -> dict[str, Any]:
+    def _read_json(environ: dict[str, Any], allowed_fields: set[str] | None = None) -> dict[str, Any]:
         content_type = environ.get("CONTENT_TYPE", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
             raise HttpServiceError(415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json.")
@@ -214,7 +279,7 @@ class KinSysPrototypeApplication:
             raise HttpServiceError(400, "INVALID_JSON", "Request body must be valid UTF-8 JSON.")
         if not isinstance(payload, dict):
             raise HttpServiceError(422, "JSON_OBJECT_REQUIRED", "Request body must be a JSON object.")
-        unknown = sorted(set(payload) - _ALLOWED_FIELDS)
+        unknown = sorted(set(payload) - (allowed_fields if allowed_fields is not None else _ALLOWED_FIELDS))
         if unknown:
             raise HttpServiceError(422, "UNKNOWN_FIELDS", "Unsupported fields: " + ", ".join(unknown))
         return payload
