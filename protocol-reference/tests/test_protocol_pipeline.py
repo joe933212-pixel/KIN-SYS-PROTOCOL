@@ -102,30 +102,42 @@ class ProtocolPipelineTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.pipeline.ivm.process("PROC-001")
 
-    def test_wrong_actor_is_rejected_by_ivm_and_not_committed(self):
+    def test_wrong_actor_is_rejected_before_cee_admission(self):
         result = self.pipeline.execute(request(actor_id="UNAUTHORISED-ACTOR"))
         self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["final_decision"], "REJECTED")
         self.assertEqual(result["reason"], "AUTHORITY_MISMATCH")
-        self.assertIsNone(result["execution_result"]["to_state"])
-        self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
+        self.assertIsNone(result["execution_result"])
+        phases = [event["phase"] for event in result["cee_events"]]
+        self.assertNotIn("ADMITTED", phases)
+        with self.assertRaises(Exception):
+            self.pipeline.ivm.process("PROC-001")
 
-    def test_revoked_authority_is_rejected(self):
+    def test_revoked_authority_is_rejected_before_cee_admission(self):
         revoked = KinSysProtocolPipeline(authority_active=False)
         try:
             result = revoked.execute(request())
             self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["final_decision"], "REJECTED")
             self.assertEqual(result["reason"], "AUTHORITY_REVOKED")
-            self.assertEqual(revoked.ivm.process("PROC-001")["state"], "PENDING")
+            self.assertIsNone(result["execution_result"])
+            self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+            with self.assertRaises(Exception):
+                revoked.ivm.process("PROC-001")
         finally:
             revoked.close()
 
-    def test_rule_ineligibility_is_rejected(self):
+    def test_rule_ineligibility_is_rejected_before_cee_admission(self):
         evidence = request()["evidence"]
         evidence["commodity"] = "SYNTHETIC_PROHIBITED_COMMODITY"
         result = self.pipeline.execute(request(evidence=evidence))
         self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["final_decision"], "REJECTED")
         self.assertEqual(result["reason"], "RULE_REJECTED")
-        self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
+        self.assertIsNone(result["execution_result"])
+        self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+        with self.assertRaises(Exception):
+            self.pipeline.ivm.process("PROC-001")
 
     def test_operation_id_cannot_be_reused_for_different_payload(self):
         self.pipeline.execute(request())
