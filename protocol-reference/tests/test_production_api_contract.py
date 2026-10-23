@@ -76,6 +76,34 @@ class ProductionApiContractTests(unittest.TestCase):
                     )
         self.assertIn("bearerAuth", self.api["components"]["securitySchemes"])
 
+    def test_every_api_route_has_an_owner_and_acceptance_gate(self):
+        matrix_path = ROOT / "api" / "implementation-matrix.json"
+        matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+        operations = {}
+        for path, path_item in self.api["paths"].items():
+            for method, operation in path_item.items():
+                if method.lower() in {"get", "post", "put", "patch", "delete"}:
+                    operations[operation["operationId"]] = (path, method.upper())
+
+        self.assertEqual(matrix["route_count"], len(operations))
+        self.assertEqual(set(matrix["routes"]), set(operations))
+        for operation_id, route in matrix["routes"].items():
+            self.assertEqual(
+                (route["path"], route["method"]), operations[operation_id]
+            )
+            self.assertTrue(route["owner_team"].strip())
+            self.assertTrue(route["dependencies"].strip())
+            self.assertTrue(route["route_specific_requirement"].strip())
+            self.assertTrue(route["acceptance_gate"].strip())
+            self.assertEqual(
+                route["implementation_status"],
+                "NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE",
+            )
+            self.assertEqual(
+                route["contract_review_status"],
+                "DRAFT_REQUIRES_DOMAIN_AND_SECURITY_REVIEW",
+            )
+
     def test_production_gates_are_recorded(self):
         gates = self.api["x-critical-production-gates"]
         self.assertGreaterEqual(len(gates), 8)
