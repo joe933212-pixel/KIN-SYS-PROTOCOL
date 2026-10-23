@@ -68,6 +68,75 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["protocol_boundary"]["ivm"], "NOT_WIRED_AS_SEPARATE_RUNTIME")
         self.assertEqual(body["protocol_boundary"]["cee"], "NOT_WIRED_AS_SEPARATE_LIFECYCLE_ENGINE")
 
+    def test_protocol_route_returns_full_minah_ivm_cee_trace(self):
+        payload = {
+            "operation_id": "HTTP-PIPE-1",
+            "event_id": "HTTP-EVENT-1",
+            "process_id": "HTTP-PROCESS-1",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "HTTP-PROCESS-1",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        response, body = self.request("/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "COMMITTED")
+        self.assertFalse(body["production_ready"])
+        self.assertEqual(body["result"]["minah_disposition"]["status"], "ADVISORY_ONLY")
+        self.assertFalse(body["result"]["minah_disposition"]["may_authorise"])
+        self.assertEqual(body["result"]["ivm_decision"]["to_state"], "ACTIVE")
+        self.assertEqual(
+            [event["phase"] for event in body["result"]["cee_events"]],
+            ["REQUESTED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+             "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED", "FINALIZED"],
+        )
+        self.assertFalse(body["result"]["funds_moved"])
+        self.assertFalse(body["protocol_boundary"]["distributed_finality"])
+
+    def test_protocol_route_defers_missing_evidence_before_ivm(self):
+        payload = {
+            "operation_id": "HTTP-PIPE-DEFER",
+            "event_id": "HTTP-EVENT-DEFER",
+            "process_id": "HTTP-PROCESS-DEFER",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {"commodity": "SYNTHETIC_MAIZE"},
+        }
+        response, body = self.request("/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "DEFERRED")
+        self.assertIsNone(body["result"]["ivm_decision"])
+
+    def test_protocol_route_rejects_unrecognised_rule_version(self):
+        payload = {
+            "operation_id": "HTTP-PIPE-RULE",
+            "event_id": "HTTP-EVENT-RULE",
+            "process_id": "HTTP-PROCESS-RULE",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "2.0",
+            "evidence": {
+                "consignment_id": "HTTP-PROCESS-RULE", "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO", "destination": "BORDER-DEMO",
+            },
+        }
+        response, body = self.request("/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 422)
+        self.assertEqual(body["error"]["code"], "INVALID_PROTOCOL_INSTRUCTION")
+
     def test_rejected_origin_stops_downstream_payment(self):
         response, body = self.request(
             "/demo/instructions", "POST",
