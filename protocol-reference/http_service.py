@@ -8,17 +8,6 @@ This is an engineering prototype, not a production API:
   provider, distributed commit, or hardware integration is configured.
 Run from the repository root:
     PYTHONPATH=protocol-reference python -m http_service
-"""Local HTTP adapter for the synthetic KIN-SYS integrated reference slice.
-
-This is a development/engineering-handoff service, not a production API:
-- it uses synthetic identity, MINAH, rule and payment adapters;
-- it never moves funds;
-- it does not expose the draft production API's protected routes;
-- IVM and CEE are explicitly reported as not yet wired as separate runtime
-  components. The current integrated workflow is not evidence of IVM/CEE
-  conformance.
-Run from the repository root:
-    PYTHONPATH=protocol-reference python -m http_service
 """
 from __future__ import annotations
 
