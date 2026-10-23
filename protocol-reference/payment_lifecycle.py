@@ -152,6 +152,18 @@ class PaymentLifecycle:
                 # acknowledgement over a later reconciliation outcome.
                 self.db.commit()
                 return self.get_payment(payment_id)
+            if payment["last_reconciliation"] is not None:
+                # A new provider message arriving after reconciliation has no
+                # trustworthy ordering metadata here. Record it as evidence,
+                # but require a fresh reconciliation instead of letting arrival
+                # order overwrite the previously reconciled state.
+                self.db.execute(
+                    "UPDATE payments SET status='UNKNOWN_PENDING_RECONCILIATION', "
+                    "provider_reference=? WHERE payment_id=?",
+                    (provider_reference, payment_id),
+                )
+                self.db.commit()
+                return self.get_payment(payment_id)
             if acknowledgement == "ACCEPTED":
                 status = "PROVIDER_ACCEPTED_SETTLEMENT_UNCONFIRMED"
             elif acknowledgement == "DECLINED":
