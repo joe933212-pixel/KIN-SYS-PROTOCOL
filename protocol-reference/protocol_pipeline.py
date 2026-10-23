@@ -221,8 +221,8 @@ class KinSysProtocolPipeline:
         self.authority_active = authority_active
 
     def close(self) -> None:
-        self.cee.close()
         self.ivm.close()
+        self.cee.close()
 
     def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
         self._validate(request)
