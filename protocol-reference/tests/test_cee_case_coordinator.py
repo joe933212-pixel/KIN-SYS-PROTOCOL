@@ -118,6 +118,26 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.assertEqual(resumed["payment_lifecycle"]["recorded_status"], "UNKNOWN_PENDING_RECONCILIATION")
         self.assertFalse(resumed["funds_moved"])
 
+    def test_source_sequenced_reconciliation_resolves_unknown_without_resubmission(self):
+        payload = request("CASE-RECONCILE", payment_outcome="TIMEOUT_UNKNOWN")
+        first = self.coordinator.execute(payload)
+        self.assertEqual(first["status"], "PENDING_PAYMENT_RECONCILIATION")
+        reconciled = self.coordinator.reconcile(
+            "CASE-RECONCILE", "CASE-RECONCILE:RECON:2", "NOT_SETTLED",
+            source_sequence=2, provider_reference="SYNTHETIC-RECON-REF",
+        )
+        self.assertEqual(reconciled["status"], "PENDING_PAYMENT_RESOLUTION")
+        self.assertEqual(reconciled["payment_lifecycle"]["recorded_status"], "RECONCILED_NOT_SETTLED")
+        replay = self.coordinator.reconcile(
+            "CASE-RECONCILE", "CASE-RECONCILE:RECON:2", "NOT_SETTLED",
+            source_sequence=2, provider_reference="SYNTHETIC-RECON-REF",
+        )
+        self.assertTrue(replay["duplicate"])
+        with self.assertRaises(ValueError):
+            self.coordinator.reconcile(
+                "CASE-RECONCILE", "CASE-RECONCILE:STALE", "UNKNOWN", source_sequence=1,
+            )
+
     def test_revoked_origin_authority_blocks_all_downstream_work(self):
         result = self.coordinator.execute(request("CASE-REVOKED", revoke_origin_before_decision=True))
         self.assertEqual(result["status"], "REJECTED")
