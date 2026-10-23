@@ -48,8 +48,14 @@ def _request_digest(event: dict[str, Any]) -> str:
 class ProtocolStore:
     """Single-process SQLite implementation of the minimal transition contract."""
 
-    def __init__(self, database: str = ":memory:"):
-        self.db = sqlite3.connect(database)
+    def __init__(
+        self,
+        database: str = ":memory:",
+        *,
+        connection: sqlite3.Connection | None = None,
+    ):
+        self._owns_connection = connection is None
+        self.db = connection if connection is not None else sqlite3.connect(database)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(
@@ -91,7 +97,8 @@ class ProtocolStore:
         self.db.commit()
 
     def close(self) -> None:
-        self.db.close()
+        if self._owns_connection:
+            self.db.close()
 
     def create_process(
         self,
