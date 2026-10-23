@@ -436,7 +436,7 @@ class KinSysProtocolPipeline:
         assert operation is not None
         if operation["phase"] == "FINALIZED":
             result = operation["result_json"]
-            return {**result, "duplicate": True, "cee_events": self.cee.events(operation_id)}
+            return self._response_result(operation_id, result, duplicate=True)
         raise LifecycleViolation(f"UNHANDLED_RESUMABLE_PHASE:{operation['phase']}")
 
     def _response_result(
