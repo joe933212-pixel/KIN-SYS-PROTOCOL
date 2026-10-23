@@ -48,6 +48,10 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertFalse(result["minah_disposition"]["may_authorise"])
         self.assertEqual(result["ivm_decision"]["to_state"], "ACTIVE")
         self.assertEqual([event["phase"] for event in result["cee_events"]], list(LIFECYCLE))
+        components = [event["component"] for event in result["component_trace"]]
+        self.assertLess(components.index("MINAH"), components.index("IVM"))
+        self.assertEqual(components[-1], "CEE")
+        self.assertEqual(result["component_trace"][-1]["detail"]["phase"], "FINALIZED")
         self.assertEqual(result["commit_scope"], "LOCAL_IVM_SQLITE_ONLY_NOT_DISTRIBUTED_FINALITY")
 
     def test_minah_cannot_self_authorise_or_bypass_ivm_boundary(self):
@@ -78,6 +82,8 @@ class ProtocolPipelineTests(unittest.TestCase):
         result = self.pipeline.execute(request(evidence={"commodity": "SYNTHETIC_MAIZE"}))
         self.assertEqual(result["status"], "DEFERRED")
         self.assertIsNone(result["ivm_decision"])
+        self.assertIn("MINAH", [event["component"] for event in result["component_trace"]])
+        self.assertNotIn("IVM", [event["component"] for event in result["component_trace"]])
         self.assertEqual(self.pipeline.cee.get("OP-001")["phase"], "FINALIZED")
         self.assertEqual(self.pipeline.cee.events("OP-001")[-1]["status"], "DEFERRED")
         with self.assertRaises(Exception):
