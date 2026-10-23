@@ -2,7 +2,7 @@
 
 # Implementation Status
 
-**Last updated:** 2026-10-22  
+**Last updated:** 2026-10-23  
 **Baseline:** Protocol foundation 0.1-draft  
 **Overall status:** Specification foundation in progress; not production-ready.
 
@@ -19,7 +19,7 @@
 
 ## Production engineering handoff baseline
 
-A draft OpenAPI 3.1 contract is now stored at [`api/openapi.json`](api/openapi.json), with a workstream ownership and acceptance plan in [`docs/PRODUCTION_ENGINEERING_HANDOFF.md`](docs/PRODUCTION_ENGINEERING_HANDOFF.md). The contract defines proposed routes for identity/authority, institutional cases and decisions, MINAH dispositions, evidence and rule packs, financial obligations/payments/reconciliation, edge nodes/queues, audit, governance and system health. Every operation is explicitly labelled `CONTRACT_DRAFT_NOT_ROUTED`: no production HTTP server is implied. Structural tests validate the document, unique operation IDs, local schema references, declared security and critical implementation gates. This is the first engineering handoff map; routes still require API/domain/security review before being treated as frozen contracts.
+A draft OpenAPI 3.1 contract is stored at [`api/openapi.json`](api/openapi.json), with workstream ownership and acceptance gates in [`docs/PRODUCTION_ENGINEERING_HANDOFF.md`](docs/PRODUCTION_ENGINEERING_HANDOFF.md). The contract defines proposed routes for identity/authority, institutional cases and decisions, MINAH dispositions, evidence and rule packs, financial obligations/payments/reconciliation, edge nodes/queues, audit, governance and system health. Every operation is explicitly labelled `CONTRACT_DRAFT_NOT_ROUTED`: no production HTTP server is implied. Structural checks cover unique operation IDs, local schema/parameter references, declared security and critical implementation gates. The suite passed in [CI run #196](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39915531943): 145 tests passed on the clean runner. This is the first engineering handoff map; routes still require API/domain/security review before being treated as frozen contracts.
 
 | Area | Status | Next evidence required |
 |---|---|---|
