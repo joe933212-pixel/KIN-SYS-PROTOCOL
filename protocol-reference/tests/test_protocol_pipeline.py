@@ -8,6 +8,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from authority_adapter import AuthorityGateDecision, UnavailableAuthorityAdapter
 from protocol_pipeline import (
     ExecutionConflict, KinSysProtocolPipeline, LIFECYCLE, LifecycleViolation,
 )
@@ -119,6 +120,33 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertEqual(self.pipeline.cee.events("OP-001")[-1]["status"], "DEFERRED")
         with self.assertRaises(Exception):
             self.pipeline.ivm.process("PROC-001")
+
+    def test_unavailable_authority_adapter_defers_before_cee_admission(self):
+        pipeline = KinSysProtocolPipeline(authority_adapter=UnavailableAuthorityAdapter())
+        try:
+            result = pipeline.execute(request())
+            self.assertEqual(result["final_decision"], "DEFERRED")
+            self.assertEqual(result["reason"], "AUTHORITY_VERIFICATION_UNAVAILABLE")
+            self.assertEqual(result["authority_gate"]["outcome"], "DEFER")
+            self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+            with self.assertRaises(Exception):
+                pipeline.ivm.process("PROC-001")
+        finally:
+            pipeline.close()
+
+    def test_invalid_authority_adapter_output_defers_closed(self):
+        class InvalidAdapter:
+            def evaluate(self, request):
+                return {"outcome": "ALLOW"}
+
+        pipeline = KinSysProtocolPipeline(authority_adapter=InvalidAdapter())
+        try:
+            result = pipeline.execute(request())
+            self.assertEqual(result["final_decision"], "DEFERRED")
+            self.assertEqual(result["reason"], "INVALID_AUTHORITY_GATE_RESPONSE")
+            self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+        finally:
+            pipeline.close()
 
     def test_wrong_actor_is_rejected_before_cee_admission(self):
         result = self.pipeline.execute(request(actor_id="UNAUTHORISED-ACTOR"))
