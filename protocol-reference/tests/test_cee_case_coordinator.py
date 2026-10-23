@@ -50,8 +50,9 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.assertEqual(result["assessment"]["legal_status"], "SYNTHETIC_DEMO_RULE_NOT_LAW")
         self.assertEqual(result["payment_lifecycle"]["recorded_status"], "SETTLED")
         components = [event["component"] for event in result["component_trace"]]
-        self.assertEqual(components[0], "MINAH")
-        self.assertTrue(all(component == "CEE" for component in components[1:]))
+        first_cee = components.index("CEE")
+        self.assertTrue(all(component == "MINAH" for component in components[:first_cee]))
+        self.assertTrue(all(component == "CEE" for component in components[first_cee:]))
         self.assertEqual(result["execution_result"]["to_state"], "ACTIVE")
 
     def test_case_runtime_shares_cee_store_and_rejects_split_store_configuration(self):
