@@ -167,13 +167,6 @@ class CEECaseCoordinator:
                 }
             else:
                 minah = raw
-            self._event(operation_id, "MINAH", "DISPOSITION_RECORDED", minah["status"], {
-                "advisory_only": True, "may_authorise": False,
-                "model_version": minah.get("model_version"),
-                "source_refs": minah.get("source_refs", []),
-                "uncertainty": minah.get("uncertainty"),
-                "contract_error": minah.get("contract_error"),
-            })
             self._save_component(operation_id, "minah", minah)
 
         if minah.get("status") == "INVALID_DISPOSITION":
@@ -602,15 +595,35 @@ class CEECaseCoordinator:
         return result
 
     def _save_component(self, operation_id: str, name: str, value: dict[str, Any]) -> None:
-        # Pin MINAH output in the operation row so retries never silently rerun it.
+        # Pin MINAH output and its audit events in one transaction so a crash
+        # cannot leave a disposition event without a durable pinned disposition.
         if name != "minah":
             raise ValueError("UNSUPPORTED_PINNED_COMPONENT")
-        self.cee_db.execute(
-            "UPDATE cee_cases SET minah_json=? WHERE operation_id=?",
-            (_canonical(value), operation_id),
-        )
-        self.cee_db.commit()
-        self._event(operation_id, "CEE_STATE", "PINNED_" + name.upper(), "RECORDED", value)
+        detail = {
+            "advisory_only": True, "may_authorise": False,
+            "model_version": value.get("model_version"),
+            "source_refs": value.get("source_refs", []),
+            "uncertainty": value.get("uncertainty"),
+            "contract_error": value.get("contract_error"),
+        }
+        self.cee_db.execute("BEGIN IMMEDIATE")
+        try:
+            self.cee_db.execute(
+                "UPDATE cee_cases SET minah_json=? WHERE operation_id=?",
+                (_canonical(value), operation_id),
+            )
+            self.cee_db.execute(
+                "INSERT INTO cee_case_events(operation_id,component,phase,status,detail_json) VALUES(?,?,?,?,?)",
+                (operation_id, "MINAH", "DISPOSITION_RECORDED", value["status"], _canonical(detail)),
+            )
+            self.cee_db.execute(
+                "INSERT INTO cee_case_events(operation_id,component,phase,status,detail_json) VALUES(?,?,?,?,?)",
+                (operation_id, "CEE_STATE", "PINNED_MINAH", "RECORDED", _canonical(value)),
+            )
+            self.cee_db.commit()
+        except Exception:
+            self.cee_db.rollback()
+            raise
 
     def _event(self, operation_id: str, component: str, phase: str, status: str, detail: dict[str, Any]) -> None:
         self.cee_db.execute(
@@ -625,17 +638,27 @@ class CEECaseCoordinator:
             "FINALIZED": 4, "DEFERRED": 4, "REJECTED": 4,
             "PENDING_RECONCILIATION": 4, "PENDING_PAYMENT_RESOLUTION": 4,
         }
-        row = self.cee_db.execute(
-            "SELECT phase FROM cee_cases WHERE operation_id=?", (operation_id,)
-        ).fetchone()
-        if row is None:
-            raise KeyError("CEE_CASE_NOT_FOUND")
-        current = row["phase"]
-        if order.get(phase, -1) <= order.get(current, -1):
-            return
-        self.cee_db.execute("UPDATE cee_cases SET phase=? WHERE operation_id=?", (phase, operation_id))
-        self.cee_db.commit()
-        self._event(operation_id, "CEE", phase, status, detail)
+        self.cee_db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.cee_db.execute(
+                "SELECT phase FROM cee_cases WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("CEE_CASE_NOT_FOUND")
+            current = row["phase"]
+            if order.get(phase, -1) <= order.get(current, -1):
+                self.cee_db.commit()
+                return
+            self.cee_db.execute("UPDATE cee_cases SET phase=? WHERE operation_id=?", (phase, operation_id))
+            self.cee_db.execute(
+                "INSERT INTO cee_case_events(operation_id,component,phase,status,detail_json) VALUES(?,?,?,?,?)",
+                (operation_id, "CEE", phase, status, _canonical(detail)),
+            )
+            self.cee_db.commit()
+        except Exception:
+            if self.cee_db.in_transaction:
+                self.cee_db.rollback()
+            raise
 
     def _finish(self, operation_id: str, phase: str, status: str, result: dict[str, Any]) -> dict[str, Any]:
         if phase == "REJECTED" or status == "REJECTED":
