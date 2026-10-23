@@ -21,7 +21,7 @@ Production readiness is a deployment-specific acceptance decision. Passing unit 
 
 ## 2. API contract and integration rule
 
-The proposed route inventory is in [`api/openapi.json`](../api/openapi.json). It covers system health/capabilities, identity and authority, cases and institution-owned decisions, MINAH dispositions, evidence and rule packs, obligations and payments, reconciliation, edge queues, audit history and governance changes.
+The proposed route inventory is in [`api/openapi.json`](../api/openapi.json). The route-by-route [implementation matrix](../api/implementation-matrix.json) names the owning team, dependencies, route-specific requirement and acceptance gate for each operation. It covers system health/capabilities, identity and authority, cases and institution-owned decisions, MINAH dispositions, evidence and rule packs, obligations and payments, reconciliation, edge queues, audit history and governance changes.
 
 The OpenAPI contract is deliberately marked `CONTRACT_DRAFT_NOT_ROUTED`. Before implementation, the API team must review resource names, schemas, authentication, status codes, pagination, rate limits, idempotency retention, webhook authentication, data minimisation, compatibility and error conventions. No external system should be called directly from arbitrary application code: each integration must sit behind a named adapter and emit the shared trace/correlation metadata.
 
