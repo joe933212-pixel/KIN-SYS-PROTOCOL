@@ -274,8 +274,10 @@ class HttpServiceTests(unittest.TestCase):
         components = [event["component"] for event in operation["operation"]["events"]]
         self.assertIn("MINAH", components)
         self.assertIn("INSTITUTIONAL", components)
-        self.assertIn("IVM", components)
+        self.assertIn("CEE", components)
+        self.assertNotIn("IVM", components)
         self.assertIn("PAYMENT", components)
+        self.assertEqual(body["result"]["final_decision"], "PASSED")
 
     def test_cee_case_route_rejects_destination_before_payment(self):
         payload = {
