@@ -2,8 +2,8 @@
 
 This is an engineering prototype, not a production API:
 - /demo/instructions calls the legacy integrated demonstrator with synthetic adapters;
-- /protocol/instructions exercises a separate MINAH -> IVM -> CEE vertical slice;
-- the new slice uses a local IVM SQLite transition store and a separate CEE journal;
+- /protocol/instructions exercises the canonical MINAH -> CEE -> final-decision boundary;
+- the prototype still uses separate local SQLite persistence internally and does not claim cross-store atomicity;
 - no production authentication, authoritative legal sources, live model, payment
   provider, distributed commit, or hardware integration is configured.
 Run from the repository root:
@@ -136,12 +136,14 @@ class KinSysPrototypeApplication:
                     ],
                     "instruction_flow": [
                         "POST /demo/instructions: legacy integrated synthetic demonstration",
-                        "POST /protocol/instructions: MINAH disposition -> IVM transition checks -> CEE lifecycle journal",
+                        "POST /protocol/instructions: MINAH review -> CEE execution boundary -> final decision (PASSED/REJECTED/DEFERRED)",
                         "POST /cee/cases: CEE orchestration of MINAH, origin/destination decisions, IVM economic gate and simulated payment lifecycle",
                     ],
                     "protocol_pipeline": {
-                        "status": "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED",
-                        "ivm": "LOCAL_SQLITE_REFERENCE_TRANSITION_RUNTIME",
+                        "status": "SYNTHETIC_MINAH_CEE_BOUNDARY_IMPLEMENTED",
+                        "canonical_flow": ["MINAH", "CEE", "FINAL_DECISION"],
+                        "final_decisions": ["PASSED", "REJECTED", "DEFERRED"],
+                        "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
                         "cee": "LOCAL_SQLITE_DURABLE_LIFECYCLE_JOURNAL",
                         "cross_store_atomicity": False,
                         "distributed_finality": False,
