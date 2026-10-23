@@ -44,7 +44,7 @@ class PaymentLifecycleTests(unittest.TestCase):
 
     def test_retrying_old_provider_ack_does_not_overwrite_reconciliation(self):
         self.payments.record_provider_ack("PAY-1", "EV-ACK-STALE", "UNKNOWN")
-        self.payments.record_reconciliation("PAY-1", "EV-REC-LATEST", "NOT_SETTLED")
+        self.payments.record_reconciliation("PAY-1", "EV-REC-LATEST", "NOT_SETTLED", source_sequence=1)
 
         result = self.payments.record_provider_ack("PAY-1", "EV-ACK-STALE", "UNKNOWN")
 
@@ -56,8 +56,8 @@ class PaymentLifecycleTests(unittest.TestCase):
         ]), 1)
 
     def test_retrying_old_reconciliation_does_not_overwrite_newer_finding(self):
-        self.payments.record_reconciliation("PAY-1", "EV-REC-OLD", "UNKNOWN")
-        self.payments.record_reconciliation("PAY-1", "EV-REC-NEW", "NOT_SETTLED")
+        self.payments.record_reconciliation("PAY-1", "EV-REC-OLD", "UNKNOWN", source_sequence=1)
+        self.payments.record_reconciliation("PAY-1", "EV-REC-NEW", "NOT_SETTLED", source_sequence=2)
 
         result = self.payments.record_reconciliation("PAY-1", "EV-REC-OLD", "UNKNOWN")
 
@@ -68,9 +68,27 @@ class PaymentLifecycleTests(unittest.TestCase):
             if event["event_id"] == "EV-REC-OLD"
         ]), 1)
 
+    def test_reconciliation_rejects_out_of_order_source_sequence(self):
+        self.payments.record_reconciliation(
+            "PAY-1", "EV-REC-SEQ-2", "NOT_SETTLED", source_sequence=2
+        )
+
+        with self.assertRaisesRegex(ValueError, "STALE_RECONCILIATION_SEQUENCE"):
+            self.payments.record_reconciliation(
+                "PAY-1", "EV-REC-SEQ-1-LATE", "UNKNOWN", source_sequence=1
+            )
+
+        payment = self.payments.get_payment("PAY-1")
+        self.assertEqual(payment["status"], "RECONCILED_NOT_SETTLED")
+        self.assertEqual(payment["last_reconciliation_sequence"], 2)
+        self.assertNotIn(
+            "EV-REC-SEQ-1-LATE",
+            [event["event_id"] for event in self.payments.history("PAY-1")],
+        )
+
     def test_new_provider_ack_after_reconciliation_requires_fresh_reconciliation(self):
         self.payments.record_provider_ack("PAY-1", "EV-ACK-INITIAL", "UNKNOWN")
-        self.payments.record_reconciliation("PAY-1", "EV-REC-NOT-SETTLED", "NOT_SETTLED")
+        self.payments.record_reconciliation("PAY-1", "EV-REC-NOT-SETTLED", "NOT_SETTLED", source_sequence=1)
 
         result = self.payments.record_provider_ack(
             "PAY-1", "EV-ACK-LATE-NEW", "ACCEPTED", "PROVIDER-REF-LATE"
@@ -87,14 +105,14 @@ class PaymentLifecycleTests(unittest.TestCase):
         )
 
         resolved = self.payments.record_reconciliation(
-            "PAY-1", "EV-REC-REFRESHED", "NOT_SETTLED"
+            "PAY-1", "EV-REC-REFRESHED", "NOT_SETTLED", source_sequence=2
         )
         self.assertEqual(resolved["status"], "RECONCILED_NOT_SETTLED")
         self.assertEqual(resolved["last_reconciliation"], "NOT_SETTLED")
 
     def test_timeout_unknown_stays_unknown_and_reconciliation_does_not_resubmit(self):
         self.payments.record_provider_ack("PAY-1", "EV-ACK-1", "UNKNOWN")
-        result = self.payments.record_reconciliation("PAY-1", "EV-REC-1", "UNKNOWN")
+        result = self.payments.record_reconciliation("PAY-1", "EV-REC-1", "UNKNOWN", source_sequence=1)
         self.assertEqual(result["status"], "UNKNOWN_PENDING_RECONCILIATION")
         self.assertEqual(len(self.payments.history("PAY-1")), 3)
 
@@ -235,7 +253,7 @@ class PaymentLifecycleTests(unittest.TestCase):
 
     def test_reconciliation_cannot_claim_settlement_without_settlement_evidence(self):
         with self.assertRaisesRegex(ValueError, "SETTLEMENT_EVIDENCE_REQUIRED"):
-            self.payments.record_reconciliation("PAY-1", "EV-REC-1", "SETTLED")
+            self.payments.record_reconciliation("PAY-1", "EV-REC-1", "SETTLED", source_sequence=1)
         self.assertNotEqual(self.payments.get_payment("PAY-1")["status"], "SETTLED")
 
     def test_event_id_reuse_with_different_evidence_is_rejected(self):
@@ -411,7 +429,7 @@ store.create_instruction("PAY-CRASH", "OBL-CRASH")
         self.payments._event = write_then_fail
         try:
             with self.assertRaisesRegex(RuntimeError, "INJECTED_RECONCILIATION_COMMIT_FAILURE"):
-                self.payments.record_reconciliation("PAY-1", "EV-REC-FAIL", "NOT_SETTLED")
+                self.payments.record_reconciliation("PAY-1", "EV-REC-FAIL", "NOT_SETTLED", source_sequence=1)
         finally:
             self.payments._event = original_event
 
@@ -513,7 +531,7 @@ def write_then_crash(*args, **kwargs):
     if args[2] == "RECONCILIATION":
         os._exit(79)
 store._event = write_then_crash
-store.record_reconciliation("PAY-1", "EV-REC-CRASH", "NOT_SETTLED")
+store.record_reconciliation("PAY-1", "EV-REC-CRASH", "NOT_SETTLED", source_sequence=1)
 """
         env = os.environ.copy()
         env["PYTHONPATH"] = str(ROOT)
