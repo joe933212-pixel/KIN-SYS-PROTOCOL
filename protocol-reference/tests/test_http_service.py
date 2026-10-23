@@ -97,7 +97,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertFalse(body["production_ready"])
         self.assertEqual(body["result"]["minah_disposition"]["status"], "ADVISORY_ONLY")
         self.assertFalse(body["result"]["minah_disposition"]["may_authorise"])
-        self.assertEqual(body["result"]["ivm_decision"]["to_state"], "ACTIVE")
+        self.assertEqual(body["result"]["execution_result"]["to_state"], "ACTIVE")
         self.assertEqual(
             [event["phase"] for event in body["result"]["cee_events"]],
             ["REQUESTED", "MINAH_REVIEWED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
@@ -137,7 +137,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["status"], "FINALIZED")
         self.assertFalse(body["operation"]["resumable"])
         self.assertEqual(body["operation"]["result"]["status"], "PASSED")
-        self.assertTrue(body["operation"]["ivm_event"])
+        self.assertTrue(body["operation"]["execution_record"])
 
     def test_inspection_of_unknown_operation_is_not_found(self):
         response, body = self.request("/protocol/operations/DOES-NOT-EXIST")
@@ -160,7 +160,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["status"], "DEFERRED")
         self.assertEqual(body["result"]["final_decision"], "DEFERRED")
-        self.assertIsNone(body["result"]["ivm_decision"])
+        self.assertIsNone(body["result"]["execution_result"])
         phases = [event["phase"] for event in body["result"]["cee_events"]]
         self.assertNotIn("ADMITTED", phases)
 
