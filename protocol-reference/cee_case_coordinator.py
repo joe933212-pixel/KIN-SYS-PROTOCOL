@@ -132,7 +132,7 @@ class CEECaseCoordinator:
                     (operation_id, digest, _canonical(request)),
                 )
                 self.cee_db.commit()
-                self._event(operation_id, "CEE", "REQUESTED", "ACCEPTED", {"request_digest": digest})
+                self._event(operation_id, "MINAH", "INGRESS_RECEIVED", "RECEIVED", {"request_digest": digest})
         except Exception:
             if self.cee_db.in_transaction:
                 self.cee_db.rollback()
@@ -462,8 +462,8 @@ class CEECaseCoordinator:
         }
         final_status = "COMPLETED_WITH_RECONCILIATION_CONFIRMED_SETTLEMENT"
         result = {
-            **result, "status": final_status, "payment_lifecycle": payment_info,
-            "funds_moved": False,
+            **result, "status": final_status, "final_decision": "PASSED",
+            "payment_lifecycle": payment_info, "funds_moved": False,
         }
         self.cee_db.execute("BEGIN IMMEDIATE")
         try:
@@ -549,7 +549,11 @@ class CEECaseCoordinator:
             "history": self.payments.history(payment_id),
             "funds_moved": False,
         }
-        result = {**result, "status": final_status, "payment_lifecycle": payment_info, "funds_moved": False}
+        result = {
+            **result, "status": final_status,
+            "final_decision": "PASSED" if phase == "FINALIZED" else "DEFERRED",
+            "payment_lifecycle": payment_info, "funds_moved": False,
+        }
         self.cee_db.execute("BEGIN IMMEDIATE")
         try:
             self.cee_db.execute(
@@ -625,7 +629,16 @@ class CEECaseCoordinator:
         self._event(operation_id, "CEE", phase, status, detail)
 
     def _finish(self, operation_id: str, phase: str, status: str, result: dict[str, Any]) -> dict[str, Any]:
-        stored_result = {**result, "operation_id": operation_id, "status": status}
+        if phase == "REJECTED" or status == "REJECTED":
+            final_decision = "REJECTED"
+        elif phase in {"DEFERRED", "PENDING_RECONCILIATION", "PENDING_PAYMENT_RESOLUTION"}:
+            final_decision = "DEFERRED"
+        else:
+            final_decision = "PASSED"
+        stored_result = {
+            **result, "operation_id": operation_id, "status": status,
+            "final_decision": final_decision,
+        }
         self.cee_db.execute("BEGIN IMMEDIATE")
         try:
             self.cee_db.execute(
