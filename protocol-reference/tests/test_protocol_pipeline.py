@@ -1,5 +1,5 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
-"""End-to-end MINAH -> IVM -> CEE lifecycle and recovery tests."""
+"""End-to-end MINAH -> CEE -> final-decision lifecycle and recovery tests."""
 import tempfile
 import unittest
 from pathlib import Path
@@ -42,15 +42,21 @@ class ProtocolPipelineTests(unittest.TestCase):
 
     def test_complete_path_runs_minah_ivm_and_cee_in_order(self):
         result = self.pipeline.execute(request())
-        self.assertEqual(result["status"], "COMMITTED")
+        self.assertEqual(result["status"], "PASSED")
+        self.assertEqual(result["final_decision"], "PASSED")
         self.assertFalse(result["funds_moved"])
         self.assertEqual(result["minah_disposition"]["status"], "ADVISORY_ONLY")
         self.assertFalse(result["minah_disposition"]["may_authorise"])
         self.assertEqual(result["ivm_decision"]["to_state"], "ACTIVE")
         self.assertEqual([event["phase"] for event in result["cee_events"]], list(LIFECYCLE))
         components = [event["component"] for event in result["component_trace"]]
-        self.assertLess(components.index("MINAH"), components.index("IVM"))
+        self.assertEqual(components[0], "MINAH")
+        self.assertNotIn("IVM", components)
+        self.assertTrue(all(component == "CEE" for component in components[1:]))
         self.assertEqual(components[-1], "CEE")
+        phases = [event["phase"] for event in result["cee_events"]]
+        self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("ADMITTED"))
+        self.assertEqual(result["component_trace"][-2]["detail"]["execution_result"]["to_state"], "ACTIVE")
         self.assertEqual(result["component_trace"][-1]["detail"]["phase"], "FINALIZED")
         self.assertEqual(result["commit_scope"], "LOCAL_IVM_SQLITE_ONLY_NOT_DISTRIBUTED_FINALITY")
 
@@ -70,7 +76,10 @@ class ProtocolPipelineTests(unittest.TestCase):
         try:
             result = hostile.execute(request())
             self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["final_decision"], "REJECTED")
             self.assertEqual(result["reason"], "MINAH_DISPOSITION_CONTRACT_VIOLATION")
+            phases = [event["phase"] for event in result["cee_events"]]
+            self.assertNotIn("ADMITTED", phases)
             self.assertIsNone(result["ivm_decision"])
             self.assertEqual(hostile.cee.get("OP-001")["phase"], "FINALIZED")
             with self.assertRaises(Exception):
@@ -81,6 +90,10 @@ class ProtocolPipelineTests(unittest.TestCase):
     def test_missing_evidence_defers_before_ivm_execution(self):
         result = self.pipeline.execute(request(evidence={"commodity": "SYNTHETIC_MAIZE"}))
         self.assertEqual(result["status"], "DEFERRED")
+        self.assertEqual(result["final_decision"], "DEFERRED")
+        phases = [event["phase"] for event in result["cee_events"]]
+        self.assertNotIn("ADMITTED", phases)
+        self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("FINALIZED"))
         self.assertIsNone(result["ivm_decision"])
         self.assertIn("MINAH", [event["component"] for event in result["component_trace"]])
         self.assertNotIn("IVM", [event["component"] for event in result["component_trace"]])
@@ -139,7 +152,8 @@ class ProtocolPipelineTests(unittest.TestCase):
             resumed = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
             try:
                 result = resumed.execute(request())
-                self.assertEqual(result["status"], "COMMITTED")
+                self.assertEqual(result["status"], "PASSED")
+                self.assertEqual(result["final_decision"], "PASSED")
                 self.assertTrue(result["duplicate"])
                 self.assertEqual(resumed.ivm.process("PROC-001")["state"], "ACTIVE")
                 self.assertEqual(len(resumed.ivm.history("PROC-001")), 1)
@@ -150,7 +164,8 @@ class ProtocolPipelineTests(unittest.TestCase):
     def test_finalized_operation_is_idempotent(self):
         first = self.pipeline.execute(request())
         second = self.pipeline.execute(request())
-        self.assertEqual(second["status"], "COMMITTED")
+        self.assertEqual(second["status"], "PASSED")
+        self.assertEqual(second["final_decision"], "PASSED")
         self.assertTrue(second["duplicate"])
         self.assertEqual(len(self.pipeline.ivm.history("PROC-001")), 1)
 
