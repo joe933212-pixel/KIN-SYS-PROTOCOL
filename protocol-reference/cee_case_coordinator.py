@@ -12,6 +12,7 @@ import json
 import sqlite3
 from typing import Any
 
+from authority_adapter import AuthorityGateDecision, SyntheticDemoAuthorityAdapter
 from integrated_demo import DEMO_RULE_VERSION, DeterministicMinahAdapter, SyntheticTaxRules, SimulatedPaymentProvider
 from payment_lifecycle import PaymentLifecycle
 from protocol_pipeline import AUTHORITY_ID, RULE_SET, RULE_VERSION, KinSysProtocolPipeline
