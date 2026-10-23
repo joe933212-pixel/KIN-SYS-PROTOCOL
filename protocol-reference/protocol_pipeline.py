@@ -259,7 +259,7 @@ class KinSysProtocolPipeline:
                     "final_decision": "REJECTED",
                     "reason": "MINAH_DISPOSITION_CONTRACT_VIOLATION",
                     "minah_disposition": disposition,
-                    "ivm_decision": None,
+                    "execution_result": None,
                     "funds_moved": False,
                 }
                 self.cee.advance(
@@ -286,7 +286,7 @@ class KinSysProtocolPipeline:
                 "final_decision": "DEFERRED",
                 "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE",
                 "minah_disposition": disposition,
-                "ivm_decision": None,
+                "execution_result": None,
                 "funds_moved": False,
             }
             if operation["phase"] == "MINAH_REVIEWED":
@@ -373,13 +373,13 @@ class KinSysProtocolPipeline:
                     self.ivm.set_authority_active(process_id, self.authority_active)
             self.cee.advance(
                 operation_id, "PREPARED",
-                detail={"ivm_preconditions_pinned": True, "process_id": process_id},
+                detail={"cee_preconditions_pinned": True, "process_id": process_id},
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
 
         if operation["phase"] == "PREPARED":
-            self.cee.advance(operation_id, "COMMITTING", detail={"commit_boundary": "IVM_TRANSACTION"})
+            self.cee.advance(operation_id, "COMMITTING", detail={"commit_boundary": "CEE_REFERENCE_TRANSACTION"})
         operation = self.cee.get(operation_id)
         assert operation is not None
 
@@ -412,7 +412,7 @@ class KinSysProtocolPipeline:
                     "final_decision": "REJECTED",
                     "reason": decision.reason or "CEE_EXECUTION_REJECTED",
                     "minah_disposition": disposition,
-                    "ivm_decision": ivm_result,
+                    "execution_result": ivm_result,
                     "funds_moved": False,
                 }
                 self.cee.advance(
@@ -423,7 +423,7 @@ class KinSysProtocolPipeline:
                 return self._response_result(operation_id, result, duplicate=False)
             self.cee.advance(
                 operation_id, "COMMITTED", ivm=ivm_result,
-                detail={"ivm_commit_observed": True, "history_id": decision.history_id},
+                detail={"cee_commit_observed": True, "history_id": decision.history_id},
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
@@ -436,9 +436,9 @@ class KinSysProtocolPipeline:
                 "final_decision": "PASSED",
                 "reason": None,
                 "minah_disposition": disposition,
-                "ivm_decision": ivm_result,
+                "execution_result": ivm_result,
                 "funds_moved": False,
-                "commit_scope": "LOCAL_IVM_SQLITE_ONLY_NOT_DISTRIBUTED_FINALITY",
+                "commit_scope": "LOCAL_CEE_REFERENCE_STORE_ONLY_NOT_DISTRIBUTED_FINALITY",
             }
             self.cee.advance(
                 operation_id, "FINALIZED", status="PASSED", outcome="PASSED",
@@ -472,15 +472,15 @@ class KinSysProtocolPipeline:
                 "result": result,
                 "cee_events": events,
                 "component_trace": response["component_trace"],
-                "ivm_event": ivm_event,
+                "execution_record": ivm_event,
             }
         return {
             "operation_id": operation_id,
             "phase": operation["phase"],
             "resumable": True,
             "minah_disposition": operation["minah_json"],
-            "ivm_decision": operation["ivm_json"],
-            "ivm_event": ivm_event,
+            "execution_result": operation["ivm_json"],
+            "execution_record": ivm_event,
             "cee_events": events,
             "component_trace": [],
         }
@@ -495,7 +495,7 @@ class KinSysProtocolPipeline:
         minah_inserted = False
         ivm_inserted = False
         minah = result.get("minah_disposition")
-        ivm = result.get("ivm_decision")
+        ivm = result.get("execution_result")
 
         def append(component: str, status: str, detail: dict[str, Any]) -> None:
             nonlocal sequence
