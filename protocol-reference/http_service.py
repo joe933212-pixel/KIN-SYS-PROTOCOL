@@ -137,7 +137,7 @@ class KinSysPrototypeApplication:
                     "instruction_flow": [
                         "POST /demo/instructions: legacy integrated synthetic demonstration",
                         "POST /protocol/instructions: MINAH review -> CEE execution boundary -> final decision (PASSED/REJECTED/DEFERRED)",
-                        "POST /cee/cases: legacy synthetic institutional/payment demonstrator; not yet migrated to the canonical MINAH-first instruction boundary",
+                        "POST /cee/cases: MINAH-first synthetic CEE case path with simulated institutional/payment adapters",
                     ],
                     "protocol_pipeline": {
                         "status": "SYNTHETIC_MINAH_CEE_BOUNDARY_IMPLEMENTED",
@@ -260,7 +260,9 @@ class KinSysPrototypeApplication:
                     "protocol_boundary": {
                         "cee": "LOCAL_SQLITE_CASE_ORCHESTRATOR",
                         "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
+                        "pre_admission_gate": "SYNTHETIC_SERVER_SIDE_POLICY_ONLY_NOT_IDENTITY_VERIFICATION",
                         "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
+                        "single_cee_owned_runtime_store": True,
                         "institutions": "SYNTHETIC_TWO_STAGE_WORKFLOW",
                         "payment": "SIMULATED_ONLY_NO_FUNDS_MOVED",
                         "cross_store_atomicity": False, "distributed_finality": False,
