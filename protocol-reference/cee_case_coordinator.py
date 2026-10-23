@@ -12,7 +12,7 @@ import json
 import sqlite3
 from typing import Any
 
-from authority_adapter import AuthorityGateDecision, SyntheticDemoAuthorityAdapter
+from authority_adapter import AuthorityGateAdapter, AuthorityGateDecision, SyntheticDemoAuthorityAdapter
 from integrated_demo import DEMO_RULE_VERSION, DeterministicMinahAdapter, SyntheticTaxRules, SimulatedPaymentProvider
 from payment_lifecycle import PaymentLifecycle
 from protocol_pipeline import AUTHORITY_ID, RULE_SET, RULE_VERSION, KinSysProtocolPipeline
@@ -44,7 +44,7 @@ class CEECaseCoordinator:
         payment_database: str = ":memory:",
         minah_adapter: Any | None = None,
         authority_active: bool = True,
-        authority_adapter: Any | None = None,
+        authority_adapter: AuthorityGateAdapter | None = None,
     ):
         if ivm_database is not None and ivm_database != cee_database:
             raise ValueError("SPLIT_CASE_RUNTIME_STORAGE_NO_LONGER_SUPPORTED")
