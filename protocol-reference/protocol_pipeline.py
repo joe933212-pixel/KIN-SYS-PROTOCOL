@@ -297,7 +297,34 @@ class KinSysProtocolPipeline:
                 )
             return self._response_result(operation_id, result, duplicate=False)
 
-        # Only an acceptable MINAH disposition can cross into CEE admission.
+        # Synthetic server-side pre-admission policy gate. This checks the
+        # configured demo authority and pinned demo rules; it is NOT identity
+        # verification against a national/enterprise registry.
+        if operation["phase"] == "MINAH_REVIEWED":
+            gate_error = self._pre_admission_error(request)
+            if gate_error:
+                result = {
+                    "operation_id": operation_id,
+                    "status": "REJECTED",
+                    "final_decision": "REJECTED",
+                    "reason": gate_error,
+                    "minah_disposition": disposition,
+                    "execution_result": None,
+                    "funds_moved": False,
+                }
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="REJECTED",
+                    outcome="REJECTED", result=result,
+                    detail={
+                        "reason": gate_error,
+                        "cee_not_admitted": True,
+                        "pre_admission_gate": "SYNTHETIC_SERVER_SIDE_POLICY_ONLY",
+                    },
+                )
+                return self._response_result(operation_id, result, duplicate=False)
+
+        # Only an acceptable MINAH disposition and server-side pre-admission
+        # checks can cross into CEE admission.
         if operation["phase"] == "MINAH_REVIEWED":
             self.cee.advance(
                 operation_id, "ADMITTED",
@@ -546,6 +573,18 @@ class KinSysProtocolPipeline:
             "cee_events": events,
             "component_trace": trace,
         }
+
+    def _pre_admission_error(self, request: dict[str, Any]) -> str | None:
+        """Return a fail-closed synthetic policy rejection before CEE admission."""
+        if request["actor_id"] != AUTHORITY_ID:
+            return "AUTHORITY_MISMATCH"
+        if not self.authority_active:
+            return "AUTHORITY_REVOKED"
+        if request["rule_set"] != RULE_SET or request["rule_version"] != RULE_VERSION:
+            return "UNSUPPORTED_RULE_VERSION"
+        if request["evidence"].get("commodity") == "SYNTHETIC_PROHIBITED_COMMODITY":
+            return "RULE_REJECTED"
+        return None
 
     @staticmethod
     def _minah_contract_error(disposition: Any) -> str | None:
