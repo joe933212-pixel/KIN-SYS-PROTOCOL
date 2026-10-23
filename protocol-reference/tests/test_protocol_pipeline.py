@@ -23,8 +23,6 @@ def request(**overrides):
         "jurisdiction": "UG-DEMO",
         "rule_set": "KIN-SYS-DEMO-RULES",
         "rule_version": "1.0",
-        "authority_active": True,
-        "eligible": True,
         "evidence": {
             "consignment_id": "PROC-001",
             "commodity": "SYNTHETIC_MAIZE",
@@ -69,21 +67,29 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
 
     def test_revoked_authority_is_rejected(self):
-        result = self.pipeline.execute(request(authority_active=False))
-        self.assertEqual(result["status"], "REJECTED")
-        self.assertEqual(result["reason"], "AUTHORITY_REVOKED")
-        self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
+        revoked = KinSysProtocolPipeline(authority_active=False)
+        try:
+            result = revoked.execute(request())
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["reason"], "AUTHORITY_REVOKED")
+            self.assertEqual(revoked.ivm.process("PROC-001")["state"], "PENDING")
+        finally:
+            revoked.close()
 
     def test_rule_ineligibility_is_rejected(self):
-        result = self.pipeline.execute(request(eligible=False))
+        evidence = request()["evidence"]
+        evidence["commodity"] = "SYNTHETIC_PROHIBITED_COMMODITY"
+        result = self.pipeline.execute(request(evidence=evidence))
         self.assertEqual(result["status"], "REJECTED")
         self.assertEqual(result["reason"], "RULE_REJECTED")
         self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
 
     def test_operation_id_cannot_be_reused_for_different_payload(self):
         self.pipeline.execute(request())
+        changed = request()
+        changed["evidence"] = {**changed["evidence"], "origin": "DIFFERENT-ORIGIN"}
         with self.assertRaises(ExecutionConflict):
-            self.pipeline.execute(request(rule_version="2.0"))
+            self.pipeline.execute(changed)
 
     def test_event_id_conflict_is_rejected_by_ivm(self):
         self.pipeline.execute(request())
