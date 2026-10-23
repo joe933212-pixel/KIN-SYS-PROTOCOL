@@ -145,13 +145,13 @@ class PaymentLifecycle:
             payment = self._payment(payment_id)
             evidence = {"acknowledgement": acknowledgement, "provider_reference": provider_reference}
             duplicate = self._event(event_id, payment_id, "PROVIDER_ACKNOWLEDGEMENT", evidence)
-            if payment["status"] == "SETTLED":
-                raise ValueError("PAYMENT_ALREADY_SETTLED")
             if duplicate:
-                # A retry must return current durable state, not replay an old
-                # acknowledgement over a later reconciliation outcome.
+                # An identical retry is idempotent even if the payment has
+                # since advanced to settlement or reconciliation.
                 self.db.commit()
                 return self.get_payment(payment_id)
+            if payment["status"] == "SETTLED":
+                raise ValueError("PAYMENT_ALREADY_SETTLED")
             if payment["last_reconciliation"] is not None:
                 # A new provider message arriving after reconciliation has no
                 # trustworthy ordering metadata here. Record it as evidence,
