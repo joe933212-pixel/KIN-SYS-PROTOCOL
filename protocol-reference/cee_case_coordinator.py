@@ -43,6 +43,7 @@ class CEECaseCoordinator:
         payment_database: str = ":memory:",
         minah_adapter: Any | None = None,
         authority_active: bool = True,
+        authority_adapter: Any | None = None,
     ):
         if ivm_database is not None and ivm_database != cee_database:
             raise ValueError("SPLIT_CASE_RUNTIME_STORAGE_NO_LONGER_SUPPORTED")
@@ -195,13 +196,17 @@ class CEECaseCoordinator:
 
         # Server-configured synthetic checks run before CEE admission. These are
         # not identity verification against an authorised external registry.
-        pre_admission_error = self._pre_admission_error(request)
-        if pre_admission_error:
-            self._set_phase(operation_id, "MINAH_REVIEWED", "REJECTED", {
-                "cee_admission": "NOT_GRANTED", "reason": pre_admission_error,
+        gate_decision = self._evaluate_authority_gate(request)
+        if gate_decision.outcome != "ALLOW":
+            final_decision = "REJECTED" if gate_decision.outcome == "REJECT" else "DEFERRED"
+            reason = gate_decision.reason or "AUTHORITY_GATE_UNRESOLVED"
+            self._set_phase(operation_id, "MINAH_REVIEWED", final_decision, {
+                "cee_admission": "NOT_GRANTED", "reason": reason,
+                "authority_gate": self._authority_gate_trace(gate_decision),
             })
-            return self._finish(operation_id, "REJECTED", "REJECTED", {
-                "reason": pre_admission_error, "minah_disposition": minah,
+            return self._finish(operation_id, final_decision, final_decision, {
+                "reason": reason, "minah_disposition": minah,
+                "authority_gate": self._authority_gate_trace(gate_decision),
                 "institutional_decisions": None, "execution_result": None,
                 "payment_lifecycle": None, "funds_moved": False,
             })
@@ -680,14 +685,27 @@ class CEECaseCoordinator:
             })
         return trace
 
-    def _pre_admission_error(self, request: dict[str, Any]) -> str | None:
-        if request["execution_actor"] != AUTHORITY_ID:
-            return "AUTHORITY_MISMATCH"
-        if not self.authority_active:
-            return "AUTHORITY_REVOKED"
-        if request["evidence"].get("commodity") == "SYNTHETIC_PROHIBITED_COMMODITY":
-            return "RULE_REJECTED"
-        return None
+    def _evaluate_authority_gate(self, request: dict[str, Any]) -> AuthorityGateDecision:
+        decision = self.authority_gate.evaluate(request)
+        if not isinstance(decision, AuthorityGateDecision):
+            return AuthorityGateDecision(
+                "DEFER", "INVALID_AUTHORITY_GATE_RESPONSE",
+                "UNTRUSTED_ADAPTER_OUTPUT", "NOT_ESTABLISHED", {},
+            )
+        if decision.outcome not in {"ALLOW", "REJECT", "DEFER"}:
+            return AuthorityGateDecision(
+                "DEFER", "INVALID_AUTHORITY_GATE_OUTCOME",
+                decision.adapter, "NOT_ESTABLISHED", {"reported_outcome": decision.outcome},
+            )
+        return decision
+
+    @staticmethod
+    def _authority_gate_trace(decision: AuthorityGateDecision) -> dict[str, Any]:
+        return {
+            "outcome": decision.outcome, "reason": decision.reason,
+            "adapter": decision.adapter, "assurance": decision.assurance,
+            "details": decision.details,
+        }
 
     @staticmethod
     def _validate(request: dict[str, Any]) -> None:
