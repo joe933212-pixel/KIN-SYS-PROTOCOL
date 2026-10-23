@@ -68,6 +68,13 @@ class CEECaseCoordinator:
         columns = {row["name"] for row in self.cee_db.execute("PRAGMA table_info(cee_cases)")}
         if "minah_json" not in columns:
             self.cee_db.execute("ALTER TABLE cee_cases ADD COLUMN minah_json TEXT")
+        # One durable submission intent per operation prevents concurrent retries
+        # from both reaching a provider. Existing duplicates require manual review.
+        self.cee_db.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS one_payment_submission_intent
+               ON cee_case_events(operation_id)
+               WHERE component='PAYMENT' AND phase='SUBMISSION_INTENT'"""
+        )
         self.cee_db.commit()
         self.ivm = ProtocolStore(ivm_database)
         self.workflow = InstitutionalWorkflow(workflow_database)
@@ -377,6 +384,19 @@ class CEECaseCoordinator:
         self.cee_db.commit()
 
     def _set_phase(self, operation_id: str, phase: str, status: str, detail: dict[str, Any]) -> None:
+        order = {
+            "REQUESTED": 0, "ADMITTED": 1, "CONTEXT_PINNED": 2,
+            "FINALIZED": 3, "DEFERRED": 3, "REJECTED": 3,
+            "PENDING_RECONCILIATION": 3, "PENDING_PAYMENT_RESOLUTION": 3,
+        }
+        row = self.cee_db.execute(
+            "SELECT phase FROM cee_cases WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError("CEE_CASE_NOT_FOUND")
+        current = row["phase"]
+        if order.get(phase, -1) <= order.get(current, -1):
+            return
         self.cee_db.execute("UPDATE cee_cases SET phase=? WHERE operation_id=?", (phase, operation_id))
         self.cee_db.commit()
         self._event(operation_id, "CEE", phase, status, detail)
