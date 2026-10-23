@@ -17,7 +17,7 @@ import json
 import sqlite3
 from typing import Any
 
-from authority_adapter import AuthorityGateDecision, SyntheticDemoAuthorityAdapter
+from authority_adapter import AuthorityGateAdapter, AuthorityGateDecision, SyntheticDemoAuthorityAdapter
 from integrated_demo import DeterministicMinahAdapter
 from transition import EventIdConflict, ProtocolStore
 
@@ -213,7 +213,7 @@ class KinSysProtocolPipeline:
         ivm_database: str | None = None,
         minah_adapter: Any | None = None,
         authority_active: bool = True,
-        authority_adapter: Any | None = None,
+        authority_adapter: AuthorityGateAdapter | None = None,
     ):
         if ivm_database is not None and ivm_database != cee_database:
             raise ValueError("SPLIT_RUNTIME_STORAGE_NO_LONGER_SUPPORTED")
