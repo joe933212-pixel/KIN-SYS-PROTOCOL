@@ -40,6 +40,24 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.pipeline = KinSysProtocolPipeline()
         self.addCleanup(self.pipeline.close)
 
+    def test_cee_owns_one_shared_journal_and_execution_connection(self):
+        self.assertIs(self.pipeline.cee.db, self.pipeline.ivm.db)
+        tables = {
+            row[0]
+            for row in self.pipeline.cee.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        self.assertTrue({"cee_operations", "cee_events", "processes", "events", "transition_history"} <= tables)
+
+    def test_split_runtime_database_configuration_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "SPLIT_RUNTIME_STORAGE_NO_LONGER_SUPPORTED"):
+                KinSysProtocolPipeline(
+                    cee_database=str(Path(tmp) / "cee.sqlite3"),
+                    ivm_database=str(Path(tmp) / "runtime.sqlite3"),
+                )
+
     def test_complete_path_runs_minah_then_cee_to_final_decision(self):
         result = self.pipeline.execute(request())
         self.assertEqual(result["status"], "PASSED")
