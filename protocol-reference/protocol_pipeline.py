@@ -508,6 +508,10 @@ class KinSysProtocolPipeline:
             })
 
         for event in events:
+            # REQUESTED is an ingress receipt, not CEE admission; omit it from
+            # the component trace so the public flow begins with MINAH.
+            if event["phase"] == "REQUESTED":
+                continue
             if event["phase"] == "MINAH_REVIEWED" and not minah_inserted and isinstance(minah, dict):
                 append("MINAH", str(minah.get("status", "UNKNOWN")), {
                     "advisory_only": True,
