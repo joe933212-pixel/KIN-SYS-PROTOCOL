@@ -1,4 +1,13 @@
-# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+"""Local HTTP adapter for KIN-SYS synthetic reference slices.
+
+This is an engineering prototype, not a production API:
+- /demo/instructions calls the legacy integrated demonstrator with synthetic adapters;
+- /protocol/instructions exercises a separate MINAH -> IVM -> CEE vertical slice;
+- the new slice uses a local IVM SQLite transition store and a separate CEE journal;
+- no production authentication, authoritative legal sources, live model, payment
+  provider, distributed commit, or hardware integration is configured.
+Run from the repository root:
+    PYTHONPATH=protocol-reference python -m http_service
 """Local HTTP adapter for the synthetic KIN-SYS integrated reference slice.
 
 This is a development/engineering-handoff service, not a production API:
@@ -45,7 +54,6 @@ _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
 _PROTOCOL_FIELDS = {
     "operation_id", "event_id", "process_id", "actor_id", "event_type",
     "jurisdiction", "rule_set", "rule_version", "evidence",
-    "authority_active", "eligible",
 }
 
 
