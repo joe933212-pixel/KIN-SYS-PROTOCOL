@@ -201,7 +201,7 @@ class CEEJournal:
 
 
 class KinSysProtocolPipeline:
-    """Synthetic full-path harness that makes MINAH, IVM and CEE boundaries observable."""
+    """Synthetic instruction harness exposing MINAH -> CEE -> final decision."""
 
     def __init__(
         self,
@@ -211,7 +211,7 @@ class KinSysProtocolPipeline:
         minah_adapter: Any | None = None,
         authority_active: bool = True,
     ):
-        if ivm_database is not None and ivm_database not in {cee_database, ":memory:"}:
+        if ivm_database is not None and ivm_database != cee_database:
             raise ValueError("SPLIT_RUNTIME_STORAGE_NO_LONGER_SUPPORTED")
         self.cee = CEEJournal(cee_database)
         # CEE owns the connection. The transition implementation is a private
