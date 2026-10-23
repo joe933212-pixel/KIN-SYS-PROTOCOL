@@ -224,7 +224,7 @@ class KinSysProtocolPipeline:
         operation = self.cee.start(operation_id, request)
         if operation["phase"] == "FINALIZED":
             result = operation["result_json"]
-            return {**result, "duplicate": True, "cee_events": self.cee.events(operation_id)}
+            return self._response_result(operation_id, result, duplicate=True)
 
         evidence = request["evidence"]
         operation = self.cee.get(operation_id)
@@ -277,7 +277,7 @@ class KinSysProtocolPipeline:
                     outcome="REJECTED", result=result,
                     detail={"reason": result["reason"], "ivm_not_invoked": True},
                 )
-                return {**result, "duplicate": False, "cee_events": self.cee.events(operation_id)}
+                return self._response_result(operation_id, result, duplicate=False)
             self.cee.advance(
                 operation_id, "ADMITTED",
                 detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
@@ -316,7 +316,7 @@ class KinSysProtocolPipeline:
                     outcome="DEFERRED", result=result,
                     detail={"reason": result["reason"], "ivm_not_invoked": True},
                 )
-            return {**result, "duplicate": False, "cee_events": self.cee.events(operation_id)}
+            return self._response_result(operation_id, result, duplicate=False)
 
         # Resume safely from any durable phase. The IVM operation key is stable across retries.
         operation = self.cee.get(operation_id)
@@ -406,7 +406,7 @@ class KinSysProtocolPipeline:
                     ivm=ivm_result, result=result,
                     detail={"reason": result["reason"], "no_authoritative_transition": True},
                 )
-                return {**result, "duplicate": False, "cee_events": self.cee.events(operation_id)}
+                return self._response_result(operation_id, result, duplicate=False)
             self.cee.advance(
                 operation_id, "COMMITTED", ivm=ivm_result,
                 detail={"ivm_commit_observed": True, "history_id": decision.history_id},
@@ -430,7 +430,7 @@ class KinSysProtocolPipeline:
                 result=result,
                 detail={"result_status": "COMMITTED", "distributed_finality": False},
             )
-            return {**result, "duplicate": bool(ivm_result.get("duplicate")), "cee_events": self.cee.events(operation_id)}
+            return self._response_result(operation_id, result, duplicate=bool(ivm_result.get("duplicate")))
 
         operation = self.cee.get(operation_id)
         assert operation is not None
@@ -438,6 +438,61 @@ class KinSysProtocolPipeline:
             result = operation["result_json"]
             return {**result, "duplicate": True, "cee_events": self.cee.events(operation_id)}
         raise LifecycleViolation(f"UNHANDLED_RESUMABLE_PHASE:{operation['phase']}")
+
+    def _response_result(
+        self, operation_id: str, result: dict[str, Any], *, duplicate: bool
+    ) -> dict[str, Any]:
+        """Return both the CEE phase journal and a unified component-level trace."""
+        events = self.cee.events(operation_id)
+        trace: list[dict[str, Any]] = []
+        sequence = 0
+        minah_inserted = False
+        ivm_inserted = False
+        minah = result.get("minah_disposition")
+        ivm = result.get("ivm_decision")
+
+        def append(component: str, status: str, detail: dict[str, Any]) -> None:
+            nonlocal sequence
+            sequence += 1
+            trace.append({
+                "sequence": sequence,
+                "component": component,
+                "status": status,
+                "detail": detail,
+            })
+
+        for event in events:
+            if event["phase"] == "AUTHORITY_EVALUATED" and not minah_inserted and isinstance(minah, dict):
+                append("MINAH", str(minah.get("status", "UNKNOWN")), {
+                    "advisory_only": True,
+                    "may_authorise": False,
+                    "model_version": minah.get("model_version"),
+                    "source_refs": minah.get("source_refs", []),
+                    "uncertainty": minah.get("uncertainty"),
+                    "contract_error": minah.get("contract_error"),
+                })
+                minah_inserted = True
+            if event["phase"] in {"COMMITTED", "FINALIZED"} and not ivm_inserted and isinstance(ivm, dict):
+                append("IVM", str(ivm.get("status", "UNKNOWN")), {
+                    "event_id": ivm.get("event_id"),
+                    "from_state": ivm.get("from_state"),
+                    "to_state": ivm.get("to_state"),
+                    "history_id": ivm.get("history_id"),
+                    "reason": ivm.get("reason"),
+                    "duplicate": ivm.get("duplicate", False),
+                })
+                ivm_inserted = True
+            append("CEE", event["phase"], {
+                "phase": event["phase"],
+                "event_status": event["status"],
+                **event["detail"],
+            })
+        return {
+            **result,
+            "duplicate": duplicate,
+            "cee_events": events,
+            "component_trace": trace,
+        }
 
     @staticmethod
     def _minah_contract_error(disposition: Any) -> str | None:
