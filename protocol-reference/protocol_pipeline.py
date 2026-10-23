@@ -167,8 +167,10 @@ class CEEJournal:
             allowed = next_index == current_index + 1
             terminal_branch = (
                 next_phase == "FINALIZED"
-                and current == "AUTHORITY_EVALUATED"
-                and outcome in {"DEFERRED", "REJECTED"}
+                and (
+                    (current == "AUTHORITY_EVALUATED" and outcome in {"DEFERRED", "REJECTED"})
+                    or (current == "COMMITTING" and outcome == "REJECTED")
+                )
             )
             if not allowed and not terminal_branch:
                 raise LifecycleViolation(f"ILLEGAL_CEE_TRANSITION:{current}->{next_phase}")
