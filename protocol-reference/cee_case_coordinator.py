@@ -85,6 +85,9 @@ class CEECaseCoordinator:
         self.minah = minah_adapter or DeterministicMinahAdapter()
         self.tax = SyntheticTaxRules()
         self.provider = SimulatedPaymentProvider()
+        self.authority_gate = authority_adapter or SyntheticDemoAuthorityAdapter(
+            authority_active=authority_active
+        )
         self.authority_active = authority_active
 
     def close(self) -> None:
