@@ -3,7 +3,7 @@
 This is an engineering prototype, not a production API:
 - /demo/instructions calls the legacy integrated demonstrator with synthetic adapters;
 - /protocol/instructions exercises the canonical MINAH -> CEE -> final-decision boundary;
-- the prototype still uses separate local SQLite persistence internally and does not claim cross-store atomicity;
+- the canonical instruction and case lifecycle/private-runtime tables share CEE-owned local SQLite connections, while institutional/payment adapters retain separate stores; cross-adapter atomicity and distributed finality are not claimed;
 - no production authentication, authoritative legal sources, live model, payment
   provider, distributed commit, or hardware integration is configured.
 Run from the repository root:
