@@ -42,6 +42,7 @@ _ALLOWED_FIELDS = {
     "exempt",
 }
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
+_CEE_RECONCILIATION_FIELDS = {"operation_id", "event_id", "finding", "source_sequence", "provider_reference"}
 _CEE_CASE_FIELDS = {
     "operation_id", "case_id", "jurisdiction", "evidence", "origin_actor",
     "destination_actor", "execution_actor", "origin_decision", "destination_decision",
@@ -129,6 +130,7 @@ class KinSysPrototypeApplication:
                         "GET /protocol/operations/{operation_id}",
                         "POST /cee/cases",
                         "GET /cee/operations/{operation_id}",
+                        "POST /cee/reconciliation",
                     ],
                     "instruction_flow": [
                         "POST /demo/instructions: legacy integrated synthetic demonstration",
@@ -163,6 +165,42 @@ class KinSysPrototypeApplication:
             if operation is None:
                 return _response(start_response, 404, {"error": {"code": "OPERATION_NOT_FOUND", "message": "No CEE case operation matches this ID."}}, request_id)
             return _response(start_response, 200, {"status": operation["phase"], "operation": operation, "production_ready": False}, request_id)
+
+        if path == "/cee/reconciliation":
+            if method != "POST":
+                return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit synthetic reconciliation evidence."}}, request_id)
+            try:
+                payload = self._read_json(environ, allowed_fields=_CEE_RECONCILIATION_FIELDS)
+                operation_id = payload.get("operation_id")
+                event_id = payload.get("event_id")
+                if not isinstance(operation_id, str) or not _ID_RE.fullmatch(operation_id):
+                    raise HttpServiceError(422, "INVALID_OPERATION_ID", "operation_id is required and must be a safe identifier.")
+                if not isinstance(event_id, str) or not _ID_RE.fullmatch(event_id):
+                    raise HttpServiceError(422, "INVALID_EVENT_ID", "event_id is required and must be a safe identifier.")
+                if "provider_reference" in payload and payload["provider_reference"] is not None and not isinstance(payload["provider_reference"], str):
+                    raise HttpServiceError(422, "INVALID_PROVIDER_REFERENCE", "provider_reference must be a string or null.")
+                result = self.case_coordinator.reconcile(
+                    operation_id, event_id, payload.get("finding"),
+                    source_sequence=payload.get("source_sequence"),
+                    provider_reference=payload.get("provider_reference"),
+                )
+                return _response(start_response, 200, {
+                    "status": result["status"], "production_ready": False, "result": result,
+                    "protocol_boundary": {
+                        "reconciliation": "CALLER_SUPPLIED_SYNTHETIC_EVIDENCE_NOT_AUTHENTICATED",
+                        "funds_moved": False, "automatic_resubmission": False,
+                    },
+                }, request_id)
+            except HttpServiceError as exc:
+                return _response(start_response, exc.status, {"error": {"code": exc.code, "message": exc.message}}, request_id)
+            except CaseConflict as exc:
+                return _response(start_response, 409, {"error": {"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)}}, request_id)
+            except KeyError as exc:
+                return _response(start_response, 404, {"error": {"code": "CASE_OR_PAYMENT_NOT_FOUND", "message": str(exc)}}, request_id)
+            except (ValueError, TypeError) as exc:
+                return _response(start_response, 422, {"error": {"code": "INVALID_RECONCILIATION", "message": str(exc)[:240]}}, request_id)
+            except Exception:
+                return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR", "message": "The reconciliation could not be recorded."}}, request_id)
 
         if path == "/cee/cases":
             if method != "POST":
