@@ -102,6 +102,10 @@ class HttpServiceTests(unittest.TestCase):
             ["REQUESTED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
              "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED", "FINALIZED"],
         )
+        trace = body["result"]["component_trace"]
+        components = [event["component"] for event in trace]
+        self.assertLess(components.index("MINAH"), components.index("IVM"))
+        self.assertEqual(trace[-1]["detail"]["phase"], "FINALIZED")
         self.assertFalse(body["result"]["funds_moved"])
         self.assertFalse(body["protocol_boundary"]["distributed_finality"])
 
