@@ -41,7 +41,7 @@ The refactored synthetic demonstrator records a CEE lifecycle (`REQUESTED` throu
 
 Security boundary: authority status and the synthetic rule version are configured server-side, not accepted as client-controlled booleans. This remains a synthetic research slice: there is no cryptographic authentication, live MINAH model or authoritative legal source, real rule pack, real payment, distributed consensus, or Nexus Pod integration. The 29 proposed production API routes remain draft/not routed. The service binds to loopback by default and must not be exposed publicly.
 
-The draft refactor branch passed [CI run #249](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39930913679): 192 tests passed on the clean runner, including MINAH-before-admission checks, fail-closed identity-claim handling, authority/rule rejection before admission, idempotent recovery, HTTP result traces, and the existing research suite. This is evidence for the synthetic slice only, not full KIN-SYS conformance or production readiness.
+The draft refactor branch passed [CI run #266](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39931651309): 194 tests passed on the clean runner, including MINAH-before-admission checks, fail-closed identity-claim handling, authority/rule rejection before admission, shared CEE store assertions, idempotent recovery, HTTP result traces, and the existing research suite. This is evidence for the synthetic slice only, not full KIN-SYS conformance or production readiness.
 | Area | Status | Next evidence required |
 |---|---|---|
 | Protocol purpose and scope | Specified in draft | External review and scope decision |
