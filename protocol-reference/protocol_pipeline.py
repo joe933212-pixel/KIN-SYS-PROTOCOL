@@ -435,6 +435,37 @@ class KinSysProtocolPipeline:
             return self._response_result(operation_id, result, duplicate=True)
         raise LifecycleViolation(f"UNHANDLED_RESUMABLE_PHASE:{operation['phase']}")
 
+    def inspect(self, operation_id: str) -> dict[str, Any] | None:
+        """Read a lifecycle snapshot without mutating or resuming the operation."""
+        operation = self.cee.get(operation_id)
+        if operation is None:
+            return None
+        events = self.cee.events(operation_id)
+        request = operation["request_json"]
+        ivm_event = self.ivm.event(request["event_id"])
+        if operation["phase"] == "FINALIZED" and isinstance(operation["result_json"], dict):
+            result = operation["result_json"]
+            response = self._response_result(operation_id, result, duplicate=False)
+            return {
+                "operation_id": operation_id,
+                "phase": operation["phase"],
+                "resumable": False,
+                "result": result,
+                "cee_events": events,
+                "component_trace": response["component_trace"],
+                "ivm_event": ivm_event,
+            }
+        return {
+            "operation_id": operation_id,
+            "phase": operation["phase"],
+            "resumable": True,
+            "minah_disposition": operation["minah_json"],
+            "ivm_decision": operation["ivm_json"],
+            "ivm_event": ivm_event,
+            "cee_events": events,
+            "component_trace": [],
+        }
+
     def _response_result(
         self, operation_id: str, result: dict[str, Any], *, duplicate: bool
     ) -> dict[str, Any]:
