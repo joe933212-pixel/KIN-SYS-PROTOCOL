@@ -196,8 +196,7 @@ class KinSysPrototypeApplication:
                     "status": result["status"], "production_ready": False, "result": result,
                     "protocol_boundary": {
                         "settlement_evidence": "CALLER_SUPPLIED_SYNTHETIC_EVIDENCE_NOT_AUTHENTICATED",
-                        "single_cee_owned_store": True,
-                        "atomic_commit_across_lifecycle_and_execution": False, "funds_moved": False,
+                        "cross_store_atomicity": False, "funds_moved": False,
                     },
                 }, request_id)
             except HttpServiceError as exc:
@@ -264,8 +263,7 @@ class KinSysPrototypeApplication:
                         "ivm": "LOCAL_SQLITE_REFERENCE_ECONOMIC_GATE",
                         "institutions": "SYNTHETIC_TWO_STAGE_WORKFLOW",
                         "payment": "SIMULATED_ONLY_NO_FUNDS_MOVED",
-                        "single_cee_owned_store": True,
-                        "atomic_commit_across_lifecycle_and_execution": False, "distributed_finality": False,
+                        "cross_store_atomicity": False, "distributed_finality": False,
                     },
                 }, request_id)
             except HttpServiceError as exc:
