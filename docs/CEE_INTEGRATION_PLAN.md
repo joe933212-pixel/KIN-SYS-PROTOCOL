@@ -1,6 +1,6 @@
 # Unified CEE Execution Boundary: Engineering Plan
 
-Status: DESIGN BASELINE — integration not yet implemented
+Status: PARTIAL IMPLEMENTATION — canonical synthetic instruction slice refactored; case-level integration remains incomplete
 Audience: Protocol Runtime, CEE, IVM, MINAH, Institutional Integration, Fintech, Edge/Distributed Systems, Security, SRE
 Scope: Align the implementation with one public protocol path: MINAH -> CEE -> final decision. The execution engine and its environment are one CEE boundary; internal implementation details must not appear as separate protocol paths. Applicable institutional, payment, and edge effects must be brought under the same case-linked trace where relevant.
 
@@ -8,7 +8,7 @@ Scope: Align the implementation with one public protocol path: MINAH -> CEE -> f
 
 The repository contains a partially unified canonical instruction slice and related legacy research components that are not yet integrated into one conformant case path:
 
-- `protocol-reference/protocol_pipeline.py`: a runnable synthetic instruction slice. The current refactor records MINAH review before CEE admission and exposes one final-decision contract. It still uses separate local SQLite persistence internally; this is a prototype limitation, not a second public execution path.
+- `protocol-reference/protocol_pipeline.py`: a runnable synthetic instruction slice. The current refactor records MINAH review before CEE admission and exposes one final-decision contract. The CEE lifecycle journal and private execution tables now share one local SQLite connection. Their commit/acknowledgement boundary remains separate and is covered by recovery tests; this is one public execution path, not a second runtime.
 - `protocol-reference/integrated_demo.py`: a synthetic cross-institution case that calls identity, MINAH, origin and destination decisions, fictional assessment, payment lifecycle and edge queue components. It has important safeguards, including checking current institutional authority and rule versions before creating the assessment/payment, and keeping offline edge replay at “ready for central review.”
 - `protocol-reference/payment_lifecycle.py` and `protocol-reference/edge_queue.py`: separate durable local SQLite models with idempotency and explicit unknown/reconciliation or stale-context outcomes.
 
@@ -20,7 +20,7 @@ A first CEE-owned synthetic case coordinator has now been implemented in `protoc
 
 CI run [#241](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39923814382) passed 190 tests, including rejection gates, missing-evidence deferral, replay/conflict, uncertain payment submission recovery, reconciliation sequencing, settlement amount/currency validation, settlement event-ID conflicts, split-store crash recovery and HTTP inspection. This is a local synthetic implementation, not proof of production integration.
 
-Remaining gaps include: independent SQLite stores without cross-store atomicity; no production transactional outbox/dispatcher or authenticated provider idempotency; no authenticated/authoritative reconciliation source; no production identity or legal-rule source; limited crash injection around every stage; no production outbox/dispatcher; no authenticated settlement or reconciliation source; no real MINAH service, distributed finality, or Nexus Pod integration. Caller-supplied reconciliation is demonstrator input only and must not be treated as trusted external evidence.
+Remaining gaps include: the legacy case coordinator still uses independent SQLite stores without cross-store atomicity; no production transactional outbox/dispatcher or authenticated provider idempotency; no authenticated/authoritative reconciliation source; no production identity or legal-rule source; limited crash injection around every stage; no production outbox/dispatcher; no authenticated settlement or reconciliation source; no real MINAH service, distributed finality, or Nexus Pod integration. Caller-supplied reconciliation is demonstrator input only and must not be treated as trusted external evidence.
 
 ## 1B. Mandatory MINAH-first instruction conformance sequence
 
