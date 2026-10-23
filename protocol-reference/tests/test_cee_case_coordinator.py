@@ -197,7 +197,7 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         )
         with self.assertRaises(CaseConflict):
             self.coordinator.record_settlement_evidence(
-                *args, amount_minor=obligation["amount_minor"], currency=obligation["currency"],
+                *args, amount_minor=obligation["amount_minor"] + 1, currency=obligation["currency"],
             )
 
     def test_revoked_origin_authority_blocks_all_downstream_work(self):
