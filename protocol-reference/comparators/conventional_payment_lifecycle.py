@@ -33,7 +33,8 @@ class ConventionalPaymentLifecycle:
                 state TEXT NOT NULL,
                 provider_key TEXT,
                 settlement_key TEXT,
-                reconciliation_result TEXT
+                reconciliation_result TEXT,
+                reconciliation_sequence INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS transfer_log (
                 log_key TEXT PRIMARY KEY,
@@ -42,6 +43,14 @@ class ConventionalPaymentLifecycle:
                 record TEXT NOT NULL
             );
         """)
+        transfer_columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(transfers)")
+        }
+        if "reconciliation_sequence" not in transfer_columns:
+            self.connection.execute(
+                "ALTER TABLE transfers ADD COLUMN "
+                "reconciliation_sequence INTEGER NOT NULL DEFAULT 0"
+            )
         self.connection.commit()
 
     def close(self) -> None:
@@ -174,31 +183,49 @@ class ConventionalPaymentLifecycle:
         return self.get_payment(payment_id)
 
     def record_reconciliation(self, payment_id: str, event_id: str, finding: str,
-                              provider_reference: str | None = None) -> dict[str, Any]:
+                              provider_reference: str | None = None, *,
+                              source_sequence: int) -> dict[str, Any]:
         if finding not in {"SETTLED", "NOT_SETTLED", "UNKNOWN"}:
             raise ValueError("INVALID_RECONCILIATION_FINDING")
-        transfer = self._transfer(payment_id)
-        self._append(event_id, payment_id, "RECONCILIATION",
-                     {"finding": finding, "provider_reference": provider_reference})
-        if finding == "SETTLED" and transfer["state"] != "SETTLED":
-            self.connection.rollback()
-            raise ValueError("SETTLEMENT_EVIDENCE_REQUIRED")
-        if transfer["state"] == "SETTLED" and finding != "SETTLED":
-            self.connection.rollback()
-            raise ValueError("RECONCILIATION_CONFLICTS_WITH_SETTLEMENT")
-        if transfer["state"] != "SETTLED":
-            state = "RECONCILED_NOT_SETTLED" if finding == "NOT_SETTLED" else "UNKNOWN_PENDING_RECONCILIATION"
-            self.connection.execute(
-                "UPDATE transfers SET state=?, reconciliation_result=? WHERE transfer_key=?",
-                (state, finding, payment_id),
-            )
-        else:
-            self.connection.execute(
-                "UPDATE transfers SET reconciliation_result=? WHERE transfer_key=?",
-                (finding, payment_id),
-            )
-        self.connection.commit()
-        return self.get_payment(payment_id)
+        if type(source_sequence) is not int or source_sequence < 1:
+            raise ValueError("INVALID_RECONCILIATION_SEQUENCE")
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            transfer = self._transfer(payment_id)
+            evidence = {
+                "finding": finding,
+                "provider_reference": provider_reference,
+                "source_sequence": source_sequence,
+            }
+            duplicate = self._append(event_id, payment_id, "RECONCILIATION", evidence)
+            if duplicate:
+                self.connection.commit()
+                return self.get_payment(payment_id)
+            if source_sequence <= transfer["reconciliation_sequence"]:
+                raise ValueError("STALE_RECONCILIATION_SEQUENCE")
+            if finding == "SETTLED" and transfer["state"] != "SETTLED":
+                raise ValueError("SETTLEMENT_EVIDENCE_REQUIRED")
+            if transfer["state"] == "SETTLED" and finding != "SETTLED":
+                raise ValueError("RECONCILIATION_CONFLICTS_WITH_SETTLEMENT")
+            if transfer["state"] != "SETTLED":
+                state = "RECONCILED_NOT_SETTLED" if finding == "NOT_SETTLED" else "UNKNOWN_PENDING_RECONCILIATION"
+                self.connection.execute(
+                    "UPDATE transfers SET state=?, reconciliation_result=?, "
+                    "reconciliation_sequence=? WHERE transfer_key=?",
+                    (state, finding, source_sequence, payment_id),
+                )
+            else:
+                self.connection.execute(
+                    "UPDATE transfers SET reconciliation_result=?, "
+                    "reconciliation_sequence=? WHERE transfer_key=?",
+                    (finding, source_sequence, payment_id),
+                )
+            self.connection.commit()
+            return self.get_payment(payment_id)
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
 
     def get_payment(self, payment_id: str) -> dict[str, Any]:
         return self._normalise_transfer(self._transfer(payment_id))
@@ -228,10 +255,11 @@ class ConventionalPaymentLifecycle:
             "status": row["state"], "provider_reference": row["provider_key"],
             "settlement_reference": row["settlement_key"],
             "last_reconciliation": row["reconciliation_result"],
+            "last_reconciliation_sequence": row["reconciliation_sequence"],
         }
 
     def _append(self, event_id: str, payment_id: str, event_type: str,
-                evidence: dict[str, Any]) -> None:
+                evidence: dict[str, Any]) -> bool:
         if not event_id:
             raise ValueError("EVENT_ID_REQUIRED")
         payload = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
@@ -241,8 +269,9 @@ class ConventionalPaymentLifecycle:
         if row:
             if (row["transfer_key"], row["category"], row["record"]) != (payment_id, event_type, payload):
                 raise ValueError("EVENT_ID_CONFLICT")
-            return
+            return True
         self.connection.execute(
             "INSERT INTO transfer_log VALUES (?, ?, ?, ?)",
             (event_id, payment_id, event_type, payload),
         )
+        return False
