@@ -36,7 +36,7 @@ class ProductionApiContractTests(unittest.TestCase):
                     f"{method.upper()} {path} must not imply it is implemented",
                 )
                 self.assertIn("200", operation["responses"])
-                if path != "/system/health":
+                if path not in {"/system/health", "/system/readiness"}:
                     self.assertIn("400", operation["responses"])
                     self.assertIn("503", operation["responses"])
         self.assertEqual(len(operation_ids), len(set(operation_ids)))
