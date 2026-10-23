@@ -22,22 +22,28 @@ CI run [#241](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/3
 
 Remaining gaps include: independent SQLite stores without cross-store atomicity; no production transactional outbox/dispatcher or authenticated provider idempotency; no authenticated/authoritative reconciliation source; no production identity or legal-rule source; limited crash injection around every stage; no production outbox/dispatcher; no authenticated settlement or reconciliation source; no real MINAH service, distributed finality, or Nexus Pod integration. Caller-supplied reconciliation is demonstrator input only and must not be treated as trusted external evidence.
 
-## 1B. Mandatory instruction conformance sequence
+## 1B. Mandatory MINAH-first instruction conformance sequence
 
-Every production instruction must enter through one CEE-owned ingress and receive one stable operation ID before any component can create an externally meaningful or economically consequential effect. No production command route may invoke MINAH, IVM, an institutional adapter, a payment provider, or an edge execution adapter as a bypass around CEE orchestration.
+**MINAH is the first protocol-facing recipient of every citizen, operator, enterprise, or machine instruction.** She is the sovereign AI gatekeeper and jurisprudential oracle, not a downstream adviser called only after CEE admission. Voice is an input channel, not proof of identity. MINAH must establish a trustworthy instruction context and complete required identity, authority, legal-context, and preliminary checks before handing an approved instruction downstream.
 
-The required trace sequence for an instruction is:
+The target sequence is:
 
-`RECEIVED → VALIDATED → CEE_ADMITTED → CONTEXT_AND_VERSIONS_PINNED → MINAH_DISPOSITION_RECORDED → AUTHORITY_AND_RULES_CHECKED_BY_IVM → APPLICABLE_INSTITUTIONAL_DECISIONS → APPLICABLE_ASSESSMENT/OBLIGATION → PAYMENT_PREPARED → PROVIDER_OUTCOME/SETTLEMENT_OR_RECONCILIATION → CEE_FINAL_RESULT → READ_ONLY_INSPECTION`
+`INSTRUCTION_RECEIVED_BY_MINAH → INPUT_AND_CHANNEL_VALIDATED → IDENTITY_VERIFIED_VIA_AUTHORISED_REGISTRY_API → INTENT_AND_INSTRUCTION_NORMALISED → JURISDICTION_AND_LAW_CONTEXT_PINNED → USER_AUTHORITY_SCOPE_VERIFIED → PRELIMINARY_EVIDENCE_AND_POLICY_CHECKS → MINAH_DISPOSITION_AND_HANDOFF_ENVELOPE_RECORDED → CEE_ADMISSION_AND_DURABLE_ORCHESTRATION → IVM_INDEPENDENT_TRANSITION_AND_RULE_ENFORCEMENT → APPLICABLE_INSTITUTIONAL_DECISIONS → APPLICABLE_ASSESSMENT/OBLIGATION → APPLICABLE_PAYMENT_OR_EDGE_EXECUTION → PROVIDER_OUTCOME/SETTLEMENT_OR_RECONCILIATION → CEE_FINAL_RESULT → READ_ONLY_INSPECTION`
 
-This is a conformance template, not a claim that every instruction requires a tax assessment, two institutions, a payment, or an edge stage. For each instruction class, the contract must declare which stages apply; all others must be explicitly recorded as `NOT_APPLICABLE` with a reason, never silently skipped. Rejection and deferral stop all dependent stages, while the trace records the stop point and proves that forbidden downstream effects did not occur. Health, capability, and read-only inspection calls are not top-level execution instructions and must not mutate or resume an operation.
+This is the mandatory order for applicable stages, not a claim that every instruction needs payment, two institutional decisions, or edge execution. The instruction-class contract must mark inapplicable stages explicitly with a reason. MINAH must not hand an instruction downstream if identity is unverified, the actor's required authority is absent/expired/out of scope, mandatory preliminary checks fail, or the legal context cannot be established with sufficient confidence. Such requests are rejected, deferred, or routed for authorised human review as policy requires; dependent downstream side effects must not occur.
 
-The legacy `/demo/instructions` endpoint is retained only as a synthetic demonstrator and is **not** a conforming production instruction ingress. The current `/protocol/instructions` and `/cee/cases` endpoints are research routes, not production-secured universal ingress. A future production implementation must route supported instruction classes through the shared CEE orchestration contract and enforce this rule with API conformance tests.
+Identity must be checked through an authorised national or enterprise identity-registry API, not by direct ungoverned database access. The implementation must record the issuer/source, verification result, credential or subject reference, verification time, and status/version where available, while minimising retained personal data. A voiceprint, caller ID, or spoken name alone is not conclusive identity proof. Authority verification is a separate check from identity: a known person may still lack permission for the requested action. Authority must be scoped to action, resource, jurisdiction, validity period, delegation, and relevant limits.
+
+MINAH's legal grounding must be jurisdiction-aware and versioned: the applicable national, enterprise, or company rules and their effective dates/source references must be pinned to the instruction. Ambiguous legal interpretation, stale/missing authoritative sources, conflicting provisions, or high-impact exceptions must follow an explicit defer/escalation policy. MINAH records a traceable jurisprudential disposition and rationale references; she does not grant herself execution authority or bypass IVM/CEE safeguards.
+
+CEE's durable orchestration record begins when it receives the MINAH-approved handoff envelope; the MINAH ingress must itself have durable receipt/audit correlation so rejected and deferred instructions are also inspectable. The handoff envelope must bind the original request digest, verified principal/authority references, jurisdiction, pinned legal/rule versions, evidence references, MINAH model/policy version, disposition, and stable correlation/operation ID. CEE and IVM then independently validate the envelope and execution preconditions rather than trusting an unchecked MINAH assertion.
+
+The legacy `/demo/instructions`, `/protocol/instructions`, and `/cee/cases` routes remain research demonstrators and are **not** compliant production ingress merely because they produce traces. In particular, current prototypes do not yet implement national-registry-backed identity verification or the complete MINAH-first gate. Production conformance tests must prove that no downstream CEE admission, IVM transition, institutional decision, payment preparation, provider call, or edge action occurs before required MINAH identity/authority/preliminary checks pass. Health, capability, and read-only inspection calls are not top-level execution instructions and must not mutate or resume an operation.
 
 ## 2. Non-negotiable execution invariants
 
 1. **CEE owns orchestration.** Every accepted top-level instruction has a stable operation ID, a pinned request digest, explicit lifecycle events, a durable result and a read-only inspection endpoint.
-2. **MINAH is advisory, never self-authorising.** Validate its output schema and provenance; record the disposition and version. A request for more evidence defers execution. A malformed or self-authorising disposition fails closed.
+2. **MINAH is the first gate, but not the sole enforcement authority.** She receives the instruction first and performs identity verification through authorised registry APIs, intent normalisation, jurisdiction/legal-version pinning, scoped authority verification, and preliminary checks before issuing a disposition and handoff envelope. Validate output schema and provenance; a request for more evidence defers execution. A malformed or self-authorising disposition fails closed. IVM and CEE independently enforce their own invariants.
 3. **IVM checks the authoritative transition.** Actor/authority, active status, rule-set/version, eligibility and prior state are revalidated at the transition boundary. Client-supplied booleans must not establish authority or legal eligibility.
 4. **Institutional approval is stage-specific.** Origin approval does not imply destination approval. Rejection, revoked authority, actor mismatch, stale rules or missing evidence must stop dependent stages.
 5. **No economic effect before all prerequisites.** Do not create an actionable payment instruction or invoke a provider until the current, independently recorded approvals and assessment are valid. Provider acknowledgement is not settlement.
@@ -68,7 +74,11 @@ The current payment model stores its own records in a separate SQLite database f
 ## 5. Required integration tests
 
 ### Protocol and institutional gates
-- MINAH asks for more evidence: no institutional decision, obligation, payment instruction or provider call.
+- MINAH asks for more evidence: no CEE execution admission, IVM transition, institutional decision, obligation, payment instruction, provider call or edge action.
+- Unverified identity, expired/out-of-scope authority, or failed preliminary checks: fail closed before downstream execution; test each case separately.
+- Voice input without an independently verified identity credential: no privileged action.
+- Registry API timeout, stale identity status, missing jurisdiction/legal source, or ambiguous high-impact rule: defer/escalate, never silently assume approval.
+- Replay or tampering of a MINAH handoff envelope: reject unless its integrity, correlation ID, request digest, versions and verification references validate.
 - Malformed/self-authorising MINAH output: reject before IVM and downstream actions.
 - Origin rejection: destination, assessment, obligation and payment are not attempted.
 - Destination rejection: assessment, obligation and payment are not attempted.
