@@ -233,6 +233,51 @@ class KinSysProtocolPipeline:
         # MINAH is evaluated once, then the disposition is pinned in the CEE journal.
         if operation["minah_json"] is None:
             disposition = self.minah.review(evidence)
+            contract_error = self._minah_contract_error(disposition)
+            if contract_error:
+                # A malformed or self-authorising MINAH output is recorded as a
+                # rejected advisory result; it never reaches the IVM transition.
+                safe_disposition = {
+                    "status": "INVALID_DISPOSITION",
+                    "missing_fields": [],
+                    "source_refs": [],
+                    "uncertainty": "HIGH",
+                    "may_authorise": False,
+                    "model_version": "UNTRUSTED_OUTPUT",
+                    "contract_error": contract_error,
+                }
+                self.cee.advance(
+                    operation_id, "ADMITTED",
+                    detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
+                )
+                self.cee.advance(
+                    operation_id, "CONTEXT_ESTABLISHED",
+                    detail={
+                        "jurisdiction": request["jurisdiction"],
+                        "rule_set": request["rule_set"],
+                        "rule_version": request["rule_version"],
+                        "evidence_digest": _digest(evidence),
+                    },
+                )
+                self.cee.advance(
+                    operation_id, "AUTHORITY_EVALUATED", status="REJECTED",
+                    detail={"minah_contract_error": contract_error, "ivm_not_invoked": True},
+                    minah=safe_disposition,
+                )
+                result = {
+                    "operation_id": operation_id,
+                    "status": "REJECTED",
+                    "reason": "MINAH_DISPOSITION_CONTRACT_VIOLATION",
+                    "minah_disposition": safe_disposition,
+                    "ivm_decision": None,
+                    "funds_moved": False,
+                }
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="REJECTED",
+                    outcome="REJECTED", result=result,
+                    detail={"reason": result["reason"], "ivm_not_invoked": True},
+                )
+                return {**result, "duplicate": False, "cee_events": self.cee.events(operation_id)}
             self.cee.advance(
                 operation_id, "ADMITTED",
                 detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
@@ -393,6 +438,31 @@ class KinSysProtocolPipeline:
             result = operation["result_json"]
             return {**result, "duplicate": True, "cee_events": self.cee.events(operation_id)}
         raise LifecycleViolation(f"UNHANDLED_RESUMABLE_PHASE:{operation['phase']}")
+
+    @staticmethod
+    def _minah_contract_error(disposition: Any) -> str | None:
+        if not isinstance(disposition, dict):
+            return "OUTPUT_NOT_OBJECT"
+        required = {"status", "missing_fields", "source_refs", "uncertainty", "may_authorise", "model_version"}
+        if required - set(disposition):
+            return "MISSING_REQUIRED_FIELDS"
+        if disposition.get("status") not in {"NEEDS_INFORMATION", "ADVISORY_ONLY"}:
+            return "INVALID_STATUS"
+        if disposition.get("may_authorise") is not False:
+            return "MINAH_MUST_NOT_AUTHORISE"
+        if not isinstance(disposition.get("missing_fields"), list) or not all(
+            isinstance(item, str) for item in disposition["missing_fields"]
+        ):
+            return "INVALID_MISSING_FIELDS"
+        if not isinstance(disposition.get("source_refs"), list) or not all(
+            isinstance(item, str) for item in disposition["source_refs"]
+        ):
+            return "INVALID_SOURCE_REFERENCES"
+        if disposition.get("uncertainty") not in {"LOW", "MEDIUM", "HIGH"}:
+            return "INVALID_UNCERTAINTY"
+        if not isinstance(disposition.get("model_version"), str) or not disposition["model_version"]:
+            return "INVALID_MODEL_VERSION"
+        return None
 
     @staticmethod
     def _validate(request: dict[str, Any]) -> None:
