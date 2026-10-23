@@ -290,6 +290,74 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(reconciled["result"]["payment_lifecycle"]["recorded_status"], "RECONCILED_NOT_SETTLED")
         self.assertFalse(reconciled["protocol_boundary"]["funds_moved"])
 
+    def test_cee_settlement_evidence_route_validates_obligation_and_is_inspectable(self):
+        payload = {
+            "operation_id": "HTTP-CEE-SETTLE-1",
+            "case_id": "HTTP-CEE-SETTLE-CASE",
+            "jurisdiction": "UG-DEMO",
+            "evidence": {
+                "consignment_id": "HTTP-CEE-SETTLE-CASE",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+            },
+            "origin_actor": "ORIGIN-A",
+            "destination_actor": "DESTINATION-B",
+            "execution_actor": "AUTHORITY-001",
+            "origin_decision": "APPROVE",
+            "destination_decision": "APPROVE",
+            "declared_value_minor": 1000000,
+            "payment_outcome": "TIMEOUT_UNKNOWN",
+            "exempt": False,
+            "revoke_origin_before_decision": False,
+        }
+        created, body = self.request("/cee/cases", "POST", payload)
+        self.assertEqual(created["status"], 200)
+        amount = body["result"]["obligation"]["amount_minor"]
+        response, settled = self.request("/cee/settlement-evidence", "POST", {
+            "operation_id": "HTTP-CEE-SETTLE-1",
+            "event_id": "HTTP-CEE-SETTLE-EVENT-1",
+            "settlement_reference": "SYNTHETIC-SETTLEMENT-REF",
+            "amount_minor": amount,
+            "currency": "UGX",
+        })
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(settled["status"], "COMPLETED_WITH_RECONCILIATION_CONFIRMED_SETTLEMENT")
+        self.assertEqual(settled["protocol_boundary"]["settlement_evidence"],
+                         "CALLER_SUPPLIED_SYNTHETIC_EVIDENCE_NOT_AUTHENTICATED")
+        self.assertFalse(settled["result"]["funds_moved"])
+        inspected, operation = self.request("/cee/operations/HTTP-CEE-SETTLE-1")
+        self.assertEqual(inspected["status"], 200)
+        self.assertEqual(operation["operation"]["phase"], "FINALIZED")
+        self.assertIn("SETTLEMENT_EVIDENCE", [event["phase"] for event in operation["operation"]["events"]])
+
+    def test_cee_settlement_route_rejects_wrong_amount(self):
+        payload = {
+            "operation_id": "HTTP-CEE-SETTLE-BAD",
+            "case_id": "HTTP-CEE-SETTLE-BAD-CASE",
+            "jurisdiction": "UG-DEMO",
+            "evidence": {"consignment_id": "HTTP-CEE-SETTLE-BAD-CASE", "commodity": "SYNTHETIC_MAIZE"},
+            "origin_actor": "ORIGIN-A",
+            "destination_actor": "DESTINATION-B",
+            "execution_actor": "AUTHORITY-001",
+            "origin_decision": "APPROVE",
+            "destination_decision": "APPROVE",
+            "declared_value_minor": 1000000,
+            "payment_outcome": "TIMEOUT_UNKNOWN",
+            "exempt": False,
+            "revoke_origin_before_decision": False,
+        }
+        self.request("/cee/cases", "POST", payload)
+        response, body = self.request("/cee/settlement-evidence", "POST", {
+            "operation_id": "HTTP-CEE-SETTLE-BAD",
+            "event_id": "HTTP-CEE-SETTLE-BAD-EVENT",
+            "settlement_reference": "SYNTHETIC-SETTLEMENT-REF",
+            "amount_minor": 1,
+            "currency": "UGX",
+        })
+        self.assertEqual(response["status"], 422)
+        self.assertEqual(body["error"]["code"], "INVALID_SETTLEMENT_EVIDENCE")
+
     def test_unknown_fields_fail_closed(self):
         response, body = self.request("/demo/instructions", "POST", {"consignment_id": "HTTP-X", "skip_minah": True})
         self.assertEqual(response["status"], 422)
