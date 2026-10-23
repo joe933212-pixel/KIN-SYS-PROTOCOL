@@ -16,6 +16,7 @@ import os
 import re
 import uuid
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any, Callable
 from wsgiref.simple_server import make_server
 
@@ -306,8 +307,11 @@ class KinSysPrototypeApplication:
         return self.demonstrator.run_case(**payload)
 
 
-def create_app(demonstrator: IntegratedDemonstrator | None = None) -> KinSysPrototypeApplication:
-    return KinSysPrototypeApplication(demonstrator)
+def create_app(
+    demonstrator: IntegratedDemonstrator | None = None,
+    pipeline: KinSysProtocolPipeline | None = None,
+) -> KinSysPrototypeApplication:
+    return KinSysPrototypeApplication(demonstrator, pipeline)
 
 
 def main() -> None:
@@ -319,8 +323,25 @@ def main() -> None:
         raise SystemExit("KIN_SYS_PORT must be an integer") from exc
     if not 1 <= port <= 65535:
         raise SystemExit("KIN_SYS_PORT must be between 1 and 65535")
-    app = create_app()
+    data_dir = Path(os.environ.get("KIN_SYS_DATA_DIR", ".kin-sys-prototype"))
+    cee_database = os.environ.get("KIN_SYS_CEE_DB", str(data_dir / "cee.sqlite3"))
+    ivm_database = os.environ.get("KIN_SYS_IVM_DB", str(data_dir / "ivm.sqlite3"))
+    for database in (cee_database, ivm_database):
+        if database != ":memory:":
+            Path(database).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    pipeline = KinSysProtocolPipeline(
+        cee_database=cee_database,
+        ivm_database=ivm_database,
+    )
+    app = create_app(pipeline=pipeline)
+    for database in (cee_database, ivm_database):
+        if database != ":memory:" and Path(database).exists():
+            try:
+                os.chmod(database, 0o600)
+            except OSError:
+                pass
     print(f"KIN-SYS local synthetic prototype listening on http://{host}:{port}")
+    print(f"CEE journal: {cee_database}; IVM store: {ivm_database}")
     print("WARNING: this is not a production API; do not expose it to the public internet.")
     try:
         with make_server(host, port, app) as server:
