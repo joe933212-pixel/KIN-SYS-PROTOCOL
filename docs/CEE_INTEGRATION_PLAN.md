@@ -22,6 +22,18 @@ CI run [#241](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/3
 
 Remaining gaps include: independent SQLite stores without cross-store atomicity; no production transactional outbox/dispatcher or authenticated provider idempotency; no authenticated/authoritative reconciliation source; no production identity or legal-rule source; limited crash injection around every stage; no production outbox/dispatcher; no authenticated settlement or reconciliation source; no real MINAH service, distributed finality, or Nexus Pod integration. Caller-supplied reconciliation is demonstrator input only and must not be treated as trusted external evidence.
 
+## 1B. Mandatory instruction conformance sequence
+
+Every production instruction must enter through one CEE-owned ingress and receive one stable operation ID before any component can create an externally meaningful or economically consequential effect. No production command route may invoke MINAH, IVM, an institutional adapter, a payment provider, or an edge execution adapter as a bypass around CEE orchestration.
+
+The required trace sequence for an instruction is:
+
+`RECEIVED → VALIDATED → CEE_ADMITTED → CONTEXT_AND_VERSIONS_PINNED → MINAH_DISPOSITION_RECORDED → AUTHORITY_AND_RULES_CHECKED_BY_IVM → APPLICABLE_INSTITUTIONAL_DECISIONS → APPLICABLE_ASSESSMENT/OBLIGATION → PAYMENT_PREPARED → PROVIDER_OUTCOME/SETTLEMENT_OR_RECONCILIATION → CEE_FINAL_RESULT → READ_ONLY_INSPECTION`
+
+This is a conformance template, not a claim that every instruction requires a tax assessment, two institutions, a payment, or an edge stage. For each instruction class, the contract must declare which stages apply; all others must be explicitly recorded as `NOT_APPLICABLE` with a reason, never silently skipped. Rejection and deferral stop all dependent stages, while the trace records the stop point and proves that forbidden downstream effects did not occur. Health, capability, and read-only inspection calls are not top-level execution instructions and must not mutate or resume an operation.
+
+The legacy `/demo/instructions` endpoint is retained only as a synthetic demonstrator and is **not** a conforming production instruction ingress. The current `/protocol/instructions` and `/cee/cases` endpoints are research routes, not production-secured universal ingress. A future production implementation must route supported instruction classes through the shared CEE orchestration contract and enforce this rule with API conformance tests.
+
 ## 2. Non-negotiable execution invariants
 
 1. **CEE owns orchestration.** Every accepted top-level instruction has a stable operation ID, a pinned request digest, explicit lifecycle events, a durable result and a read-only inspection endpoint.
