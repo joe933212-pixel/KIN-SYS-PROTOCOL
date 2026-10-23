@@ -55,6 +55,17 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.assertTrue(all(component == "CEE" for component in components[first_cee:]))
         self.assertEqual(result["execution_result"]["to_state"], "ACTIVE")
 
+    def test_unknown_terminal_phase_is_deferred_not_promoted_to_passed(self):
+        operation_id = "CASE-UNKNOWN-TERMINAL"
+        payload = request(operation_id)
+        self.coordinator.execute(payload)
+        result = self.coordinator._finish(
+            operation_id, "UNRECOGNIZED_PHASE", "UNRECOGNIZED_STATUS",
+            {"reason": "regression-test", "funds_moved": False},
+        )
+        self.assertEqual(result["final_decision"], "DEFERRED")
+        self.assertNotEqual(result["final_decision"], "PASSED")
+
     def test_case_runtime_shares_cee_store_and_rejects_split_store_configuration(self):
         self.assertIs(self.coordinator.cee_db, self.coordinator.ivm.db)
         with self.assertRaisesRegex(ValueError, "SPLIT_CASE_RUNTIME_STORAGE_NO_LONGER_SUPPORTED"):
