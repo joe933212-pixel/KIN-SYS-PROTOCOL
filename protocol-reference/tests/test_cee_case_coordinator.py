@@ -71,6 +71,7 @@ class CEECaseCoordinatorTests(unittest.TestCase):
     def test_origin_rejection_prevents_destination_and_payment(self):
         result = self.coordinator.execute(request("CASE-ORIGIN-REJECT", origin_decision="REJECT"))
         self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["final_decision"], "REJECTED")
         self.assertIsNone(result["obligation"])
         self.assertIsNone(result["payment_lifecycle"])
         self.assertEqual(result["institutional_decisions"][-1]["status"], "NOT_ATTEMPTED")
@@ -80,6 +81,7 @@ class CEECaseCoordinatorTests(unittest.TestCase):
     def test_destination_rejection_prevents_ivm_economic_gate_and_payment(self):
         result = self.coordinator.execute(request("CASE-DEST-REJECT", destination_decision="REJECT"))
         self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["final_decision"], "REJECTED")
         self.assertNotIn("execution_result", result)
         self.assertIsNone(result["obligation"])
         self.assertIsNone(result["payment_lifecycle"])
