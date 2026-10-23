@@ -631,10 +631,15 @@ class CEECaseCoordinator:
     def _finish(self, operation_id: str, phase: str, status: str, result: dict[str, Any]) -> dict[str, Any]:
         if phase == "REJECTED" or status == "REJECTED":
             final_decision = "REJECTED"
-        elif phase in {"DEFERRED", "PENDING_RECONCILIATION", "PENDING_PAYMENT_RESOLUTION"}:
-            final_decision = "DEFERRED"
-        else:
+        elif phase == "FINALIZED" and status in {
+            "COMPLETED_WITH_SIMULATED_SETTLEMENT",
+            "COMPLETED_WITH_SYNTHETIC_EXEMPTION",
+            "COMPLETED_WITH_RECONCILIATION_CONFIRMED_SETTLEMENT",
+        }:
             final_decision = "PASSED"
+        else:
+            # Unknown, pending, or inconsistent terminal states fail closed.
+            final_decision = "DEFERRED"
         stored_result = {
             **result, "operation_id": operation_id, "status": status,
             "final_decision": final_decision,
