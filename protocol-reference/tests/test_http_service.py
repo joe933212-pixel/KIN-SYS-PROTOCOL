@@ -55,7 +55,8 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["protocol_pipeline"]["status"], "SYNTHETIC_MINAH_CEE_BOUNDARY_IMPLEMENTED")
         self.assertEqual(body["protocol_pipeline"]["canonical_flow"], ["MINAH", "CEE", "FINAL_DECISION"])
-        self.assertFalse(body["protocol_pipeline"]["cross_store_atomicity"])
+        self.assertTrue(body["protocol_pipeline"]["single_cee_owned_store"])
+        self.assertFalse(body["protocol_pipeline"]["atomic_commit_across_lifecycle_and_execution"])
         self.assertIn(
             "production identity and cryptographic authentication",
             body["not_yet_wired_as_production_components"],
