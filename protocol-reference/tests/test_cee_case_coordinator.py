@@ -138,6 +138,68 @@ class CEECaseCoordinatorTests(unittest.TestCase):
                 "CASE-RECONCILE", "CASE-RECONCILE:STALE", "UNKNOWN", source_sequence=1,
             )
 
+    def test_settlement_evidence_must_match_pinned_obligation(self):
+        result = self.coordinator.execute(request("CASE-SETTLEMENT-MISMATCH", payment_outcome="TIMEOUT_UNKNOWN"))
+        amount = result["obligation"]["amount_minor"]
+        with self.assertRaisesRegex(ValueError, "SETTLEMENT_DOES_NOT_MATCH_PINNED_OBLIGATION"):
+            self.coordinator.record_settlement_evidence(
+                "CASE-SETTLEMENT-MISMATCH", "SETTLE-MISMATCH-1", "SYNTHETIC-SETTLE-1",
+                amount_minor=amount + 1, currency="UGX",
+            )
+        self.assertNotEqual(
+            self.coordinator.payments.get_payment("CASE-SETTLEMENT-MISMATCH:PAYMENT:1")["status"],
+            "SETTLED",
+        )
+
+    def test_settlement_evidence_recovers_after_payment_store_commit_before_cee_write(self):
+        result = self.coordinator.execute(request("CASE-SETTLEMENT-CRASH", payment_outcome="TIMEOUT_UNKNOWN"))
+        payment_id = result["payment_lifecycle"]["payment_id"]
+        original = self.coordinator.payments.record_settlement
+        calls = {"count": 0}
+
+        def crash_after_payment_commit(*args, **kwargs):
+            committed = original(*args, **kwargs)
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("simulated process crash after payment-store commit")
+            return committed
+
+        self.coordinator.payments.record_settlement = crash_after_payment_commit
+        obligation = result["obligation"]
+        with self.assertRaisesRegex(RuntimeError, "simulated process crash"):
+            self.coordinator.record_settlement_evidence(
+                "CASE-SETTLEMENT-CRASH", "CASE-SETTLEMENT-EVENT-1", "SYNTHETIC-SETTLEMENT-REF",
+                amount_minor=obligation["amount_minor"], currency=obligation["currency"],
+            )
+        self.assertEqual(self.coordinator.payments.get_payment(payment_id)["status"], "SETTLED")
+        self.assertEqual(self.coordinator.inspect("CASE-SETTLEMENT-CRASH")["phase"], "PENDING_RECONCILIATION")
+
+        resumed = self.coordinator.record_settlement_evidence(
+            "CASE-SETTLEMENT-CRASH", "CASE-SETTLEMENT-EVENT-1", "SYNTHETIC-SETTLEMENT-REF",
+            amount_minor=obligation["amount_minor"], currency=obligation["currency"],
+        )
+        self.assertEqual(resumed["status"], "COMPLETED_WITH_RECONCILIATION_CONFIRMED_SETTLEMENT")
+        self.assertEqual(self.coordinator.payments.get_payment(payment_id)["status"], "SETTLED")
+        history = self.coordinator.payments.history(payment_id)
+        self.assertEqual(sum(e["event_type"] == "SETTLEMENT_EVIDENCE" for e in history), 1)
+        self.assertEqual(
+            sum(e["phase"] == "SETTLEMENT_EVIDENCE" for e in self.coordinator.inspect("CASE-SETTLEMENT-CRASH")["events"]),
+            1,
+        )
+        self.assertFalse(resumed["funds_moved"])
+
+    def test_settlement_event_id_reuse_with_changed_payload_conflicts(self):
+        result = self.coordinator.execute(request("CASE-SETTLEMENT-CONFLICT", payment_outcome="TIMEOUT_UNKNOWN"))
+        obligation = result["obligation"]
+        args = ("CASE-SETTLEMENT-CONFLICT", "CASE-SETTLEMENT-EVENT-1", "SYNTHETIC-SETTLEMENT-REF")
+        self.coordinator.record_settlement_evidence(
+            *args, amount_minor=obligation["amount_minor"], currency=obligation["currency"],
+        )
+        with self.assertRaises(CaseConflict):
+            self.coordinator.record_settlement_evidence(
+                *args, amount_minor=obligation["amount_minor"], currency=obligation["currency"],
+            )
+
     def test_revoked_origin_authority_blocks_all_downstream_work(self):
         result = self.coordinator.execute(request("CASE-REVOKED", revoke_origin_before_decision=True))
         self.assertEqual(result["status"], "REJECTED")
