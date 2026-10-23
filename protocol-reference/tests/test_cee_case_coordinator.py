@@ -99,6 +99,25 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.coordinator.inspect("CASE-UNKNOWN")["phase"], "PENDING_RECONCILIATION")
         self.assertFalse(result["funds_moved"])
 
+    def test_crash_after_submission_intent_does_not_blindly_resubmit(self):
+        class CrashOnceProvider:
+            def __init__(self):
+                self.calls = 0
+            def submit(self, payment_id, amount_ugx, *, outcome="CONFIRMED"):
+                self.calls += 1
+                raise RuntimeError("simulated crash after request may have left process")
+
+        provider = CrashOnceProvider()
+        self.coordinator.provider = provider
+        payload = request("CASE-UNCERTAIN-CRASH")
+        with self.assertRaises(RuntimeError):
+            self.coordinator.execute(payload)
+        resumed = self.coordinator.execute(payload)
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(resumed["status"], "PENDING_PAYMENT_RECONCILIATION")
+        self.assertEqual(resumed["payment_lifecycle"]["recorded_status"], "UNKNOWN_PENDING_RECONCILIATION")
+        self.assertFalse(resumed["funds_moved"])
+
     def test_revoked_origin_authority_blocks_all_downstream_work(self):
         result = self.coordinator.execute(request("CASE-REVOKED", revoke_origin_before_decision=True))
         self.assertEqual(result["status"], "REJECTED")
