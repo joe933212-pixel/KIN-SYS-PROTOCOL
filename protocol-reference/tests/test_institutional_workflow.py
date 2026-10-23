@@ -213,6 +213,20 @@ while True:
                 self.assertEqual(len(history), 2)
                 self.assertEqual(history[0].get("new_outcome", history[0].get("result_after")), "REJECT")
                 self.assertEqual(history[1].get("new_outcome", history[1].get("result_after")), "APPROVE")
+
+                # A delayed replay of the original rejection must not undo
+                # the later institution-authorised correction.
+                replay = self.decide(
+                    store, event_id="O-1", stage="ORIGIN",
+                    actor_id="ORIGIN-A", decision="REJECT",
+                )
+                self.assertTrue(replay["duplicate"])
+                current = store.stage("C-001", "ORIGIN")
+                self.assertEqual(
+                    current.get("outcome", current.get("result")), "APPROVE"
+                )
+                self.assertEqual(len(store.history("C-001")), 2)
+
                 if implementation is InstitutionalWorkflow:
                     link = store.db.execute("SELECT superseded_event_id, correction_authority_id, correction_basis, proposal_event_id FROM stage_corrections WHERE correction_event_id='A-1'").fetchone()
                 else:
