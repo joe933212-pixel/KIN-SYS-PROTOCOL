@@ -299,18 +299,20 @@ class KinSysProtocolPipeline:
                     eligible=request["evidence"].get("commodity") != "SYNTHETIC_PROHIBITED_COMMODITY",
                 )
             else:
-                expected = (
-                    AUTHORITY_ID, int(self.authority_active),
-                    RULE_SET, RULE_VERSION,
+                expected_immutable = (
+                    AUTHORITY_ID, RULE_SET, RULE_VERSION,
                     int(request["evidence"].get("commodity") != "SYNTHETIC_PROHIBITED_COMMODITY"),
                 )
-                actual = (
-                    existing_process["authority_id"], existing_process["authority_active"],
-                    existing_process["rule_set"], existing_process["rule_version"],
-                    existing_process["eligible"],
+                actual_immutable = (
+                    existing_process["authority_id"], existing_process["rule_set"],
+                    existing_process["rule_version"], existing_process["eligible"],
                 )
-                if expected != actual:
+                if expected_immutable != actual_immutable:
                     raise ExecutionConflict("PROCESS_CONTEXT_DIFFERS_FROM_PINNED_CONTEXT")
+                # Authority status is mutable and must be refreshed from the configured
+                # authority adapter before IVM evaluates a resumed instruction.
+                if bool(existing_process["authority_active"]) != self.authority_active:
+                    self.ivm.set_authority_active(process_id, self.authority_active)
             self.cee.advance(
                 operation_id, "PREPARED",
                 detail={"ivm_preconditions_pinned": True, "process_id": process_id},
@@ -401,6 +403,9 @@ class KinSysProtocolPipeline:
         if not isinstance(request, dict) or required - set(request):
             missing = sorted(required - set(request)) if isinstance(request, dict) else sorted(required)
             raise ValueError("MISSING_REQUIRED_FIELDS:" + ",".join(missing))
+        unknown = sorted(set(request) - required)
+        if unknown:
+            raise ValueError("UNKNOWN_FIELDS:" + ",".join(unknown))
         for key in (
             "operation_id", "event_id", "process_id", "actor_id", "event_type",
             "jurisdiction", "rule_set", "rule_version",
