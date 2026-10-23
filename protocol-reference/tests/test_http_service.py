@@ -53,7 +53,8 @@ class HttpServiceTests(unittest.TestCase):
     def test_capabilities_disclose_unified_cee_boundary_and_production_gaps(self):
         response, body = self.request("/system/capabilities")
         self.assertEqual(response["status"], 200)
-        self.assertEqual(body["protocol_pipeline"]["status"], "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED")
+        self.assertEqual(body["protocol_pipeline"]["status"], "SYNTHETIC_MINAH_CEE_BOUNDARY_IMPLEMENTED")
+        self.assertEqual(body["protocol_pipeline"]["canonical_flow"], ["MINAH", "CEE", "FINAL_DECISION"])
         self.assertFalse(body["protocol_pipeline"]["cross_store_atomicity"])
         self.assertIn(
             "production identity and cryptographic authentication",
