@@ -397,16 +397,15 @@ class CEECaseCoordinator:
                 existing_event = previous
                 break
 
-        # The payment lifecycle independently checks the exact pinned obligation
-        # amount/currency and stable event ID; retry repairs CEE after a split-store crash.
+        # Validate the CEE-pinned obligation before touching the payment store.
+        if amount_minor != obligation.get("amount_minor") or currency != obligation.get("currency"):
+            raise ValueError("SETTLEMENT_DOES_NOT_MATCH_PINNED_OBLIGATION")
+        # The payment lifecycle independently checks its own obligation and stable
+        # event ID; retry repairs CEE after a split-store crash.
         lifecycle = self.payments.record_settlement(
             payment_id, event_id, settlement_reference,
             amount_minor=amount_minor, currency=currency,
         )
-        if amount_minor != obligation.get("amount_minor") or currency != obligation.get("currency"):
-            # Normally PaymentLifecycle rejects this first; retain an explicit
-            # coordinator-level contract guard for corrupted result envelopes.
-            raise ValueError("SETTLEMENT_DOES_NOT_MATCH_PINNED_OBLIGATION")
         payment_info = {
             **payment_info, "status": "COMPLETED_WITH_RECONCILIATION_CONFIRMED_SETTLEMENT",
             "recorded_status": lifecycle["status"],
