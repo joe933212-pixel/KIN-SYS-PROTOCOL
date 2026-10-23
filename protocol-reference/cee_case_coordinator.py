@@ -148,7 +148,7 @@ class CEECaseCoordinator:
         if minah is None:
             raw = self.minah.review(evidence)
             if not isinstance(raw, dict) or raw.get("may_authorise") is not False or raw.get("status") not in {"ADVISORY_ONLY", "NEEDS_INFORMATION"}:
-                return self._finish(operation_id, "REJECTED", "MINAH_CONTRACT_VIOLATION", {"minah": {"status": "INVALID_DISPOSITION", "may_authorise": False}, "funds_moved": False})
+                return self._finish(operation_id, "REJECTED", "REJECTED", {"reason": "MINAH_CONTRACT_VIOLATION", "minah_disposition": {"status": "INVALID_DISPOSITION", "may_authorise": False}, "funds_moved": False})
             minah = raw
             self._event(operation_id, "MINAH", "DISPOSITION_RECORDED", minah["status"], {
                 "advisory_only": True, "may_authorise": False,
@@ -158,8 +158,8 @@ class CEECaseCoordinator:
             })
             self._save_component(operation_id, "minah", minah)
         if minah["status"] == "NEEDS_INFORMATION":
-            return self._finish(operation_id, "DEFERRED", "MINAH_REQUIRES_ADDITIONAL_EVIDENCE", {
-                "minah_disposition": minah, "institutional_decisions": None,
+            return self._finish(operation_id, "DEFERRED", "DEFERRED", {
+                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE", "minah_disposition": minah, "institutional_decisions": None,
                 "payment_lifecycle": None, "funds_moved": False,
             })
 
@@ -214,8 +214,8 @@ class CEECaseCoordinator:
             rejected = any(s["decision"] == "REJECT" or s["status"] == "REJECTED" for s in stages)
             status = "REJECTED" if rejected else "DEFERRED"
             reason = "INSTITUTIONAL_APPROVAL_REQUIRED"
-            return self._finish(operation_id, status, reason, {
-                "minah_disposition": minah, "institutional_decisions": stages,
+            return self._finish(operation_id, status, status, {
+                "reason": reason, "minah_disposition": minah, "institutional_decisions": stages,
                 "obligation": None, "payment_lifecycle": None, "funds_moved": False,
             })
 
@@ -345,11 +345,12 @@ class CEECaseCoordinator:
         self._event(operation_id, "CEE", phase, status, detail)
 
     def _finish(self, operation_id: str, phase: str, status: str, result: dict[str, Any]) -> dict[str, Any]:
+        stored_result = {**result, "operation_id": operation_id, "status": status}
         self.cee_db.execute("BEGIN IMMEDIATE")
         try:
             self.cee_db.execute(
                 "UPDATE cee_cases SET phase=?, result_json=? WHERE operation_id=?",
-                (phase, _canonical(result), operation_id),
+                (phase, _canonical(stored_result), operation_id),
             )
             self.cee_db.execute(
                 "INSERT INTO cee_case_events(operation_id,component,phase,status,detail_json) VALUES(?,?,?,?,?)",
@@ -362,8 +363,7 @@ class CEECaseCoordinator:
         snapshot = self.inspect(operation_id)
         assert snapshot is not None
         return {
-            **result, "operation_id": operation_id, "status": status,
-            "duplicate": False, "cee_events": snapshot["events"],
+            **stored_result, "duplicate": False, "cee_events": snapshot["events"],
             "component_trace": self._trace(snapshot["events"]),
         }
 
