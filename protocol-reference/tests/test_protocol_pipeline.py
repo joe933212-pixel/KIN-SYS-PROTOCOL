@@ -154,14 +154,13 @@ class ProtocolPipelineTests(unittest.TestCase):
     def test_retry_after_ivm_commit_before_cee_ack_recovers_idempotently(self):
         with tempfile.TemporaryDirectory() as tmp:
             cee_db = str(Path(tmp) / "cee.sqlite3")
-            ivm_db = str(Path(tmp) / "ivm.sqlite3")
-            pipeline = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+            pipeline = KinSysProtocolPipeline(cee_database=cee_db)
             try:
                 with self.assertRaisesRegex(RuntimeError, "INJECTED_FAILURE_AFTER_IVM_COMMIT"):
                     pipeline.execute(request(), fail_after_ivm_commit=True)
             finally:
                 pipeline.close()
-            resumed = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+            resumed = KinSysProtocolPipeline(cee_database=cee_db)
             try:
                 result = resumed.execute(request())
                 self.assertEqual(result["status"], "PASSED")
