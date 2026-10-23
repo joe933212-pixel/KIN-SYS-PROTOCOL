@@ -1,5 +1,6 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Tests for the CEE-owned synthetic case coordinator; no real funds or services."""
+import sqlite3
 import sys
 import unittest
 from pathlib import Path
@@ -55,6 +56,60 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.assertTrue(all(component == "MINAH" for component in components[:first_cee]))
         self.assertTrue(all(component == "CEE" for component in components[first_cee:]))
         self.assertEqual(result["execution_result"]["to_state"], "ACTIVE")
+
+    def test_minah_pin_and_audit_events_roll_back_together(self):
+        db = self.coordinator.cee_db
+        db.execute(
+            "INSERT INTO cee_cases(operation_id,request_digest,request_json,phase) VALUES(?,?,?,'REQUESTED')",
+            ("CASE-ATOMIC-PIN", "digest", "{}"),
+        )
+        db.execute("""
+            CREATE TRIGGER fail_pinned_minah_event
+            BEFORE INSERT ON cee_case_events
+            WHEN NEW.component='CEE_STATE' AND NEW.phase='PINNED_MINAH'
+            BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+        """)
+        db.commit()
+        disposition = {
+            "status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+            "uncertainty": "LOW", "may_authorise": False, "model_version": "test",
+        }
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.coordinator._save_component("CASE-ATOMIC-PIN", "minah", disposition)
+        row = db.execute(
+            "SELECT minah_json FROM cee_cases WHERE operation_id='CASE-ATOMIC-PIN'"
+        ).fetchone()
+        self.assertIsNone(row["minah_json"])
+        events = db.execute(
+            "SELECT component,phase FROM cee_case_events WHERE operation_id='CASE-ATOMIC-PIN'"
+        ).fetchall()
+        self.assertEqual(events, [])
+
+    def test_case_phase_and_audit_event_roll_back_together(self):
+        db = self.coordinator.cee_db
+        db.execute(
+            "INSERT INTO cee_cases(operation_id,request_digest,request_json,phase) VALUES(?,?,?,'REQUESTED')",
+            ("CASE-ATOMIC-PHASE", "digest", "{}"),
+        )
+        db.execute("""
+            CREATE TRIGGER fail_minah_review_event
+            BEFORE INSERT ON cee_case_events
+            WHEN NEW.component='CEE' AND NEW.phase='MINAH_REVIEWED'
+            BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+        """)
+        db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.coordinator._set_phase(
+                "CASE-ATOMIC-PHASE", "MINAH_REVIEWED", "REVIEWED", {"test": True}
+            )
+        row = db.execute(
+            "SELECT phase FROM cee_cases WHERE operation_id='CASE-ATOMIC-PHASE'"
+        ).fetchone()
+        self.assertEqual(row["phase"], "REQUESTED")
+        events = db.execute(
+            "SELECT component,phase FROM cee_case_events WHERE operation_id='CASE-ATOMIC-PHASE'"
+        ).fetchall()
+        self.assertEqual(events, [])
 
     def test_unknown_terminal_phase_is_deferred_not_promoted_to_passed(self):
         operation_id = "CASE-UNKNOWN-TERMINAL"
