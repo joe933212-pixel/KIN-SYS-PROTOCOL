@@ -113,6 +113,48 @@ class HttpServiceTests(unittest.TestCase):
         self.assertFalse(body["result"]["funds_moved"])
         self.assertFalse(body["protocol_boundary"]["distributed_finality"])
 
+    def test_protocol_rejects_client_claimed_identity_verification(self):
+        payload = {
+            "operation_id": "HTTP-IDENTITY-CLAIM",
+            "event_id": "HTTP-IDENTITY-EVENT",
+            "process_id": "HTTP-IDENTITY-PROCESS",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "identity_verified": True,
+            "evidence": {"commodity": "SYNTHETIC_MAIZE"},
+        }
+        response, body = self.request("/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 422)
+        self.assertEqual(body["error"]["code"], "UNKNOWN_FIELDS")
+
+    def test_protocol_rejects_unauthorised_actor_before_cee_admission(self):
+        payload = {
+            "operation_id": "HTTP-AUTH-GATE",
+            "event_id": "HTTP-AUTH-EVENT",
+            "process_id": "HTTP-AUTH-PROCESS",
+            "actor_id": "UNAUTHORISED-ACTOR",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "HTTP-AUTH-PROCESS",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+            },
+        }
+        response, body = self.request("/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "REJECTED")
+        self.assertEqual(body["result"]["final_decision"], "REJECTED")
+        self.assertEqual(body["result"]["reason"], "AUTHORITY_MISMATCH")
+        self.assertIsNone(body["result"]["execution_result"])
+        self.assertNotIn("ADMITTED", [event["phase"] for event in body["result"]["cee_events"]])
+
     def test_protocol_operation_can_be_inspected_after_completion(self):
         payload = {
             "operation_id": "HTTP-INSPECT-1",
