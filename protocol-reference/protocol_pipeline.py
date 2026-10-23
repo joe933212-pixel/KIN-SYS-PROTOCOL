@@ -207,10 +207,12 @@ class KinSysProtocolPipeline:
         cee_database: str = ":memory:",
         ivm_database: str = ":memory:",
         minah_adapter: Any | None = None,
+        authority_active: bool = True,
     ):
         self.cee = CEEJournal(cee_database)
         self.ivm = ProtocolStore(ivm_database)
         self.minah = minah_adapter or DeterministicMinahAdapter()
+        self.authority_active = authority_active
 
     def close(self) -> None:
         self.cee.close()
@@ -291,15 +293,16 @@ class KinSysProtocolPipeline:
                     process_id=process_id,
                     initial_state="PENDING",
                     authority_id=AUTHORITY_ID,
-                    authority_active=request["authority_active"],
-                    rule_set=request["rule_set"],
-                    rule_version=request["rule_version"],
-                    eligible=request["eligible"],
+                    authority_active=self.authority_active,
+                    rule_set=RULE_SET,
+                    rule_version=RULE_VERSION,
+                    eligible=request["evidence"].get("commodity") != "SYNTHETIC_PROHIBITED_COMMODITY",
                 )
             else:
                 expected = (
-                    AUTHORITY_ID, int(request["authority_active"]),
-                    request["rule_set"], request["rule_version"], int(request["eligible"]),
+                    AUTHORITY_ID, int(self.authority_active),
+                    RULE_SET, RULE_VERSION,
+                    int(request["evidence"].get("commodity") != "SYNTHETIC_PROHIBITED_COMMODITY"),
                 )
                 actual = (
                     existing_process["authority_id"], existing_process["authority_active"],
@@ -394,7 +397,6 @@ class KinSysProtocolPipeline:
         required = {
             "operation_id", "event_id", "process_id", "actor_id", "event_type",
             "jurisdiction", "rule_set", "rule_version", "evidence",
-            "authority_active", "eligible",
         }
         if not isinstance(request, dict) or required - set(request):
             missing = sorted(required - set(request)) if isinstance(request, dict) else sorted(required)
@@ -409,6 +411,5 @@ class KinSysProtocolPipeline:
             raise ValueError("UNSUPPORTED_EVENT_TYPE")
         if not isinstance(request["evidence"], dict):
             raise ValueError("EVIDENCE_MUST_BE_OBJECT")
-        for key in ("authority_active", "eligible"):
-            if type(request[key]) is not bool:
-                raise ValueError("INVALID_BOOLEAN:" + key)
+        if request["rule_set"] != RULE_SET or request["rule_version"] != RULE_VERSION:
+            raise ValueError("UNRECOGNIZED_SYNTHETIC_RULE_CONTEXT")
