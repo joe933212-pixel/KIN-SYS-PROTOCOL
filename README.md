@@ -60,7 +60,12 @@ Run locally from the repository root with Python 3.12 or later:
 PYTHONPATH=protocol-reference python -m http_service
 ```
 
-The service binds to `127.0.0.1:8080` by default. Do not expose it to the public internet. Submit only synthetic test data to `POST /demo/instructions`; no live identity, legal source, payment provider, IVM runtime, or CEE lifecycle engine is connected.
+The service binds to `127.0.0.1:8080` by default. Do not expose it to the public internet. Submit only synthetic test data.
+
+- `POST /demo/instructions` runs the legacy integrated demonstrator.
+- `POST /protocol/instructions` runs a new synthetic vertical slice through MINAH, the existing IVM transition reference implementation, and a durable CEE lifecycle journal. Its phases and outcome are returned in the response.
+
+The latter is meaningful integration progress, but not production readiness: identity and authority are synthetic, MINAH is a deterministic stand-in, the rule context is fixed to a demo version, and IVM/CEE use separate SQLite stores. There is no cross-store atomic commit or distributed finality, and no real funds move. The 29 proposed production API routes remain unimplemented.
 1. [Protocol specification](SPECIFICATION.md)
 2. [Architecture and trust boundaries](ARCHITECTURE.md)
 3. [Source crosswalk: CRS, CISA, IVM, CEE and prior art](docs/SOURCE_CROSSWALK.md)
