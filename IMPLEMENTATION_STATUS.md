@@ -29,7 +29,7 @@ The new path records the CEE lifecycle (`REQUESTED` through `FINALIZED`), invoke
 
 Security boundary: authority status and the synthetic rule version are configured server-side, not accepted as client-controlled booleans. This remains a synthetic research slice: there is no cryptographic authentication, live MINAH model or authoritative legal source, real rule pack, real payment, distributed consensus, or Nexus Pod integration. The 29 proposed production API routes remain draft/not routed. The service binds to loopback by default and must not be exposed publicly.
 
-CI run [#218](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39919153155) passed 171 tests on a clean runner, including the full lifecycle and recovery slice. HTTP-level component-trace assertions passed in [run #217](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39919095203). This is evidence for the synthetic slice only, not full KIN-SYS conformance or production readiness.
+CI run [#221](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/39919398547) passed 173 tests on a clean runner, including the lifecycle/recovery slice, HTTP component-trace assertions, and read-only operation inspection. This is evidence for the synthetic slice only, not full KIN-SYS conformance or production readiness.
 | Area | Status | Next evidence required |
 |---|---|---|
 | Protocol purpose and scope | Specified in draft | External review and scope decision |
