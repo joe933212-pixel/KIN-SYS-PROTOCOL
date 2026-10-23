@@ -43,6 +43,7 @@ _ALLOWED_FIELDS = {
 }
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
 _CEE_RECONCILIATION_FIELDS = {"operation_id", "event_id", "finding", "source_sequence", "provider_reference"}
+_CEE_SETTLEMENT_FIELDS = {"operation_id", "event_id", "settlement_reference", "amount_minor", "currency"}
 _CEE_CASE_FIELDS = {
     "operation_id", "case_id", "jurisdiction", "evidence", "origin_actor",
     "destination_actor", "execution_actor", "origin_decision", "destination_decision",
@@ -131,6 +132,7 @@ class KinSysPrototypeApplication:
                         "POST /cee/cases",
                         "GET /cee/operations/{operation_id}",
                         "POST /cee/reconciliation",
+                        "POST /cee/settlement-evidence",
                     ],
                     "instruction_flow": [
                         "POST /demo/instructions: legacy integrated synthetic demonstration",
@@ -165,6 +167,45 @@ class KinSysPrototypeApplication:
             if operation is None:
                 return _response(start_response, 404, {"error": {"code": "OPERATION_NOT_FOUND", "message": "No CEE case operation matches this ID."}}, request_id)
             return _response(start_response, 200, {"status": operation["phase"], "operation": operation, "production_ready": False}, request_id)
+
+        if path == "/cee/settlement-evidence":
+            if method != "POST":
+                return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit synthetic settlement evidence."}}, request_id)
+            try:
+                payload = self._read_json(environ, allowed_fields=_CEE_SETTLEMENT_FIELDS)
+                operation_id = payload.get("operation_id")
+                event_id = payload.get("event_id")
+                if not isinstance(operation_id, str) or not _ID_RE.fullmatch(operation_id):
+                    raise HttpServiceError(422, "INVALID_OPERATION_ID", "operation_id is required and must be a safe identifier.")
+                if not isinstance(event_id, str) or not _ID_RE.fullmatch(event_id):
+                    raise HttpServiceError(422, "INVALID_EVENT_ID", "event_id is required and must be a safe identifier.")
+                if not isinstance(payload.get("settlement_reference"), str) or not payload["settlement_reference"].strip():
+                    raise HttpServiceError(422, "INVALID_SETTLEMENT_REFERENCE", "settlement_reference must be a non-empty string.")
+                if type(payload.get("amount_minor")) is not int or payload["amount_minor"] < 0:
+                    raise HttpServiceError(422, "INVALID_SETTLEMENT_AMOUNT", "amount_minor must be a non-negative integer.")
+                if not isinstance(payload.get("currency"), str) or not payload["currency"]:
+                    raise HttpServiceError(422, "INVALID_SETTLEMENT_CURRENCY", "currency must be a non-empty string.")
+                result = self.case_coordinator.record_settlement_evidence(
+                    operation_id, event_id, payload["settlement_reference"],
+                    amount_minor=payload["amount_minor"], currency=payload["currency"],
+                )
+                return _response(start_response, 200, {
+                    "status": result["status"], "production_ready": False, "result": result,
+                    "protocol_boundary": {
+                        "settlement_evidence": "CALLER_SUPPLIED_SYNTHETIC_EVIDENCE_NOT_AUTHENTICATED",
+                        "cross_store_atomicity": False, "funds_moved": False,
+                    },
+                }, request_id)
+            except HttpServiceError as exc:
+                return _response(start_response, exc.status, {"error": {"code": exc.code, "message": exc.message}}, request_id)
+            except CaseConflict as exc:
+                return _response(start_response, 409, {"error": {"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)}}, request_id)
+            except KeyError as exc:
+                return _response(start_response, 404, {"error": {"code": "CASE_OR_PAYMENT_NOT_FOUND", "message": str(exc)}}, request_id)
+            except (ValueError, TypeError) as exc:
+                return _response(start_response, 422, {"error": {"code": "INVALID_SETTLEMENT_EVIDENCE", "message": str(exc)[:240]}}, request_id)
+            except Exception:
+                return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR", "message": "Settlement evidence could not be recorded."}}, request_id)
 
         if path == "/cee/reconciliation":
             if method != "POST":
