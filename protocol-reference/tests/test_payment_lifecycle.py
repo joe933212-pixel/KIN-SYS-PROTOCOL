@@ -59,7 +59,7 @@ class PaymentLifecycleTests(unittest.TestCase):
         self.payments.record_reconciliation("PAY-1", "EV-REC-OLD", "UNKNOWN", source_sequence=1)
         self.payments.record_reconciliation("PAY-1", "EV-REC-NEW", "NOT_SETTLED", source_sequence=2)
 
-        result = self.payments.record_reconciliation("PAY-1", "EV-REC-OLD", "UNKNOWN")
+        result = self.payments.record_reconciliation("PAY-1", "EV-REC-OLD", "UNKNOWN", source_sequence=1)
 
         self.assertEqual(result["status"], "RECONCILED_NOT_SETTLED")
         self.assertEqual(result["last_reconciliation"], "NOT_SETTLED")
