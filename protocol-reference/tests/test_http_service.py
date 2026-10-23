@@ -109,6 +109,37 @@ class HttpServiceTests(unittest.TestCase):
         self.assertFalse(body["result"]["funds_moved"])
         self.assertFalse(body["protocol_boundary"]["distributed_finality"])
 
+    def test_protocol_operation_can_be_inspected_after_completion(self):
+        payload = {
+            "operation_id": "HTTP-INSPECT-1",
+            "event_id": "HTTP-INSPECT-EVENT-1",
+            "process_id": "HTTP-INSPECT-PROCESS-1",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "HTTP-INSPECT-PROCESS-1",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+            },
+        }
+        created, _ = self.request("/protocol/instructions", "POST", payload)
+        self.assertEqual(created["status"], 200)
+        response, body = self.request("/protocol/operations/HTTP-INSPECT-1")
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "FINALIZED")
+        self.assertFalse(body["operation"]["resumable"])
+        self.assertEqual(body["operation"]["result"]["status"], "COMMITTED")
+        self.assertTrue(body["operation"]["ivm_event"])
+
+    def test_inspection_of_unknown_operation_is_not_found(self):
+        response, body = self.request("/protocol/operations/DOES-NOT-EXIST")
+        self.assertEqual(response["status"], 404)
+        self.assertEqual(body["error"]["code"], "OPERATION_NOT_FOUND")
+
     def test_protocol_route_defers_missing_evidence_before_ivm(self):
         payload = {
             "operation_id": "HTTP-PIPE-DEFER",
