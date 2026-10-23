@@ -6,7 +6,7 @@ Scope: Align the implementation with one public protocol path: MINAH -> CEE -> f
 
 ## 1. Current verified boundary
 
-The repository currently contains related research components that are not yet unified into one conformant execution path:
+The repository contains a partially unified canonical instruction slice and related legacy research components that are not yet integrated into one conformant case path:
 
 - `protocol-reference/protocol_pipeline.py`: a runnable synthetic instruction slice. The current refactor records MINAH review before CEE admission and exposes one final-decision contract. It still uses separate local SQLite persistence internally; this is a prototype limitation, not a second public execution path.
 - `protocol-reference/integrated_demo.py`: a synthetic cross-institution case that calls identity, MINAH, origin and destination decisions, fictional assessment, payment lifecycle and edge queue components. It has important safeguards, including checking current institutional authority and rule versions before creating the assessment/payment, and keeping offline edge replay at “ready for central review.”
