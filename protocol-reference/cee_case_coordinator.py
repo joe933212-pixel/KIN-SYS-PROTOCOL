@@ -53,6 +53,7 @@ class CEECaseCoordinator:
                 request_digest TEXT NOT NULL,
                 request_json TEXT NOT NULL,
                 phase TEXT NOT NULL,
+                minah_json TEXT,
                 result_json TEXT
             );
             CREATE TABLE IF NOT EXISTS cee_case_events (
@@ -64,6 +65,9 @@ class CEECaseCoordinator:
                 detail_json TEXT NOT NULL
             );
         """)
+        columns = {row["name"] for row in self.cee_db.execute("PRAGMA table_info(cee_cases)")}
+        if "minah_json" not in columns:
+            self.cee_db.execute("ALTER TABLE cee_cases ADD COLUMN minah_json TEXT")
         self.cee_db.commit()
         self.ivm = ProtocolStore(ivm_database)
         self.workflow = InstitutionalWorkflow(workflow_database)
@@ -303,7 +307,8 @@ class CEECaseCoordinator:
             final_status = "PENDING_PAYMENT_RESOLUTION"
         else:
             final_status = "PENDING_PAYMENT_RECONCILIATION"
-        return self._finish(operation_id, "FINALIZED", final_status, {
+        terminal_phase = "PENDING_RECONCILIATION" if final_status == "PENDING_PAYMENT_RECONCILIATION" else ("PENDING_PAYMENT_RESOLUTION" if final_status == "PENDING_PAYMENT_RESOLUTION" else "FINALIZED")
+        return self._finish(operation_id, terminal_phase, final_status, {
             "minah_disposition": minah, "institutional_decisions": stages,
             "ivm_decision": ivm_result, "assessment": assessment,
             "obligation": obligation, "payment_lifecycle": payment_result,
@@ -313,16 +318,18 @@ class CEECaseCoordinator:
     def _case_row(self, operation_id: str) -> dict[str, Any]:
         row = self.cee_db.execute("SELECT * FROM cee_cases WHERE operation_id=?", (operation_id,)).fetchone()
         result = dict(row)
-        events = self.cee_db.execute(
-            "SELECT detail_json FROM cee_case_events WHERE operation_id=? AND component='MINAH' ORDER BY sequence DESC LIMIT 1",
-            (operation_id,),
-        ).fetchone()
-        if events:
-            result["minah"] = None
+        result["minah"] = json.loads(result["minah_json"]) if result.get("minah_json") else None
         return result
 
     def _save_component(self, operation_id: str, name: str, value: dict[str, Any]) -> None:
-        # Store component output as an event so it survives process restarts.
+        # Pin MINAH output in the operation row so retries never silently rerun it.
+        if name != "minah":
+            raise ValueError("UNSUPPORTED_PINNED_COMPONENT")
+        self.cee_db.execute(
+            "UPDATE cee_cases SET minah_json=? WHERE operation_id=?",
+            (_canonical(value), operation_id),
+        )
+        self.cee_db.commit()
         self._event(operation_id, "CEE_STATE", "PINNED_" + name.upper(), "RECORDED", value)
 
     def _event(self, operation_id: str, component: str, phase: str, status: str, detail: dict[str, Any]) -> None:
