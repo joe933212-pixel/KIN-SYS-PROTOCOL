@@ -230,8 +230,30 @@ class KinSysProtocolPipeline:
         operation = self.cee.get(operation_id)
         assert operation is not None
 
-        # MINAH is evaluated once, then the disposition is pinned in the CEE journal.
-        if operation["minah_json"] is None:
+        # CEE admits the instruction and pins its context before invoking MINAH.
+        # The MINAH disposition is then stored with AUTHORITY_EVALUATED, so retries
+        # after that boundary reuse the same decision rather than re-querying a model.
+        if operation["phase"] == "REQUESTED":
+            self.cee.advance(
+                operation_id, "ADMITTED",
+                detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "ADMITTED":
+            self.cee.advance(
+                operation_id, "CONTEXT_ESTABLISHED",
+                detail={
+                    "jurisdiction": request["jurisdiction"],
+                    "rule_set": request["rule_set"],
+                    "rule_version": request["rule_version"],
+                    "evidence_digest": _digest(evidence),
+                },
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+
+        if operation["phase"] == "CONTEXT_ESTABLISHED" and operation["minah_json"] is None:
             disposition = self.minah.review(evidence)
             contract_error = self._minah_contract_error(disposition)
             if contract_error:
@@ -246,19 +268,6 @@ class KinSysProtocolPipeline:
                     "model_version": "UNTRUSTED_OUTPUT",
                     "contract_error": contract_error,
                 }
-                self.cee.advance(
-                    operation_id, "ADMITTED",
-                    detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
-                )
-                self.cee.advance(
-                    operation_id, "CONTEXT_ESTABLISHED",
-                    detail={
-                        "jurisdiction": request["jurisdiction"],
-                        "rule_set": request["rule_set"],
-                        "rule_version": request["rule_version"],
-                        "evidence_digest": _digest(evidence),
-                    },
-                )
                 self.cee.advance(
                     operation_id, "AUTHORITY_EVALUATED", status="REJECTED",
                     detail={"minah_contract_error": contract_error, "ivm_not_invoked": True},
@@ -278,19 +287,6 @@ class KinSysProtocolPipeline:
                     detail={"reason": result["reason"], "ivm_not_invoked": True},
                 )
                 return self._response_result(operation_id, result, duplicate=False)
-            self.cee.advance(
-                operation_id, "ADMITTED",
-                detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
-            )
-            self.cee.advance(
-                operation_id, "CONTEXT_ESTABLISHED",
-                detail={
-                    "jurisdiction": request["jurisdiction"],
-                    "rule_set": request["rule_set"],
-                    "rule_version": request["rule_version"],
-                    "evidence_digest": _digest(evidence),
-                },
-            )
             self.cee.advance(
                 operation_id, "AUTHORITY_EVALUATED",
                 status="DEFERRED" if disposition["status"] == "NEEDS_INFORMATION" else "EVALUATED",
