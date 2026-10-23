@@ -50,11 +50,13 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], 200)
         self.assertFalse(body["production_ready"])
 
-    def test_capabilities_disclose_synthetic_ivm_cee_pipeline_and_production_gaps(self):
+    def test_capabilities_disclose_unified_cee_boundary_and_production_gaps(self):
         response, body = self.request("/system/capabilities")
         self.assertEqual(response["status"], 200)
-        self.assertEqual(body["protocol_pipeline"]["status"], "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED")
-        self.assertFalse(body["protocol_pipeline"]["cross_store_atomicity"])
+        self.assertEqual(body["protocol_pipeline"]["status"], "SYNTHETIC_MINAH_CEE_BOUNDARY_IMPLEMENTED")
+        self.assertEqual(body["protocol_pipeline"]["canonical_flow"], ["MINAH", "CEE", "FINAL_DECISION"])
+        self.assertTrue(body["protocol_pipeline"]["single_cee_owned_store"])
+        self.assertFalse(body["protocol_pipeline"]["atomic_commit_across_lifecycle_and_execution"])
         self.assertIn(
             "production identity and cryptographic authentication",
             body["not_yet_wired_as_production_components"],
@@ -72,7 +74,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["protocol_boundary"]["ivm"], "NOT_WIRED_AS_SEPARATE_RUNTIME")
         self.assertEqual(body["protocol_boundary"]["cee"], "NOT_WIRED_AS_SEPARATE_LIFECYCLE_ENGINE")
 
-    def test_protocol_route_returns_full_minah_ivm_cee_trace(self):
+    def test_protocol_route_returns_minah_cee_final_decision_trace(self):
         payload = {
             "operation_id": "HTTP-PIPE-1",
             "event_id": "HTTP-EVENT-1",
@@ -92,22 +94,67 @@ class HttpServiceTests(unittest.TestCase):
         }
         response, body = self.request("/protocol/instructions", "POST", payload)
         self.assertEqual(response["status"], 200)
-        self.assertEqual(body["status"], "COMMITTED")
+        self.assertEqual(body["status"], "PASSED")
         self.assertFalse(body["production_ready"])
         self.assertEqual(body["result"]["minah_disposition"]["status"], "ADVISORY_ONLY")
         self.assertFalse(body["result"]["minah_disposition"]["may_authorise"])
-        self.assertEqual(body["result"]["ivm_decision"]["to_state"], "ACTIVE")
+        self.assertEqual(body["result"]["execution_result"]["to_state"], "ACTIVE")
         self.assertEqual(
             [event["phase"] for event in body["result"]["cee_events"]],
-            ["REQUESTED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+            ["REQUESTED", "MINAH_REVIEWED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
              "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED", "FINALIZED"],
         )
         trace = body["result"]["component_trace"]
         components = [event["component"] for event in trace]
-        self.assertLess(components.index("MINAH"), components.index("IVM"))
+        self.assertEqual(components[0], "MINAH")
+        self.assertNotIn("IVM", components)
+        self.assertTrue(all(component == "CEE" for component in components[1:]))
+        self.assertEqual(body["result"]["final_decision"], "PASSED")
         self.assertEqual(trace[-1]["detail"]["phase"], "FINALIZED")
         self.assertFalse(body["result"]["funds_moved"])
         self.assertFalse(body["protocol_boundary"]["distributed_finality"])
+
+    def test_protocol_rejects_client_claimed_identity_verification(self):
+        payload = {
+            "operation_id": "HTTP-IDENTITY-CLAIM",
+            "event_id": "HTTP-IDENTITY-EVENT",
+            "process_id": "HTTP-IDENTITY-PROCESS",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "identity_verified": True,
+            "evidence": {"commodity": "SYNTHETIC_MAIZE"},
+        }
+        response, body = self.request("/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 422)
+        self.assertEqual(body["error"]["code"], "UNKNOWN_FIELDS")
+
+    def test_protocol_rejects_unauthorised_actor_before_cee_admission(self):
+        payload = {
+            "operation_id": "HTTP-AUTH-GATE",
+            "event_id": "HTTP-AUTH-EVENT",
+            "process_id": "HTTP-AUTH-PROCESS",
+            "actor_id": "UNAUTHORISED-ACTOR",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "HTTP-AUTH-PROCESS",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+            },
+        }
+        response, body = self.request("/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "REJECTED")
+        self.assertEqual(body["result"]["final_decision"], "REJECTED")
+        self.assertEqual(body["result"]["reason"], "AUTHORITY_MISMATCH")
+        self.assertIsNone(body["result"]["execution_result"])
+        self.assertNotIn("ADMITTED", [event["phase"] for event in body["result"]["cee_events"]])
 
     def test_protocol_operation_can_be_inspected_after_completion(self):
         payload = {
@@ -132,8 +179,8 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["status"], "FINALIZED")
         self.assertFalse(body["operation"]["resumable"])
-        self.assertEqual(body["operation"]["result"]["status"], "COMMITTED")
-        self.assertTrue(body["operation"]["ivm_event"])
+        self.assertEqual(body["operation"]["result"]["status"], "PASSED")
+        self.assertTrue(body["operation"]["execution_record"])
 
     def test_inspection_of_unknown_operation_is_not_found(self):
         response, body = self.request("/protocol/operations/DOES-NOT-EXIST")
@@ -155,7 +202,10 @@ class HttpServiceTests(unittest.TestCase):
         response, body = self.request("/protocol/instructions", "POST", payload)
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["status"], "DEFERRED")
-        self.assertIsNone(body["result"]["ivm_decision"])
+        self.assertEqual(body["result"]["final_decision"], "DEFERRED")
+        self.assertIsNone(body["result"]["execution_result"])
+        phases = [event["phase"] for event in body["result"]["cee_events"]]
+        self.assertNotIn("ADMITTED", phases)
 
     def test_protocol_route_rejects_unrecognised_rule_version(self):
         payload = {
@@ -224,8 +274,10 @@ class HttpServiceTests(unittest.TestCase):
         components = [event["component"] for event in operation["operation"]["events"]]
         self.assertIn("MINAH", components)
         self.assertIn("INSTITUTIONAL", components)
-        self.assertIn("IVM", components)
+        self.assertIn("CEE", components)
+        self.assertNotIn("IVM", components)
         self.assertIn("PAYMENT", components)
+        self.assertEqual(body["result"]["final_decision"], "PASSED")
 
     def test_cee_case_route_rejects_destination_before_payment(self):
         payload = {

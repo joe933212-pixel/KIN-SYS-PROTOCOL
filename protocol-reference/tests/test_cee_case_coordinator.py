@@ -1,5 +1,6 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Tests for the CEE-owned synthetic case coordinator; no real funds or services."""
+import sqlite3
 import sys
 import unittest
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from authority_adapter import UnavailableAuthorityAdapter
 from cee_case_coordinator import CEECaseCoordinator, CaseConflict
 
 
@@ -41,22 +43,131 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.coordinator = CEECaseCoordinator()
         self.addCleanup(self.coordinator.close)
 
-    def test_happy_path_records_ordered_cee_minah_institution_ivm_and_payment_trace(self):
+    def test_happy_path_exposes_minah_then_cee_and_final_decision(self):
         result = self.coordinator.execute(request())
         self.assertEqual(result["status"], "COMPLETED_WITH_SIMULATED_SETTLEMENT")
+        self.assertEqual(result["final_decision"], "PASSED")
         self.assertFalse(result["funds_moved"])
         self.assertFalse(result["minah_disposition"]["may_authorise"])
         self.assertEqual(result["assessment"]["legal_status"], "SYNTHETIC_DEMO_RULE_NOT_LAW")
         self.assertEqual(result["payment_lifecycle"]["recorded_status"], "SETTLED")
         components = [event["component"] for event in result["component_trace"]]
-        self.assertLess(components.index("MINAH"), components.index("INSTITUTIONAL"))
-        self.assertLess(components.index("INSTITUTIONAL"), components.index("IVM"))
-        self.assertLess(components.index("IVM"), components.index("PAYMENT"))
-        self.assertEqual(result["ivm_decision"]["to_state"], "ACTIVE")
+        first_cee = components.index("CEE")
+        self.assertTrue(all(component == "MINAH" for component in components[:first_cee]))
+        self.assertTrue(all(component == "CEE" for component in components[first_cee:]))
+        self.assertEqual(result["execution_result"]["to_state"], "ACTIVE")
+
+    def test_minah_pin_and_audit_events_roll_back_together(self):
+        db = self.coordinator.cee_db
+        db.execute(
+            "INSERT INTO cee_cases(operation_id,request_digest,request_json,phase) VALUES(?,?,?,'REQUESTED')",
+            ("CASE-ATOMIC-PIN", "digest", "{}"),
+        )
+        db.execute("""
+            CREATE TRIGGER fail_pinned_minah_event
+            BEFORE INSERT ON cee_case_events
+            WHEN NEW.component='CEE_STATE' AND NEW.phase='PINNED_MINAH'
+            BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+        """)
+        db.commit()
+        disposition = {
+            "status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+            "uncertainty": "LOW", "may_authorise": False, "model_version": "test",
+        }
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.coordinator._save_component("CASE-ATOMIC-PIN", "minah", disposition)
+        row = db.execute(
+            "SELECT minah_json FROM cee_cases WHERE operation_id='CASE-ATOMIC-PIN'"
+        ).fetchone()
+        self.assertIsNone(row["minah_json"])
+        events = db.execute(
+            "SELECT component,phase FROM cee_case_events WHERE operation_id='CASE-ATOMIC-PIN'"
+        ).fetchall()
+        self.assertEqual(events, [])
+
+    def test_case_phase_and_audit_event_roll_back_together(self):
+        db = self.coordinator.cee_db
+        db.execute(
+            "INSERT INTO cee_cases(operation_id,request_digest,request_json,phase) VALUES(?,?,?,'REQUESTED')",
+            ("CASE-ATOMIC-PHASE", "digest", "{}"),
+        )
+        db.execute("""
+            CREATE TRIGGER fail_minah_review_event
+            BEFORE INSERT ON cee_case_events
+            WHEN NEW.component='CEE' AND NEW.phase='MINAH_REVIEWED'
+            BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END
+        """)
+        db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.coordinator._set_phase(
+                "CASE-ATOMIC-PHASE", "MINAH_REVIEWED", "REVIEWED", {"test": True}
+            )
+        row = db.execute(
+            "SELECT phase FROM cee_cases WHERE operation_id='CASE-ATOMIC-PHASE'"
+        ).fetchone()
+        self.assertEqual(row["phase"], "REQUESTED")
+        events = db.execute(
+            "SELECT component,phase FROM cee_case_events WHERE operation_id='CASE-ATOMIC-PHASE'"
+        ).fetchall()
+        self.assertEqual(events, [])
+
+    def test_unknown_terminal_phase_is_deferred_not_promoted_to_passed(self):
+        operation_id = "CASE-UNKNOWN-TERMINAL"
+        payload = request(operation_id)
+        self.coordinator.execute(payload)
+        result = self.coordinator._finish(
+            operation_id, "UNRECOGNIZED_PHASE", "UNRECOGNIZED_STATUS",
+            {"reason": "regression-test", "funds_moved": False},
+        )
+        self.assertEqual(result["final_decision"], "DEFERRED")
+        self.assertNotEqual(result["final_decision"], "PASSED")
+
+    def test_case_runtime_shares_cee_store_and_rejects_split_store_configuration(self):
+        self.assertIs(self.coordinator.cee_db, self.coordinator.ivm.db)
+        with self.assertRaisesRegex(ValueError, "SPLIT_CASE_RUNTIME_STORAGE_NO_LONGER_SUPPORTED"):
+            CEECaseCoordinator(cee_database="case-cee.sqlite3", ivm_database="case-runtime.sqlite3")
+
+    def test_authority_adapter_exception_defers_case_before_admission(self):
+        class BrokenAdapter:
+            def evaluate(self, request):
+                raise TimeoutError("sensitive backend details must not leak")
+
+        coordinator = CEECaseCoordinator(authority_adapter=BrokenAdapter())
+        try:
+            result = coordinator.execute(request("CASE-AUTH-TIMEOUT"))
+            self.assertEqual(result["final_decision"], "DEFERRED")
+            self.assertEqual(result["reason"], "AUTHORITY_GATE_UNAVAILABLE")
+            self.assertEqual(result["authority_gate"]["adapter"], "ADAPTER_ERROR")
+            self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+            self.assertIsNone(result["institutional_decisions"])
+        finally:
+            coordinator.close()
+
+    def test_unavailable_authority_adapter_defers_case_before_admission(self):
+        coordinator = CEECaseCoordinator(authority_adapter=UnavailableAuthorityAdapter())
+        try:
+            result = coordinator.execute(request("CASE-AUTH-UNAVAILABLE"))
+            self.assertEqual(result["final_decision"], "DEFERRED")
+            self.assertEqual(result["reason"], "AUTHORITY_VERIFICATION_UNAVAILABLE")
+            self.assertEqual(result["authority_gate"]["outcome"], "DEFER")
+            self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
+            self.assertIsNone(result["institutional_decisions"])
+            self.assertIsNone(result["payment_lifecycle"])
+        finally:
+            coordinator.close()
+
+    def test_execution_authority_is_rejected_before_cee_admission(self):
+        result = self.coordinator.execute(request("CASE-AUTH-REJECT", execution_actor="UNAUTHORISED-ACTOR"))
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["final_decision"], "REJECTED")
+        self.assertEqual(result["reason"], "AUTHORITY_MISMATCH")
+        self.assertIsNone(result["institutional_decisions"])
+        self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
 
     def test_origin_rejection_prevents_destination_and_payment(self):
         result = self.coordinator.execute(request("CASE-ORIGIN-REJECT", origin_decision="REJECT"))
         self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["final_decision"], "REJECTED")
         self.assertIsNone(result["obligation"])
         self.assertIsNone(result["payment_lifecycle"])
         self.assertEqual(result["institutional_decisions"][-1]["status"], "NOT_ATTEMPTED")
@@ -66,7 +177,8 @@ class CEECaseCoordinatorTests(unittest.TestCase):
     def test_destination_rejection_prevents_ivm_economic_gate_and_payment(self):
         result = self.coordinator.execute(request("CASE-DEST-REJECT", destination_decision="REJECT"))
         self.assertEqual(result["status"], "REJECTED")
-        self.assertNotIn("ivm_decision", result)
+        self.assertEqual(result["final_decision"], "REJECTED")
+        self.assertNotIn("execution_result", result)
         self.assertIsNone(result["obligation"])
         self.assertIsNone(result["payment_lifecycle"])
         with self.assertRaises(ValueError):
@@ -76,7 +188,9 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         payload = request("CASE-MINAH-DEFER", evidence={"commodity": "SYNTHETIC_MAIZE"})
         result = self.coordinator.execute(payload)
         self.assertEqual(result["status"], "DEFERRED")
+        self.assertEqual(result["final_decision"], "DEFERRED")
         self.assertEqual(result["reason"], "MINAH_REQUIRES_ADDITIONAL_EVIDENCE")
+        self.assertNotIn("ADMITTED", [event["phase"] for event in result["cee_events"]])
         self.assertIsNone(result["institutional_decisions"])
         self.assertIsNone(result["payment_lifecycle"])
         self.assertFalse(result["funds_moved"])

@@ -1,11 +1,14 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
-"""End-to-end MINAH -> IVM -> CEE execution slice, using synthetic adapters only.
+"""Synthetic MINAH -> CEE -> final-decision protocol boundary.
 
-The CEE lifecycle journal and IVM transition store are separate SQLite stores.
-This prototype explicitly does NOT claim a distributed atomic commit across them.
-A retry after an IVM commit replays the same idempotency key and reconciles CEE
-from the durable IVM outcome. Production deployment requires an independently
-reviewed recovery protocol and real identity/legal/model/runtime adapters.
+MINAH review is durably recorded before CEE admission. CEE is the sole
+externally visible execution boundary; the legacy transition store remains a
+private reference implementation detail behind that boundary.
+
+The canonical instruction slice shares one CEE-owned SQLite connection for its
+lifecycle journal and private execution tables. It does NOT claim production
+identity/legal adapters or distributed finality; case-level adapters retain
+separate stores where documented.
 """
 from __future__ import annotations
 
@@ -14,6 +17,7 @@ import json
 import sqlite3
 from typing import Any
 
+from authority_adapter import AuthorityGateAdapter, AuthorityGateDecision, SyntheticDemoAuthorityAdapter
 from integrated_demo import DeterministicMinahAdapter
 from transition import EventIdConflict, ProtocolStore
 
@@ -23,6 +27,7 @@ RULE_VERSION = "1.0"
 AUTHORITY_ID = "AUTHORITY-001"
 LIFECYCLE = (
     "REQUESTED",
+    "MINAH_REVIEWED",
     "ADMITTED",
     "CONTEXT_ESTABLISHED",
     "AUTHORITY_EVALUATED",
@@ -168,7 +173,7 @@ class CEEJournal:
             terminal_branch = (
                 next_phase == "FINALIZED"
                 and (
-                    (current == "AUTHORITY_EVALUATED" and outcome in {"DEFERRED", "REJECTED"})
+                    (current in {"MINAH_REVIEWED", "AUTHORITY_EVALUATED"} and outcome in {"DEFERRED", "REJECTED"})
                     or (current == "COMMITTING" and outcome == "REJECTED")
                 )
             )
@@ -199,24 +204,32 @@ class CEEJournal:
 
 
 class KinSysProtocolPipeline:
-    """Synthetic full-path harness that makes MINAH, IVM and CEE boundaries observable."""
+    """Synthetic instruction harness exposing MINAH -> CEE -> final decision."""
 
     def __init__(
         self,
         *,
         cee_database: str = ":memory:",
-        ivm_database: str = ":memory:",
+        ivm_database: str | None = None,
         minah_adapter: Any | None = None,
         authority_active: bool = True,
+        authority_adapter: AuthorityGateAdapter | None = None,
     ):
+        if ivm_database is not None and ivm_database != cee_database:
+            raise ValueError("SPLIT_RUNTIME_STORAGE_NO_LONGER_SUPPORTED")
         self.cee = CEEJournal(cee_database)
-        self.ivm = ProtocolStore(ivm_database)
+        # CEE owns the connection. The transition implementation is a private
+        # runtime detail sharing CEE's local store, not a separate execution DB.
+        self.ivm = ProtocolStore(connection=self.cee.db)
         self.minah = minah_adapter or DeterministicMinahAdapter()
+        self.authority_gate = authority_adapter or SyntheticDemoAuthorityAdapter(
+            authority_active=authority_active
+        )
         self.authority_active = authority_active
 
     def close(self) -> None:
-        self.cee.close()
         self.ivm.close()
+        self.cee.close()
 
     def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
         self._validate(request)
@@ -230,13 +243,105 @@ class KinSysProtocolPipeline:
         operation = self.cee.get(operation_id)
         assert operation is not None
 
-        # CEE admits the instruction and pins its context before invoking MINAH.
-        # The MINAH disposition is then stored with AUTHORITY_EVALUATED, so retries
-        # after that boundary reuse the same decision rather than re-querying a model.
+        # MINAH-first ingress: the request has a durable REQUESTED receipt, but
+        # CEE does not admit it or establish an execution context until MINAH's
+        # non-authorising preliminary review has been validated and pinned.
         if operation["phase"] == "REQUESTED":
+            disposition = self.minah.review(evidence)
+            contract_error = self._minah_contract_error(disposition)
+            if contract_error:
+                disposition = {
+                    "status": "INVALID_DISPOSITION",
+                    "missing_fields": [],
+                    "source_refs": [],
+                    "uncertainty": "HIGH",
+                    "may_authorise": False,
+                    "model_version": "UNTRUSTED_OUTPUT",
+                    "contract_error": contract_error,
+                }
+                self.cee.advance(
+                    operation_id, "MINAH_REVIEWED", status="REJECTED",
+                    detail={"minah_contract_error": contract_error, "cee_not_admitted": True},
+                    minah=disposition,
+                )
+                result = {
+                    "operation_id": operation_id,
+                    "status": "REJECTED",
+                    "final_decision": "REJECTED",
+                    "reason": "MINAH_DISPOSITION_CONTRACT_VIOLATION",
+                    "minah_disposition": disposition,
+                    "execution_result": None,
+                    "funds_moved": False,
+                }
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="REJECTED",
+                    outcome="REJECTED", result=result,
+                    detail={"reason": result["reason"], "cee_not_admitted": True},
+                )
+                return self._response_result(operation_id, result, duplicate=False)
+            self.cee.advance(
+                operation_id, "MINAH_REVIEWED",
+                status="DEFERRED" if disposition["status"] == "NEEDS_INFORMATION" else "REVIEWED",
+                detail={"may_authorise": False, "cee_admission": "NOT_YET_GRANTED"},
+                minah=disposition,
+            )
+
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        disposition = operation["minah_json"]
+
+        if disposition and disposition["status"] == "NEEDS_INFORMATION":
+            result = {
+                "operation_id": operation_id,
+                "status": "DEFERRED",
+                "final_decision": "DEFERRED",
+                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE",
+                "minah_disposition": disposition,
+                "execution_result": None,
+                "funds_moved": False,
+            }
+            if operation["phase"] == "MINAH_REVIEWED":
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="DEFERRED",
+                    outcome="DEFERRED", result=result,
+                    detail={"reason": result["reason"], "cee_not_admitted": True},
+                )
+            return self._response_result(operation_id, result, duplicate=False)
+
+        # Authority/identity evaluation is injected behind one contract. The
+        # default local adapter is synthetic and explicitly does not authenticate.
+        if operation["phase"] == "MINAH_REVIEWED":
+            gate_decision = self._evaluate_authority_gate(request)
+            if gate_decision.outcome != "ALLOW":
+                final_decision = "REJECTED" if gate_decision.outcome == "REJECT" else "DEFERRED"
+                reason = gate_decision.reason or "AUTHORITY_GATE_UNRESOLVED"
+                result = {
+                    "operation_id": operation_id,
+                    "status": final_decision,
+                    "final_decision": final_decision,
+                    "reason": reason,
+                    "minah_disposition": disposition,
+                    "authority_gate": self._authority_gate_trace(gate_decision),
+                    "execution_result": None,
+                    "funds_moved": False,
+                }
+                self.cee.advance(
+                    operation_id, "FINALIZED", status=final_decision,
+                    outcome=final_decision, result=result,
+                    detail={
+                        "reason": reason,
+                        "cee_admission": "NOT_GRANTED",
+                        "authority_gate": self._authority_gate_trace(gate_decision),
+                    },
+                )
+                return self._response_result(operation_id, result, duplicate=False)
+
+        # Only an acceptable MINAH disposition and server-side pre-admission
+        # checks can cross into CEE admission.
+        if operation["phase"] == "MINAH_REVIEWED":
             self.cee.advance(
                 operation_id, "ADMITTED",
-                detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
+                detail={"admission": "MINAH_PRELIMINARY_REVIEW_ACCEPTED"},
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
@@ -252,67 +357,19 @@ class KinSysProtocolPipeline:
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
-
-        if operation["phase"] == "CONTEXT_ESTABLISHED" and operation["minah_json"] is None:
-            disposition = self.minah.review(evidence)
-            contract_error = self._minah_contract_error(disposition)
-            if contract_error:
-                # A malformed or self-authorising MINAH output is recorded as a
-                # rejected advisory result; it never reaches the IVM transition.
-                safe_disposition = {
-                    "status": "INVALID_DISPOSITION",
-                    "missing_fields": [],
-                    "source_refs": [],
-                    "uncertainty": "HIGH",
-                    "may_authorise": False,
-                    "model_version": "UNTRUSTED_OUTPUT",
-                    "contract_error": contract_error,
-                }
-                self.cee.advance(
-                    operation_id, "AUTHORITY_EVALUATED", status="REJECTED",
-                    detail={"minah_contract_error": contract_error, "ivm_not_invoked": True},
-                    minah=safe_disposition,
-                )
-                result = {
-                    "operation_id": operation_id,
-                    "status": "REJECTED",
-                    "reason": "MINAH_DISPOSITION_CONTRACT_VIOLATION",
-                    "minah_disposition": safe_disposition,
-                    "ivm_decision": None,
-                    "funds_moved": False,
-                }
-                self.cee.advance(
-                    operation_id, "FINALIZED", status="REJECTED",
-                    outcome="REJECTED", result=result,
-                    detail={"reason": result["reason"], "ivm_not_invoked": True},
-                )
-                return self._response_result(operation_id, result, duplicate=False)
+        if operation["phase"] == "CONTEXT_ESTABLISHED":
             self.cee.advance(
                 operation_id, "AUTHORITY_EVALUATED",
-                status="DEFERRED" if disposition["status"] == "NEEDS_INFORMATION" else "EVALUATED",
-                detail={"minah_is_advisory": True, "may_authorise": False},
+                detail={
+                    "cee_execution_context_pinned": True,
+                    "minah_review_pinned": True,
+                    "authority_adapter": "SYNTHETIC_REFERENCE_ONLY",
+                },
                 minah=disposition,
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
         disposition = operation["minah_json"]
-
-        if disposition["status"] == "NEEDS_INFORMATION":
-            result = {
-                "operation_id": operation_id,
-                "status": "DEFERRED",
-                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE",
-                "minah_disposition": disposition,
-                "ivm_decision": None,
-                "funds_moved": False,
-            }
-            if operation["phase"] == "AUTHORITY_EVALUATED":
-                self.cee.advance(
-                    operation_id, "FINALIZED", status="DEFERRED",
-                    outcome="DEFERRED", result=result,
-                    detail={"reason": result["reason"], "ivm_not_invoked": True},
-                )
-            return self._response_result(operation_id, result, duplicate=False)
 
         # Resume safely from any durable phase. The IVM operation key is stable across retries.
         operation = self.cee.get(operation_id)
@@ -356,13 +413,13 @@ class KinSysProtocolPipeline:
                     self.ivm.set_authority_active(process_id, self.authority_active)
             self.cee.advance(
                 operation_id, "PREPARED",
-                detail={"ivm_preconditions_pinned": True, "process_id": process_id},
+                detail={"cee_preconditions_pinned": True, "process_id": process_id},
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
 
         if operation["phase"] == "PREPARED":
-            self.cee.advance(operation_id, "COMMITTING", detail={"commit_boundary": "IVM_TRANSACTION"})
+            self.cee.advance(operation_id, "COMMITTING", detail={"commit_boundary": "CEE_REFERENCE_TRANSACTION"})
         operation = self.cee.get(operation_id)
         assert operation is not None
 
@@ -392,9 +449,10 @@ class KinSysProtocolPipeline:
                 result = {
                     "operation_id": operation_id,
                     "status": "REJECTED",
-                    "reason": decision.reason or "IVM_REJECTED",
+                    "final_decision": "REJECTED",
+                    "reason": decision.reason or "CEE_EXECUTION_REJECTED",
                     "minah_disposition": disposition,
-                    "ivm_decision": ivm_result,
+                    "execution_result": ivm_result,
                     "funds_moved": False,
                 }
                 self.cee.advance(
@@ -405,7 +463,7 @@ class KinSysProtocolPipeline:
                 return self._response_result(operation_id, result, duplicate=False)
             self.cee.advance(
                 operation_id, "COMMITTED", ivm=ivm_result,
-                detail={"ivm_commit_observed": True, "history_id": decision.history_id},
+                detail={"cee_commit_observed": True, "history_id": decision.history_id},
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
@@ -414,17 +472,18 @@ class KinSysProtocolPipeline:
             ivm_result = operation["ivm_json"]
             result = {
                 "operation_id": operation_id,
-                "status": "COMMITTED",
+                "status": "PASSED",
+                "final_decision": "PASSED",
                 "reason": None,
                 "minah_disposition": disposition,
-                "ivm_decision": ivm_result,
+                "execution_result": ivm_result,
                 "funds_moved": False,
-                "commit_scope": "LOCAL_IVM_SQLITE_ONLY_NOT_DISTRIBUTED_FINALITY",
+                "commit_scope": "LOCAL_CEE_REFERENCE_STORE_ONLY_NOT_DISTRIBUTED_FINALITY",
             }
             self.cee.advance(
-                operation_id, "FINALIZED", status="FINALIZED", outcome="COMMITTED",
+                operation_id, "FINALIZED", status="PASSED", outcome="PASSED",
                 result=result,
-                detail={"result_status": "COMMITTED", "distributed_finality": False},
+                detail={"result_status": "PASSED", "distributed_finality": False},
             )
             return self._response_result(operation_id, result, duplicate=bool(ivm_result.get("duplicate")))
 
@@ -453,15 +512,15 @@ class KinSysProtocolPipeline:
                 "result": result,
                 "cee_events": events,
                 "component_trace": response["component_trace"],
-                "ivm_event": ivm_event,
+                "execution_record": ivm_event,
             }
         return {
             "operation_id": operation_id,
             "phase": operation["phase"],
             "resumable": True,
             "minah_disposition": operation["minah_json"],
-            "ivm_decision": operation["ivm_json"],
-            "ivm_event": ivm_event,
+            "execution_result": operation["ivm_json"],
+            "execution_record": ivm_event,
             "cee_events": events,
             "component_trace": [],
         }
@@ -476,7 +535,7 @@ class KinSysProtocolPipeline:
         minah_inserted = False
         ivm_inserted = False
         minah = result.get("minah_disposition")
-        ivm = result.get("ivm_decision")
+        ivm = result.get("execution_result")
 
         def append(component: str, status: str, detail: dict[str, Any]) -> None:
             nonlocal sequence
@@ -489,7 +548,11 @@ class KinSysProtocolPipeline:
             })
 
         for event in events:
-            if event["phase"] == "AUTHORITY_EVALUATED" and not minah_inserted and isinstance(minah, dict):
+            # REQUESTED is an ingress receipt, not CEE admission; omit it from
+            # the component trace so the public flow begins with MINAH.
+            if event["phase"] == "REQUESTED":
+                continue
+            if event["phase"] == "MINAH_REVIEWED" and not minah_inserted and isinstance(minah, dict):
                 append("MINAH", str(minah.get("status", "UNKNOWN")), {
                     "advisory_only": True,
                     "may_authorise": False,
@@ -499,26 +562,58 @@ class KinSysProtocolPipeline:
                     "contract_error": minah.get("contract_error"),
                 })
                 minah_inserted = True
-            if event["phase"] in {"COMMITTED", "FINALIZED"} and not ivm_inserted and isinstance(ivm, dict):
-                append("IVM", str(ivm.get("status", "UNKNOWN")), {
+            detail = {
+                "phase": event["phase"],
+                "event_status": event["status"],
+                **event["detail"],
+            }
+            # The execution engine is an internal CEE implementation detail.
+            # Keep its result in the CEE trace rather than exposing a second path.
+            if event["phase"] in {"COMMITTED", "FINALIZED"} and isinstance(ivm, dict):
+                detail["execution_result"] = {
+                    "status": ivm.get("status"),
                     "event_id": ivm.get("event_id"),
                     "from_state": ivm.get("from_state"),
                     "to_state": ivm.get("to_state"),
                     "history_id": ivm.get("history_id"),
                     "reason": ivm.get("reason"),
                     "duplicate": ivm.get("duplicate", False),
-                })
-                ivm_inserted = True
-            append("CEE", event["phase"], {
-                "phase": event["phase"],
-                "event_status": event["status"],
-                **event["detail"],
-            })
+                }
+            append("CEE", event["phase"], detail)
         return {
             **result,
             "duplicate": duplicate,
             "cee_events": events,
             "component_trace": trace,
+        }
+
+    def _evaluate_authority_gate(self, request: dict[str, Any]) -> AuthorityGateDecision:
+        try:
+            decision = self.authority_gate.evaluate(request)
+        except Exception as exc:
+            return AuthorityGateDecision(
+                "DEFER", "AUTHORITY_GATE_UNAVAILABLE",
+                "ADAPTER_ERROR", "NOT_ESTABLISHED",
+                {"error_type": type(exc).__name__},
+            )
+        if not isinstance(decision, AuthorityGateDecision):
+            return AuthorityGateDecision(
+                "DEFER", "INVALID_AUTHORITY_GATE_RESPONSE",
+                "UNTRUSTED_ADAPTER_OUTPUT", "NOT_ESTABLISHED", {},
+            )
+        if decision.outcome not in {"ALLOW", "REJECT", "DEFER"}:
+            return AuthorityGateDecision(
+                "DEFER", "INVALID_AUTHORITY_GATE_OUTCOME",
+                decision.adapter, "NOT_ESTABLISHED", {"reported_outcome": decision.outcome},
+            )
+        return decision
+
+    @staticmethod
+    def _authority_gate_trace(decision: AuthorityGateDecision) -> dict[str, Any]:
+        return {
+            "outcome": decision.outcome, "reason": decision.reason,
+            "adapter": decision.adapter, "assurance": decision.assurance,
+            "details": decision.details,
         }
 
     @staticmethod

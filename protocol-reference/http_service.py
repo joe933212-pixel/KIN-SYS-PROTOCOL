@@ -2,8 +2,8 @@
 
 This is an engineering prototype, not a production API:
 - /demo/instructions calls the legacy integrated demonstrator with synthetic adapters;
-- /protocol/instructions exercises a separate MINAH -> IVM -> CEE vertical slice;
-- the new slice uses a local IVM SQLite transition store and a separate CEE journal;
+- /protocol/instructions exercises the canonical MINAH -> CEE -> final-decision boundary;
+- the canonical instruction and case lifecycle/private-runtime tables share CEE-owned local SQLite connections, while institutional/payment adapters retain separate stores; cross-adapter atomicity and distributed finality are not claimed;
 - no production authentication, authoritative legal sources, live model, payment
   provider, distributed commit, or hardware integration is configured.
 Run from the repository root:
@@ -136,14 +136,17 @@ class KinSysPrototypeApplication:
                     ],
                     "instruction_flow": [
                         "POST /demo/instructions: legacy integrated synthetic demonstration",
-                        "POST /protocol/instructions: MINAH disposition -> IVM transition checks -> CEE lifecycle journal",
-                        "POST /cee/cases: CEE orchestration of MINAH, origin/destination decisions, IVM economic gate and simulated payment lifecycle",
+                        "POST /protocol/instructions: MINAH review -> CEE execution boundary -> final decision (PASSED/REJECTED/DEFERRED)",
+                        "POST /cee/cases: MINAH-first synthetic CEE case path with simulated institutional/payment adapters",
                     ],
                     "protocol_pipeline": {
-                        "status": "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED",
-                        "ivm": "LOCAL_SQLITE_REFERENCE_TRANSITION_RUNTIME",
-                        "cee": "LOCAL_SQLITE_DURABLE_LIFECYCLE_JOURNAL",
-                        "cross_store_atomicity": False,
+                        "status": "SYNTHETIC_MINAH_CEE_BOUNDARY_IMPLEMENTED",
+                        "canonical_flow": ["MINAH", "CEE", "FINAL_DECISION"],
+                        "final_decisions": ["PASSED", "REJECTED", "DEFERRED"],
+                        "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
+                        "cee": "LOCAL_SQLITE_CEE_RUNTIME_STORE",
+                        "single_cee_owned_store": True,
+                        "atomic_commit_across_lifecycle_and_execution": False,
                         "distributed_finality": False,
                         "funds_moved": False,
                     },
@@ -257,7 +260,9 @@ class KinSysPrototypeApplication:
                     "protocol_boundary": {
                         "cee": "LOCAL_SQLITE_CASE_ORCHESTRATOR",
                         "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
-                        "ivm": "LOCAL_SQLITE_REFERENCE_ECONOMIC_GATE",
+                        "pre_admission_gate": "SYNTHETIC_SERVER_SIDE_POLICY_ONLY_NOT_IDENTITY_VERIFICATION",
+                        "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
+                        "single_cee_owned_runtime_store": True,
                         "institutions": "SYNTHETIC_TWO_STAGE_WORKFLOW",
                         "payment": "SIMULATED_ONLY_NO_FUNDS_MOVED",
                         "cross_store_atomicity": False, "distributed_finality": False,
@@ -317,9 +322,11 @@ class KinSysPrototypeApplication:
                         "result": result,
                         "protocol_boundary": {
                             "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
-                            "ivm": "LOCAL_SQLITE_REFERENCE_RUNTIME",
-                            "cee": "LOCAL_SQLITE_LIFECYCLE_JOURNAL",
-                            "cross_store_atomicity": False,
+                            "pre_admission_gate": "SYNTHETIC_SERVER_SIDE_POLICY_ONLY_NOT_IDENTITY_VERIFICATION",
+                            "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
+                            "cee": "LOCAL_SQLITE_CEE_RUNTIME_STORE",
+                            "single_cee_owned_store": True,
+                            "atomic_commit_across_lifecycle_and_execution": False,
                             "distributed_finality": False,
                             "funds_moved": False,
                         },
@@ -486,35 +493,36 @@ def main() -> None:
         raise SystemExit("KIN_SYS_PORT must be between 1 and 65535")
     data_dir = Path(os.environ.get("KIN_SYS_DATA_DIR", ".kin-sys-prototype"))
     cee_database = os.environ.get("KIN_SYS_CEE_DB", str(data_dir / "cee.sqlite3"))
-    ivm_database = os.environ.get("KIN_SYS_IVM_DB", str(data_dir / "ivm.sqlite3"))
-    for database in (cee_database, ivm_database):
+    legacy_ivm_database = os.environ.get("KIN_SYS_IVM_DB")
+    if legacy_ivm_database and legacy_ivm_database not in {cee_database, ":memory:"}:
+        raise SystemExit("KIN_SYS_IVM_DB is no longer a separate store; set it equal to KIN_SYS_CEE_DB or unset it.")
+    for database in (cee_database,):
         if database != ":memory:":
             Path(database).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    pipeline = KinSysProtocolPipeline(
-        cee_database=cee_database,
-        ivm_database=ivm_database,
-    )
+    pipeline = KinSysProtocolPipeline(cee_database=cee_database)
     case_db = os.environ.get("KIN_SYS_CASE_CEE_DB", str(data_dir / "case-cee.sqlite3"))
-    case_ivm_db = os.environ.get("KIN_SYS_CASE_IVM_DB", str(data_dir / "case-ivm.sqlite3"))
+    legacy_case_runtime_db = os.environ.get("KIN_SYS_CASE_IVM_DB")
+    if legacy_case_runtime_db and legacy_case_runtime_db != case_db:
+        raise SystemExit("KIN_SYS_CASE_IVM_DB is no longer separate; set it equal to KIN_SYS_CASE_CEE_DB or unset it.")
     case_workflow_db = os.environ.get("KIN_SYS_CASE_WORKFLOW_DB", str(data_dir / "case-workflow.sqlite3"))
     case_payment_db = os.environ.get("KIN_SYS_CASE_PAYMENT_DB", str(data_dir / "case-payments.sqlite3"))
-    case_databases = (case_db, case_ivm_db, case_workflow_db, case_payment_db)
+    case_databases = (case_db, case_workflow_db, case_payment_db)
     for database in case_databases:
         if database != ":memory:":
             Path(database).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     case_coordinator = CEECaseCoordinator(
-        cee_database=case_db, ivm_database=case_ivm_db,
+        cee_database=case_db,
         workflow_database=case_workflow_db, payment_database=case_payment_db,
     )
     app = create_app(pipeline=pipeline, case_coordinator=case_coordinator)
-    for database in (cee_database, ivm_database, *case_databases):
+    for database in (cee_database, *case_databases):
         if database != ":memory:" and Path(database).exists():
             try:
                 os.chmod(database, 0o600)
             except OSError:
                 pass
     print(f"KIN-SYS local synthetic prototype listening on http://{host}:{port}")
-    print(f"CEE journal: {cee_database}; IVM store: {ivm_database}")
+    print(f"CEE runtime store: {cee_database}")
     print(f"CEE case journal: {case_db}; case IVM: {case_ivm_db}; workflow: {case_workflow_db}; payments: {case_payment_db}")
     print("WARNING: this is not a production API; do not expose it to the public internet.")
     try:
