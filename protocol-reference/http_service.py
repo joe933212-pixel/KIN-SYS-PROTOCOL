@@ -117,6 +117,7 @@ class KinSysPrototypeApplication:
                         "GET /system/capabilities",
                         "POST /demo/instructions",
                         "POST /protocol/instructions",
+                        "GET /protocol/operations/{operation_id}",
                     ],
                     "instruction_flow": [
                         "POST /demo/instructions: legacy integrated synthetic demonstration",
@@ -137,6 +138,33 @@ class KinSysPrototypeApplication:
                     ],
                     "funds_moved": False,
                 },
+                request_id,
+            )
+        operation_prefix = "/protocol/operations/"
+        if path.startswith(operation_prefix):
+            if method != "GET":
+                return _response(
+                    start_response, 405,
+                    {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use GET to inspect a protocol operation."}},
+                    request_id,
+                )
+            operation_id = path[len(operation_prefix):]
+            if not _ID_RE.fullmatch(operation_id):
+                return _response(
+                    start_response, 400,
+                    {"error": {"code": "INVALID_OPERATION_ID", "message": "Operation ID has an invalid format."}},
+                    request_id,
+                )
+            operation = self.pipeline.inspect(operation_id)
+            if operation is None:
+                return _response(
+                    start_response, 404,
+                    {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol operation matches this ID."}},
+                    request_id,
+                )
+            return _response(
+                start_response, 200,
+                {"status": operation["phase"], "operation": operation, "production_ready": False},
                 request_id,
             )
         if path == "/protocol/instructions":
