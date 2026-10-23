@@ -348,6 +348,90 @@ class CEECaseCoordinator:
             "funds_moved": False, "production_ready": False,
         })
 
+    def reconcile(
+        self, operation_id: str, event_id: str, finding: str,
+        *, source_sequence: int, provider_reference: str | None = None,
+    ) -> dict[str, Any]:
+        """Record synthetic, source-sequenced reconciliation; never resubmit payment."""
+        if not operation_id or not event_id:
+            raise ValueError("RECONCILIATION_IDENTIFIERS_REQUIRED")
+        if finding not in {"SETTLED", "NOT_SETTLED", "UNKNOWN"}:
+            raise ValueError("INVALID_RECONCILIATION_FINDING")
+        if type(source_sequence) is not int or source_sequence < 1:
+            raise ValueError("INVALID_RECONCILIATION_SEQUENCE")
+        row = self.cee_db.execute(
+            "SELECT phase, result_json FROM cee_cases WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        if row is None or not row["result_json"]:
+            raise KeyError("CEE_CASE_RESULT_NOT_FOUND")
+        result = json.loads(row["result_json"])
+        payment_info = result.get("payment_lifecycle")
+        if not isinstance(payment_info, dict) or not payment_info.get("payment_id"):
+            raise ValueError("CASE_HAS_NO_RECONCILABLE_PAYMENT")
+        payment_id = payment_info["payment_id"]
+        evidence = {
+            "event_id": event_id, "finding": finding,
+            "source_sequence": source_sequence, "provider_reference": provider_reference,
+        }
+        for prior in self.cee_db.execute(
+            "SELECT detail_json FROM cee_case_events WHERE operation_id=? AND component='PAYMENT' AND phase='RECONCILIATION'",
+            (operation_id,),
+        ):
+            previous = json.loads(prior["detail_json"])
+            if previous.get("event_id") == event_id:
+                comparable = {k: previous.get(k) for k in evidence}
+                if comparable != evidence:
+                    raise CaseConflict("RECONCILIATION_EVENT_ID_CONFLICT")
+                snapshot = self.inspect(operation_id)
+                assert snapshot is not None
+                return {
+                    **(snapshot["result"] or result), "duplicate": True,
+                    "cee_events": snapshot["events"], "component_trace": self._trace(snapshot["events"]),
+                }
+
+        # Payment store commits independently. A retry with the same event ID
+        # safely replays there if the CEE journal write was interrupted.
+        lifecycle = self.payments.record_reconciliation(
+            payment_id, event_id, finding, provider_reference, source_sequence=source_sequence,
+        )
+        if lifecycle["status"] == "SETTLED":
+            final_status, phase = "COMPLETED_WITH_RECONCILIATION_CONFIRMED_SETTLEMENT", "FINALIZED"
+        elif lifecycle["status"] == "RECONCILED_NOT_SETTLED":
+            final_status, phase = "PENDING_PAYMENT_RESOLUTION", "PENDING_PAYMENT_RESOLUTION"
+        else:
+            final_status, phase = "PENDING_PAYMENT_RECONCILIATION", "PENDING_RECONCILIATION"
+        payment_info = {
+            **payment_info,
+            "status": final_status if lifecycle["status"] == "SETTLED" else lifecycle["status"],
+            "recorded_status": lifecycle["status"],
+            "last_reconciliation": lifecycle.get("last_reconciliation"),
+            "last_reconciliation_sequence": lifecycle.get("last_reconciliation_sequence"),
+            "settlement_reference": lifecycle.get("settlement_reference"),
+            "history": self.payments.history(payment_id),
+            "funds_moved": False,
+        }
+        result = {**result, "status": final_status, "payment_lifecycle": payment_info, "funds_moved": False}
+        self.cee_db.execute("BEGIN IMMEDIATE")
+        try:
+            self.cee_db.execute(
+                "UPDATE cee_cases SET phase=?, result_json=? WHERE operation_id=?",
+                (phase, _canonical(result), operation_id),
+            )
+            self.cee_db.execute(
+                "INSERT INTO cee_case_events(operation_id,component,phase,status,detail_json) VALUES(?,?,?,?,?)",
+                (operation_id, "PAYMENT", "RECONCILIATION", lifecycle["status"], _canonical(evidence)),
+            )
+            self.cee_db.commit()
+        except Exception:
+            self.cee_db.rollback()
+            raise
+        snapshot = self.inspect(operation_id)
+        assert snapshot is not None
+        return {
+            **result, "operation_id": operation_id, "duplicate": False,
+            "cee_events": snapshot["events"], "component_trace": self._trace(snapshot["events"]),
+        }
+
     def _find_event(self, operation_id: str, component: str, phase: str) -> dict[str, Any] | None:
         row = self.cee_db.execute(
             """SELECT * FROM cee_case_events
