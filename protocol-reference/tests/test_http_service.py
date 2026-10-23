@@ -254,6 +254,42 @@ class HttpServiceTests(unittest.TestCase):
         self.assertIsNone(body["result"]["obligation"])
         self.assertIsNone(body["result"]["payment_lifecycle"])
 
+    def test_cee_reconciliation_route_records_versioned_finding_without_resubmission(self):
+        payload = {
+            "operation_id": "HTTP-CEE-RECON-1",
+            "case_id": "HTTP-CEE-RECON-CASE",
+            "jurisdiction": "UG-DEMO",
+            "evidence": {
+                "consignment_id": "HTTP-CEE-RECON-CASE",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+            },
+            "origin_actor": "ORIGIN-A",
+            "destination_actor": "DESTINATION-B",
+            "execution_actor": "AUTHORITY-001",
+            "origin_decision": "APPROVE",
+            "destination_decision": "APPROVE",
+            "declared_value_minor": 1000000,
+            "payment_outcome": "TIMEOUT_UNKNOWN",
+            "exempt": False,
+            "revoke_origin_before_decision": False,
+        }
+        created, body = self.request("/cee/cases", "POST", payload)
+        self.assertEqual(created["status"], 200)
+        self.assertEqual(body["status"], "PENDING_PAYMENT_RECONCILIATION")
+        response, reconciled = self.request("/cee/reconciliation", "POST", {
+            "operation_id": "HTTP-CEE-RECON-1",
+            "event_id": "HTTP-CEE-RECON-EVENT-2",
+            "finding": "NOT_SETTLED",
+            "source_sequence": 2,
+            "provider_reference": "SYNTHETIC-RECON-REF",
+        })
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(reconciled["status"], "PENDING_PAYMENT_RESOLUTION")
+        self.assertEqual(reconciled["result"]["payment_lifecycle"]["recorded_status"], "RECONCILED_NOT_SETTLED")
+        self.assertFalse(reconciled["protocol_boundary"]["funds_moved"])
+
     def test_unknown_fields_fail_closed(self):
         response, body = self.request("/demo/instructions", "POST", {"consignment_id": "HTTP-X", "skip_minah": True})
         self.assertEqual(response["status"], 422)
