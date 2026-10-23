@@ -40,6 +40,10 @@ It composes the existing two-institution SQLite model with test-only identity/au
 
 The adapters are deliberately simulated. The tax rule is fictional, no money moves, no real national identity or institutional systems are contacted, MINAH is not a real AI model or legal authority, and the edge profile is not physical Nexus Pod hardware. The report states these limits. This is an initial integrated software slice, not the full KIN-SYS system.
 
+## CEE-controlled institutional/payment coordinator
+
+`protocol-reference/cee_case_coordinator.py` is a separate synthetic coordinator that records a CEE case journal and drives MINAH advisory review, origin/destination institutional decisions, an IVM economic gate after approvals, fictional assessment, and the simulated payment lifecycle. The local HTTP prototype exposes `POST /cee/cases`, `GET /cee/operations/{operation_id}`, and `POST /cee/reconciliation`. The reconciliation route accepts only synthetic caller-supplied findings in this prototype; it does not authenticate or connect to a provider or bank. Unknown outcomes remain pending, reconciliation requires monotonically increasing source sequence, and the coordinator does not automatically resubmit a payment after a crash leaves submission outcome uncertain. Cross-store atomicity is not claimed. Tests live in `protocol-reference/tests/test_cee_case_coordinator.py` and `protocol-reference/tests/test_http_service.py`.
+
 ## Payment lifecycle boundary experiment
 
 `protocol-reference/payment_lifecycle.py` models separate records for an obligation, a stable payment instruction, a provider acknowledgement, settlement evidence, and reconciliation findings. It uses SQLite-backed IDs and request fingerprints to reject conflicting reuse; retries of the same instruction return the existing record rather than submitting anything to a provider. A provider's acceptance is explicitly **not** settlement. Unknown outcomes remain unresolved, and reconciliation does not resubmit a payment. Settlement requires matching amount/currency evidence and a settlement reference.
