@@ -266,22 +266,48 @@ class CEECaseCoordinator:
                 "payment_id": payment_id, "obligation_id": obligation_id,
                 "instruction_status": instruction["status"], "provider_not_called_yet": True,
             })
-            provider_result = self.provider.submit(payment_id, assessment["assessed_amount_ugx"], outcome=request["payment_outcome"])
-            self._event(operation_id, "PAYMENT", "PROVIDER_OUTCOME", provider_result["status"], {
-                "payment_id": payment_id, "provider": "SIMULATED_ONLY", "funds_moved": False,
-            })
-            ack = {"CONFIRMED": "ACCEPTED", "DECLINED": "DECLINED", "TIMEOUT_UNKNOWN": "UNKNOWN"}[request["payment_outcome"]]
+            prior_outcome = self._find_event(operation_id, "PAYMENT", "PROVIDER_OUTCOME")
+            prior_intent = self._find_event(operation_id, "PAYMENT", "SUBMISSION_INTENT")
+            if prior_outcome:
+                # A durable provider outcome is authoritative for retry; never resubmit.
+                provider_status = prior_outcome["status"]
+            elif prior_intent:
+                # We cannot prove whether a provider received the request before a crash.
+                # Fail closed into reconciliation instead of submitting a second time.
+                provider_status = "UNKNOWN_PENDING_RECONCILIATION"
+                self._event(operation_id, "PAYMENT", "PROVIDER_OUTCOME", provider_status, {
+                    "payment_id": payment_id, "provider": "SIMULATED_ONLY",
+                    "reason": "PRIOR_SUBMISSION_INTENT_WITHOUT_DURABLE_OUTCOME",
+                    "funds_moved": False,
+                })
+            else:
+                self._event(operation_id, "PAYMENT", "SUBMISSION_INTENT", "PENDING", {
+                    "payment_id": payment_id, "idempotency_key": payment_id,
+                    "provider": "SIMULATED_ONLY",
+                })
+                provider_result = self.provider.submit(
+                    payment_id, assessment["assessed_amount_ugx"], outcome=request["payment_outcome"]
+                )
+                provider_status = provider_result["status"]
+                self._event(operation_id, "PAYMENT", "PROVIDER_OUTCOME", provider_status, {
+                    "payment_id": payment_id, "provider": "SIMULATED_ONLY", "funds_moved": False,
+                })
+            ack = {
+                "SIMULATED_CONFIRMED": "ACCEPTED",
+                "SIMULATED_DECLINED": "DECLINED",
+                "UNKNOWN_PENDING_RECONCILIATION": "UNKNOWN",
+            }.get(provider_status, "UNKNOWN")
             lifecycle = self.payments.record_provider_ack(
                 payment_id, f"{payment_id}:ACK:1", ack,
                 "SIMULATED-PROVIDER-REF" if ack == "ACCEPTED" else None,
             )
-            if request["payment_outcome"] == "CONFIRMED":
+            if provider_status == "SIMULATED_CONFIRMED":
                 lifecycle = self.payments.record_settlement(
                     payment_id, f"{payment_id}:SETTLEMENT:1", f"SIMULATED-SETTLEMENT:{payment_id}",
                     amount_minor=assessment["assessed_amount_ugx"], currency="UGX",
                 )
                 payment_status = "SIMULATED_SETTLED"
-            elif request["payment_outcome"] == "DECLINED":
+            elif provider_status == "SIMULATED_DECLINED":
                 payment_status = "SIMULATED_DECLINED"
             else:
                 lifecycle = self.payments.record_reconciliation(
@@ -314,6 +340,17 @@ class CEECaseCoordinator:
             "obligation": obligation, "payment_lifecycle": payment_result,
             "funds_moved": False, "production_ready": False,
         })
+
+    def _find_event(self, operation_id: str, component: str, phase: str) -> dict[str, Any] | None:
+        row = self.cee_db.execute(
+            """SELECT * FROM cee_case_events
+               WHERE operation_id=? AND component=? AND phase=?
+               ORDER BY sequence LIMIT 1""",
+            (operation_id, component, phase),
+        ).fetchone()
+        if row is None:
+            return None
+        return {**dict(row), "detail": json.loads(row["detail_json"])}
 
     def _case_row(self, operation_id: str) -> dict[str, Any]:
         row = self.cee_db.execute("SELECT * FROM cee_cases WHERE operation_id=?", (operation_id,)).fetchone()
