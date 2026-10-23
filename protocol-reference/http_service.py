@@ -260,7 +260,7 @@ class KinSysPrototypeApplication:
                     "protocol_boundary": {
                         "cee": "LOCAL_SQLITE_CASE_ORCHESTRATOR",
                         "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
-                        "ivm": "LOCAL_SQLITE_REFERENCE_ECONOMIC_GATE",
+                        "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
                         "institutions": "SYNTHETIC_TWO_STAGE_WORKFLOW",
                         "payment": "SIMULATED_ONLY_NO_FUNDS_MOVED",
                         "cross_store_atomicity": False, "distributed_finality": False,
@@ -499,15 +499,17 @@ def main() -> None:
             Path(database).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     pipeline = KinSysProtocolPipeline(cee_database=cee_database)
     case_db = os.environ.get("KIN_SYS_CASE_CEE_DB", str(data_dir / "case-cee.sqlite3"))
-    case_ivm_db = os.environ.get("KIN_SYS_CASE_IVM_DB", str(data_dir / "case-ivm.sqlite3"))
+    legacy_case_runtime_db = os.environ.get("KIN_SYS_CASE_IVM_DB")
+    if legacy_case_runtime_db and legacy_case_runtime_db != case_db:
+        raise SystemExit("KIN_SYS_CASE_IVM_DB is no longer separate; set it equal to KIN_SYS_CASE_CEE_DB or unset it.")
     case_workflow_db = os.environ.get("KIN_SYS_CASE_WORKFLOW_DB", str(data_dir / "case-workflow.sqlite3"))
     case_payment_db = os.environ.get("KIN_SYS_CASE_PAYMENT_DB", str(data_dir / "case-payments.sqlite3"))
-    case_databases = (case_db, case_ivm_db, case_workflow_db, case_payment_db)
+    case_databases = (case_db, case_workflow_db, case_payment_db)
     for database in case_databases:
         if database != ":memory:":
             Path(database).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     case_coordinator = CEECaseCoordinator(
-        cee_database=case_db, ivm_database=case_ivm_db,
+        cee_database=case_db,
         workflow_database=case_workflow_db, payment_database=case_payment_db,
     )
     app = create_app(pipeline=pipeline, case_coordinator=case_coordinator)
