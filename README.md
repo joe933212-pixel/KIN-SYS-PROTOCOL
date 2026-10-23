@@ -64,6 +64,7 @@ The service binds to `127.0.0.1:8080` by default. Do not expose it to the public
 
 - `POST /demo/instructions` runs the legacy integrated demonstrator.
 - `POST /protocol/instructions` runs a synthetic vertical slice through CEE admission/context, MINAH's advisory disposition, IVM transition checks, and CEE commitment/finalization. The response includes both the CEE lifecycle journal and an ordered `component_trace` showing each component's role and outcome.
+- `GET /protocol/operations/{operation_id}` reads the saved lifecycle, component trace, result and IVM event for an operation without mutating or resuming it. This is intended for review and recovery diagnostics.
 
 The latter is meaningful integration progress, but not production readiness: identity and authority are synthetic, MINAH is a deterministic stand-in, the rule context is fixed to a demo version, and IVM/CEE use separate SQLite stores. There is no cross-store atomic commit or distributed finality, and no real funds move. The 29 proposed production API routes remain unimplemented.
 1. [Protocol specification](SPECIFICATION.md)
