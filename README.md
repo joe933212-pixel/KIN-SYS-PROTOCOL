@@ -50,6 +50,7 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 0. [Whole-system integration roadmap: complete architecture, shared invariants, and build sequence](SYSTEM_INTEGRATION_ROADMAP.md)
 0. [Production engineering handoff: API routes, workstreams, ownership, and acceptance gates](docs/PRODUCTION_ENGINEERING_HANDOFF.md)
 0. [Draft production integration API contract (OpenAPI 3.1 JSON; not yet routed)](api/openapi.json)
+0. [API implementation matrix: owner, dependencies and acceptance gate for every route](api/implementation-matrix.json)
 1. [Protocol specification](SPECIFICATION.md)
 2. [Architecture and trust boundaries](ARCHITECTURE.md)
 3. [Source crosswalk: CRS, CISA, IVM, CEE and prior art](docs/SOURCE_CROSSWALK.md)
