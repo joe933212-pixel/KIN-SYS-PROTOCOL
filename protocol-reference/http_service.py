@@ -145,7 +145,8 @@ class KinSysPrototypeApplication:
                         "final_decisions": ["PASSED", "REJECTED", "DEFERRED"],
                         "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
                         "cee": "LOCAL_SQLITE_DURABLE_LIFECYCLE_JOURNAL",
-                        "cross_store_atomicity": False,
+                        "single_cee_owned_store": True,
+                        "atomic_commit_across_lifecycle_and_execution": False,
                         "distributed_finality": False,
                         "funds_moved": False,
                     },
@@ -195,7 +196,8 @@ class KinSysPrototypeApplication:
                     "status": result["status"], "production_ready": False, "result": result,
                     "protocol_boundary": {
                         "settlement_evidence": "CALLER_SUPPLIED_SYNTHETIC_EVIDENCE_NOT_AUTHENTICATED",
-                        "cross_store_atomicity": False, "funds_moved": False,
+                        "single_cee_owned_store": True,
+                        "atomic_commit_across_lifecycle_and_execution": False, "funds_moved": False,
                     },
                 }, request_id)
             except HttpServiceError as exc:
@@ -262,7 +264,8 @@ class KinSysPrototypeApplication:
                         "ivm": "LOCAL_SQLITE_REFERENCE_ECONOMIC_GATE",
                         "institutions": "SYNTHETIC_TWO_STAGE_WORKFLOW",
                         "payment": "SIMULATED_ONLY_NO_FUNDS_MOVED",
-                        "cross_store_atomicity": False, "distributed_finality": False,
+                        "single_cee_owned_store": True,
+                        "atomic_commit_across_lifecycle_and_execution": False, "distributed_finality": False,
                     },
                 }, request_id)
             except HttpServiceError as exc:
@@ -322,7 +325,8 @@ class KinSysPrototypeApplication:
                             "pre_admission_gate": "SYNTHETIC_SERVER_SIDE_POLICY_ONLY_NOT_IDENTITY_VERIFICATION",
                             "execution_implementation": "PRIVATE_REFERENCE_DETAIL_BEHIND_CEE",
                             "cee": "LOCAL_SQLITE_DURABLE_LIFECYCLE_JOURNAL",
-                            "cross_store_atomicity": False,
+                            "single_cee_owned_store": True,
+                        "atomic_commit_across_lifecycle_and_execution": False,
                             "distributed_finality": False,
                             "funds_moved": False,
                         },
