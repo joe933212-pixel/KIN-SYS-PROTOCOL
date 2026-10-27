@@ -1,11 +1,11 @@
 # MINAH-First Ingress Gate — Reference Implementation
 
-**Status:** Experimental reference module plus HTTP integration of provider-neutral adapter injection on `/protocol/instructions`. The HTTP route uses the existing pipeline; the standalone `MinahFirstIngress` journal is still not wired into HTTP, and the legacy `/cee/cases` flow is a separate opt-in synthetic demo.  
+**Status:** The durable `MinahFirstIngress` journal is wired into `POST /protocol/instructions` for the v0.1 instruction envelope. It delegates actual gate execution to the existing `KinSysProtocolPipeline`; it does not create a second execution engine. The earlier internal request shape remains a compatibility path directly through that same pipeline. The legacy `/cee/cases` flow remains a separate opt-in synthetic demo.  
 **Copyright:** Joel Kagoro © 2026. See repository licensing and notice files.
 
 ## Why this slice exists
 
-The earlier CEE case coordinator recorded admission/context before its MINAH adapter, which did not satisfy the stronger MINAH-first requirement. The `/protocol/instructions` pipeline has since been reordered, and the HTTP app now accepts injected MINAH, identity and action-authority adapters and passes them into that same pipeline. The legacy `/cee/cases` route remains disabled by default because it is not yet unified with this ingress.
+The earlier CEE case coordinator recorded admission/context before its MINAH adapter, which did not satisfy the stronger MINAH-first requirement. The `/protocol/instructions` pipeline enforces MINAH-first ordering, then identity and action-specific authority checks before CEE admission and IVM execution. For v0.1 instruction envelopes, the HTTP app now records the canonical envelope in the ingress journal before delegating to that pipeline. The legacy `/cee/cases` route remains disabled by default because it is not unified with the governed instruction flow.
 
 The standalone module makes the intended ingress order executable and testable at a boundary:
 
@@ -24,13 +24,13 @@ No vendor, cloud, AI model, operating system, GPU or hardware is mandated. Adapt
 
 ## Idempotency and uncertain outcomes
 
-The SQLite ingress journal binds an operation ID to a canonical request fingerprint. Reusing an operation ID with different content raises a conflict. A completed replay returns the stored result without calling adapters again.
+The SQLite ingress journal binds an operation ID to a canonical request fingerprint. Reusing an operation ID with different content raises a conflict. For a completed v0.1 HTTP operation, replay returns the stored decision and pipeline result without invoking the pipeline again. The local server persists this journal at `KIN_SYS_INGRESS_DB`, defaulting to `.kin-sys-prototype/ingress.sqlite3`; tests may use an in-memory or temporary database.
 
-An operation left non-final after a process interruption returns UNKNOWN and requires reconciliation; it is never automatically sent to CEE a second time. This avoids blind resubmission but does not itself resolve whether a downstream action happened. Production integration must reconcile the ingress journal with durable CEE operation state and provider evidence.
+An operation left non-final after a process interruption returns UNKNOWN and requires reconciliation; it is never automatically sent to CEE a second time. `GET /protocol/operations/{operation_id}` checks the CEE journal first and then the ingress journal. This avoids blind resubmission but does not itself resolve whether a downstream transition happened. Reconciliation between ingress and CEE/IVM durable state remains an open acceptance gate.
 
 ## What tests prove
 
-The tests use fake adapters to verify call order, fail-closed MINAH/identity/authority outcomes, including explicit MINAH rejection and unknown dispositions stopping before identity/CEE, conflict detection, replay behaviour, and no automatic CEE resubmission for an interrupted operation.
+The tests use fake adapters to verify call order, fail-closed MINAH/identity/authority outcomes, explicit rejection and deferral before downstream checks, conflict detection, digest tampering, decision-envelope binding, and replay behaviour. The v0.1 HTTP path uses the durable ingress journal and delegates gate execution to the same pipeline; a non-final ingress record is reported as UNKNOWN rather than blindly resubmitted.
 
 They do **not** prove:
 - that the current HTTP routes use this gate;
