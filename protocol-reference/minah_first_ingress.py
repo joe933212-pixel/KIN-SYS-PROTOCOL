@@ -87,6 +87,20 @@ class MinahFirstIngress:
     def close(self) -> None:
         self.db.close()
 
+    def inspect(self, operation_id: str) -> dict[str, Any] | None:
+        """Return a minimal ingress status record without exposing the stored request body."""
+        row = self.db.execute(
+            "SELECT operation_id, phase, result_json FROM minah_first_ingress WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "operation_id": row["operation_id"],
+            "phase": row["phase"],
+            "result": json.loads(row["result_json"]) if row["result_json"] else None,
+        }
+
     def execute(
         self, instruction: dict[str, Any], *,
         execution_request: dict[str, Any] | None = None,
