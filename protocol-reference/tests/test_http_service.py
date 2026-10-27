@@ -268,6 +268,72 @@ class HttpServiceTests(unittest.TestCase):
             app.close()
 
 
+
+    def test_http_verification_outages_return_unknown_without_cee_admission(self):
+        class IdentityUnavailable:
+            def verify_principal(self, request):
+                raise TimeoutError("identity service unavailable")
+
+        class IdentityAvailable:
+            def verify_principal(self, request):
+                return {"verified": True, "mode": "TEST_ADAPTER"}
+
+        class AuthorityUnavailable:
+            def verify_action(self, request):
+                raise TimeoutError("authority service unavailable")
+
+        base_payload = {
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "HTTP-VERIFY-OUTAGE",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        scenarios = (
+            ("identity", IdentityUnavailable(), None, "IDENTITY_VERIFICATION_UNAVAILABLE"),
+            ("authority", IdentityAvailable(), AuthorityUnavailable(), "AUTHORITY_VERIFICATION_UNAVAILABLE"),
+        )
+        for name, identity_adapter, authority_adapter, reason in scenarios:
+            with self.subTest(gate=name):
+                app = create_app(
+                    identity_adapter=identity_adapter,
+                    authority_adapter=authority_adapter,
+                )
+                try:
+                    payload = {
+                        **base_payload,
+                        "operation_id": f"HTTP-{name.upper()}-OUTAGE-1",
+                        "event_id": f"HTTP-{name.upper()}-OUTAGE-EVENT-1",
+                        "process_id": f"HTTP-{name.upper()}-OUTAGE-PROCESS-1",
+                        "actor_id": "AUTHORITY-001",
+                        "evidence": {
+                            **base_payload["evidence"],
+                            "consignment_id": f"HTTP-{name.upper()}-OUTAGE-PROCESS-1",
+                        },
+                    }
+                    response, body = self.request_with_app(
+                        app, "/protocol/instructions", "POST", payload
+                    )
+                    self.assertEqual(response["status"], 200)
+                    self.assertEqual(body["status"], "UNKNOWN")
+                    self.assertEqual(body["decision"]["protocol_decision"], "UNKNOWN")
+                    self.assertEqual(body["decision"]["external_effect_status"], "NOT_ATTEMPTED")
+                    self.assertEqual(body["result"]["reason"], reason)
+                    self.assertIsNone(body["result"]["ivm_decision"])
+                    phases = [event["phase"] for event in body["result"]["cee_events"]]
+                    self.assertNotIn("ADMITTED", phases)
+                    self.assertNotIn("EXECUTING", phases)
+                    if name == "identity":
+                        self.assertNotIn("AUTHORITY_VERIFIED", phases)
+                finally:
+                    app.close()
+
     def test_http_minah_rejection_stops_before_identity_authority_and_execution(self):
         calls = []
 
