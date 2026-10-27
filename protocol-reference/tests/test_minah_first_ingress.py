@@ -170,6 +170,51 @@ class MinahFirstIngressTests(unittest.TestCase):
         finally:
             ingress.close()
 
+
+    def test_pipeline_ingress_rejects_operation_id_mismatch_before_journaling(self):
+        self.ingress.close()
+        ingress = MinahFirstIngress(
+            self.db_path,
+            pipeline_executor=lambda request: {
+                "operation_id": request["operation_id"], "status": "COMMITTED"
+            },
+        )
+        try:
+            with self.assertRaisesRegex(
+                IngressConflict, "EXECUTION_REQUEST_OPERATION_ID_MISMATCH"
+            ):
+                ingress.execute(
+                    self.instruction(),
+                    execution_request={"operation_id": "different-operation"},
+                )
+            self.assertIsNone(ingress.inspect("op-1"))
+        finally:
+            ingress.close()
+
+    def test_v01_pipeline_ingress_requires_matching_validated_contract_envelope(self):
+        self.ingress.close()
+        ingress = MinahFirstIngress(
+            self.db_path,
+            pipeline_executor=lambda request: {
+                "operation_id": request["operation_id"], "status": "COMMITTED"
+            },
+        )
+        instruction = self.instruction(
+            contract_version="kin-sys-governed-contract-0.1",
+            rule_pack_version="KIN-SYS-DEMO-RULES:1.0",
+        )
+        try:
+            with self.assertRaisesRegex(
+                IngressConflict, "EXECUTION_REQUEST_NOT_BOUND_TO_INGRESS_INSTRUCTION"
+            ):
+                ingress.execute(
+                    instruction,
+                    execution_request={"operation_id": "op-1", "event_id": "event-1"},
+                )
+            self.assertIsNone(ingress.inspect("op-1"))
+        finally:
+            ingress.close()
+
     def test_operation_id_cannot_be_rebound_to_different_execution_request(self):
         instruction = self.instruction()
         self.ingress.execute(
