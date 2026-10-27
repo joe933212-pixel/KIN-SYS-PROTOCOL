@@ -352,15 +352,22 @@ class KinSysPrototypeApplication:
                     request_id,
                 )
             operation = self.pipeline.inspect(operation_id)
-            if operation is None:
+            if operation is not None:
                 return _response(
-                    start_response, 404,
-                    {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol operation matches this ID."}},
+                    start_response, 200,
+                    {"status": operation["phase"], "operation": operation, "source": "CEE_PIPELINE", "production_ready": False},
+                    request_id,
+                )
+            ingress_operation = self.ingress.inspect(operation_id)
+            if ingress_operation is not None:
+                return _response(
+                    start_response, 200,
+                    {"status": ingress_operation["phase"], "operation": ingress_operation, "source": "MINAH_FIRST_INGRESS_JOURNAL", "production_ready": False},
                     request_id,
                 )
             return _response(
-                start_response, 200,
-                {"status": operation["phase"], "operation": operation, "production_ready": False},
+                start_response, 404,
+                {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol or ingress journal operation matches this ID."}},
                 request_id,
             )
         if path == "/protocol/instructions":
