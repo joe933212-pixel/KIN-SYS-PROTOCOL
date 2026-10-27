@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 from minah_profile_governance import MinahApprovalViolation
@@ -63,6 +64,7 @@ class MinahFirstIngress:
         authority: AuthorityAdapter | None = None,
         cee: CEEAdapter | None = None,
         pipeline_executor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        pipeline_recovery: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
     ):
         adapters = (minah, identity, authority, cee)
         if pipeline_executor is None and any(adapter is None for adapter in adapters):
@@ -70,6 +72,7 @@ class MinahFirstIngress:
         if pipeline_executor is not None and any(adapter is not None for adapter in adapters):
             raise ValueError("PIPELINE_EXECUTOR_CANNOT_BE_COMBINED_WITH_GATE_ADAPTERS")
         self.pipeline_executor = pipeline_executor
+        self.pipeline_recovery = pipeline_recovery
         self.db = sqlite3.connect(database, timeout=10.0)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA busy_timeout=10000")
@@ -79,7 +82,33 @@ class MinahFirstIngress:
                 request_fingerprint TEXT NOT NULL,
                 instruction_json TEXT NOT NULL,
                 phase TEXT NOT NULL,
-                result_json TEXT
+                result_json TEXT,
+                execution_request_json TEXT,
+                execution_request_fingerprint TEXT
+            )
+        """)
+        columns = {
+            row["name"] for row in self.db.execute(
+                "PRAGMA table_info(minah_first_ingress)"
+            ).fetchall()
+        }
+        if "execution_request_json" not in columns:
+            self.db.execute(
+                "ALTER TABLE minah_first_ingress ADD COLUMN execution_request_json TEXT"
+            )
+        if "execution_request_fingerprint" not in columns:
+            self.db.execute(
+                "ALTER TABLE minah_first_ingress ADD COLUMN execution_request_fingerprint TEXT"
+            )
+        self.db.execute("""
+            CREATE TABLE IF NOT EXISTS minah_first_ingress_recovery_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                phase_before TEXT,
+                phase_after TEXT,
+                evidence_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
         """)
         self.db.commit()
@@ -101,6 +130,137 @@ class MinahFirstIngress:
             "phase": row["phase"],
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
         }
+
+    def recovery_events(self, operation_id: str) -> list[dict[str, Any]]:
+        """Return the append-only recovery audit trail for one operation."""
+        rows = self.db.execute(
+            """SELECT action, phase_before, phase_after, evidence_json, created_at
+               FROM minah_first_ingress_recovery_events
+               WHERE operation_id=? ORDER BY event_id""",
+            (operation_id,),
+        ).fetchall()
+        return [{
+            "action": row["action"],
+            "phase_before": row["phase_before"],
+            "phase_after": row["phase_after"],
+            "evidence": json.loads(row["evidence_json"]),
+            "created_at": row["created_at"],
+        } for row in rows]
+
+    def _record_recovery_event(
+        self, operation_id: str, action: str, phase_before: str | None,
+        phase_after: str | None, evidence: dict[str, Any],
+    ) -> None:
+        self.db.execute(
+            """INSERT INTO minah_first_ingress_recovery_events
+               (operation_id, action, phase_before, phase_after, evidence_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                operation_id, action, phase_before, phase_after, _canonical(evidence),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self.db.commit()
+
+    def recover(self, operation_id: str) -> dict[str, Any] | None:
+        """Explicitly recover from the pinned CEE lifecycle; never resubmit a new request."""
+        row = self.db.execute(
+            """SELECT operation_id, instruction_json, phase, result_json,
+                      execution_request_json, execution_request_fingerprint
+               FROM minah_first_ingress WHERE operation_id=?""",
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["result_json"]:
+            return {**json.loads(row["result_json"]), "duplicate": True}
+
+        phase_before = row["phase"]
+        if self.pipeline_recovery is None:
+            self._record_recovery_event(
+                operation_id, "RECOVERY_BLOCKED", phase_before, phase_before,
+                {"reason": "PIPELINE_RECOVERY_NOT_CONFIGURED"},
+            )
+            return self._unknown(operation_id, "PIPELINE_RECOVERY_NOT_CONFIGURED")
+        if not row["execution_request_json"] or not row["execution_request_fingerprint"]:
+            self._record_recovery_event(
+                operation_id, "RECOVERY_BLOCKED", phase_before, phase_before,
+                {"reason": "DURABLE_EXECUTION_REQUEST_MISSING"},
+            )
+            return self._unknown(operation_id, "DURABLE_EXECUTION_REQUEST_MISSING")
+
+        instruction = json.loads(row["instruction_json"])
+        execution_request = json.loads(row["execution_request_json"])
+        if _fingerprint(execution_request) != row["execution_request_fingerprint"]:
+            self._record_recovery_event(
+                operation_id, "RECOVERY_BLOCKED", phase_before, phase_before,
+                {"reason": "DURABLE_EXECUTION_REQUEST_FINGERPRINT_MISMATCH"},
+            )
+            return self._unknown(operation_id, "DURABLE_EXECUTION_REQUEST_FINGERPRINT_MISMATCH")
+
+        self._record_recovery_event(
+            operation_id, "RECOVERY_STARTED", phase_before, phase_before,
+            {
+                "execution_request_fingerprint": row["execution_request_fingerprint"],
+                "policy": "RESUME_PINNED_CEE_PHASE_ONLY",
+            },
+        )
+        try:
+            pipeline_result = self.pipeline_recovery(operation_id, execution_request)
+            status_map = {
+                "COMMITTED": "PASSED", "PASSED": "PASSED", "REJECTED": "REJECTED",
+                "DEFERRED": "DEFERRED", "UNKNOWN": "UNKNOWN",
+            }
+            status = status_map.get(
+                pipeline_result.get("status") if isinstance(pipeline_result, dict) else None,
+                "UNKNOWN",
+            )
+            messages = {
+                "PASSED": "The durable protocol lifecycle was recovered. No external effect is implied.",
+                "REJECTED": "The recovered protocol lifecycle rejected the instruction.",
+                "DEFERRED": "The recovered protocol lifecycle requires additional information or review.",
+                "UNKNOWN": "The operation remains uncertain. Do not retry it; further reconciliation is required.",
+            }
+            result = self._decision(
+                operation_id, status,
+                str(pipeline_result.get("reason") or "RECOVERED_DURABLE_LIFECYCLE")
+                if isinstance(pipeline_result, dict) else "INVALID_PIPELINE_RECOVERY_RESPONSE",
+                messages[status],
+                minah_ref=f"minah-disposition:{operation_id}",
+                cee_ref=f"cee-operation:{operation_id}",
+                external_effect_status="NOT_ATTEMPTED",
+                evidence_refs=instruction.get("evidence_refs", []),
+            )
+            result.update({
+                "contract_version": instruction.get("contract_version"),
+                "request_id": instruction.get("request_id"),
+                "rule_pack_version": instruction.get("rule_pack_version"),
+                "pipeline_result": pipeline_result,
+                "recovery": {
+                    "recovered": status != "UNKNOWN",
+                    "source": "PINNED_CEE_LIFECYCLE",
+                    "execution_request_fingerprint": row["execution_request_fingerprint"],
+                },
+            })
+            completed = self._finish(operation_id, result)
+            self._record_recovery_event(
+                operation_id, "RECOVERY_COMPLETED", phase_before,
+                completed["protocol_decision"],
+                {
+                    "pipeline_status": pipeline_result.get("status") if isinstance(pipeline_result, dict) else None,
+                    "protocol_decision": completed["protocol_decision"],
+                    "cee_phase": pipeline_result.get("phase") if isinstance(pipeline_result, dict) else None,
+                },
+            )
+            return completed
+        except Exception as exc:
+            self._set_phase(operation_id, "UNKNOWN_REQUIRES_RECONCILIATION")
+            self._record_recovery_event(
+                operation_id, "RECOVERY_BLOCKED", phase_before,
+                "UNKNOWN_REQUIRES_RECONCILIATION",
+                {"reason": str(exc)[:240], "exception_type": type(exc).__name__},
+            )
+            return self._unknown(operation_id, "RECOVERY_REQUIRES_RECONCILIATION")
 
     def reconcile(
         self, operation_id: str, pipeline_snapshot: dict[str, Any] | None,
@@ -229,6 +389,8 @@ class MinahFirstIngress:
         self._validate_minimum_instruction(instruction)
         operation_id = instruction["operation_id"]
         fingerprint = _fingerprint(instruction)
+        effective_execution_request = dict(execution_request or instruction)
+        execution_request_fingerprint = _fingerprint(effective_execution_request)
 
         self.db.execute("BEGIN IMMEDIATE")
         try:
@@ -238,6 +400,11 @@ class MinahFirstIngress:
             if prior:
                 if prior["request_fingerprint"] != fingerprint:
                     raise IngressConflict("OPERATION_ID_REUSED_WITH_DIFFERENT_INSTRUCTION")
+                if (
+                    prior["execution_request_fingerprint"] is not None
+                    and prior["execution_request_fingerprint"] != execution_request_fingerprint
+                ):
+                    raise IngressConflict("OPERATION_ID_REUSED_WITH_DIFFERENT_EXECUTION_REQUEST")
                 if prior["result_json"]:
                     result = json.loads(prior["result_json"])
                     self.db.commit()
@@ -258,9 +425,13 @@ class MinahFirstIngress:
                 return unknown
             self.db.execute(
                 """INSERT INTO minah_first_ingress
-                   (operation_id, request_fingerprint, instruction_json, phase)
-                   VALUES (?, ?, ?, 'MINAH_PENDING')""",
-                (operation_id, fingerprint, _canonical(instruction)),
+                   (operation_id, request_fingerprint, instruction_json, phase,
+                    execution_request_json, execution_request_fingerprint)
+                   VALUES (?, ?, ?, 'MINAH_PENDING', ?, ?)""",
+                (
+                    operation_id, fingerprint, _canonical(instruction),
+                    _canonical(effective_execution_request), execution_request_fingerprint,
+                ),
             )
             self.db.commit()
         except Exception:
@@ -270,7 +441,7 @@ class MinahFirstIngress:
 
         if self.pipeline_executor is not None:
             return self._execute_with_pipeline(
-                operation_id, instruction, execution_request or instruction
+                operation_id, instruction, effective_execution_request
             )
 
         try:
