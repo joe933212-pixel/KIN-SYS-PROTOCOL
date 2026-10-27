@@ -118,6 +118,8 @@ Each adapter contract must specify:
 - Data minimisation and logging rules.
 - Conformance tests and evidence required for each claimed status.
 
+The reference pipeline catches adapter exceptions and fails closed, but it does **not** enforce wall-clock deadlines or forcibly cancel a blocked adapter call. Injected identity and authority adapters must enforce their own bounded network/client timeouts, treat verification as read-only/idempotent, and return an explicit unknown/unavailable result or raise a timeout exception. A timeout after a request may have reached an external provider must not trigger an unbounded or blind retry.
+
 A simulator must identify itself as a simulator in capability responses and operation traces. A simulator must never be presented as an authoritative institution, live identity source, or real payment provider.
 
 ## 6. Human usability requirements
