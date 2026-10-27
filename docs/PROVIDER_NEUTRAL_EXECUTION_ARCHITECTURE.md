@@ -25,7 +25,17 @@ This document proposes engineering constraints for the next implementation incre
 9. **Make capabilities discoverable.** Deployments must report which interfaces and capabilities are actually enabled, which are simulated, and which are unavailable.
 10. **Prove claims through conformance.** A passing demo, diagram, model response, or provider badge is not proof of protocol conformance. Claims require reproducible tests and explicit evidence.
 
-## 3. Logical architecture
+## 3. Institution-owned MINAH deployments
+
+MINAH is a gatekeeper role, not one globally shared service. Each national/sovereign, enterprise, or institutional deployment may use its own implementation, legal/source corpus, policy pack, identity integrations, operational controls, and hosting model. KIN-SYS standardises the gatekeeping position and the provenance required for an operation; it does not require identical MINAH models or configurations.
+
+Each deployment should have a versioned profile identifying the deployment owner and scope, intended use case, jurisdictions, policy/source-pack versions, model or implementation reference, and deployment mode. The operation must pin the profile and version used for its MINAH disposition. A retry must not silently switch profiles. A router, where used, must select a profile from authenticated institutional context and explicit policy; an untrusted request must not be able to choose a more permissive profile.
+
+A deployment may be locally customised, but MINAH must not grant institutional authority by itself. Identity, action-specific authority, institutional decision rules, and CEE enforcement remain distinct controls. The protocol's mandatory sequence and evidence requirements remain consistent across deployment scopes.
+
+The draft profile contract is documented in [MINAH Deployment Profiles](MINAH_DEPLOYMENT_PROFILES.md). The current reference pipeline validates and pins a profile into the operation fingerprint and MINAH evidence trace; the validator does not authenticate profile owners or prove the legal truth of a profile's sources. Production profile routing, trusted ownership, jurisdiction matching, and secure profile updates remain acceptance work.
+
+## 4. Logical architecture
 
 The protocol defines stable logical responsibilities. Implementations may combine or distribute them, provided they preserve the contracts and invariants.
 
