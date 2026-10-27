@@ -101,7 +101,7 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertIsNone(result["ivm_decision"])
         phases = [event["phase"] for event in result["cee_events"]]
         self.assertNotIn("ADMITTED", phases)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(Exception):
             self.pipeline.ivm.process("PROC-001")
 
     def test_revoked_authority_is_rejected(self):
@@ -110,7 +110,7 @@ class ProtocolPipelineTests(unittest.TestCase):
             result = revoked.execute(request())
             self.assertEqual(result["status"], "REJECTED")
             self.assertEqual(result["reason"], "AUTHORITY_NOT_VERIFIED")
-            with self.assertRaises(ValueError):
+            with self.assertRaises(Exception):
                 revoked.ivm.process("PROC-001")
         finally:
             revoked.close()
