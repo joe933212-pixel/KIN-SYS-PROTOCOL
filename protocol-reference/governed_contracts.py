@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
+import re
 from typing import Any
 
 CONTRACT_VERSION = "kin-sys-governed-contract-0.1"
@@ -67,8 +68,8 @@ def validate_instruction_envelope(instruction: Any) -> dict[str, Any]:
     digest = instruction["payload_digest"]
     if not digest.startswith("sha256:"):
         raise GovernedContractViolation("PAYLOAD_DIGEST_MUST_DECLARE_ALGORITHM")
-    if len(digest) != len("sha256:") + 64:
-        raise GovernedContractViolation("INVALID_PAYLOAD_DIGEST_LENGTH")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise GovernedContractViolation("INVALID_PAYLOAD_DIGEST")
     for field in ("evidence_refs", "constraints"):
         if field in instruction and not isinstance(instruction[field], (list, dict)):
             raise GovernedContractViolation(f"INVALID_{field.upper()}")
