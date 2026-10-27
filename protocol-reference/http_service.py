@@ -183,9 +183,22 @@ class KinSysPrototypeApplication:
                         "POST /cee/reconciliation",
                         "POST /cee/settlement-evidence",
                     ],
+                    "legacy_route_policy": {
+                        "enabled_by_default": False,
+                        "opt_in_flag": "enable_legacy_demo_routes=True",
+                        "routes": [
+                            "POST /demo/instructions",
+                            "POST /cee/cases",
+                            "POST /cee/reconciliation",
+                            "POST /cee/settlement-evidence",
+                            "legacy internal request shape on POST /protocol/instructions",
+                        ],
+                        "canonical_instruction_contract": "kin-sys-governed-contract-0.1",
+                        "legacy_routes_are_canonical_execution_path": False,
+                    },
                     "instruction_flow": [
-                        "POST /protocol/instructions: MINAH review -> identity adapter -> action-authority adapter -> CEE admission/context -> IVM transition inside the synthetic execution slice -> final decision",
-                        "Legacy demo and CEE case routes are synthetic and disabled by default",
+                        "POST /protocol/instructions with v0.1 envelope: MINAH review -> identity adapter -> action-authority adapter -> CEE admission/context -> IVM transition inside CEE -> final decision",
+                        "Legacy demo and CEE case routes are synthetic, opt-in compatibility paths and are not the canonical governed instruction route",
                     ],
                     "legacy_demo_routes": {
                         "enabled_in_this_instance": self.enable_legacy_demo_routes,
