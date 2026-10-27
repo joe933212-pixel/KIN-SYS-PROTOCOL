@@ -346,15 +346,58 @@ class KinSysPrototypeApplication:
         operation_prefix = "/protocol/operations/"
         if path.startswith(operation_prefix):
             recovery_suffix = "/recover"
+            recovery_events_suffix = "/recovery-events"
             is_recovery_request = path.endswith(recovery_suffix)
-            operation_id = (
-                path[len(operation_prefix):-len(recovery_suffix)]
-                if is_recovery_request else path[len(operation_prefix):]
+            is_recovery_events_request = path.endswith(recovery_events_suffix)
+            suffix = (
+                recovery_suffix if is_recovery_request
+                else recovery_events_suffix if is_recovery_events_request
+                else ""
             )
+            operation_id = path[len(operation_prefix):-len(suffix)] if suffix else path[len(operation_prefix):]
             if not _ID_RE.fullmatch(operation_id):
                 return _response(
                     start_response, 400,
                     {"error": {"code": "INVALID_OPERATION_ID", "message": "Operation ID has an invalid format."}},
+                    request_id,
+                )
+            if is_recovery_events_request:
+                if method != "GET":
+                    return _response(
+                        start_response, 405,
+                        {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use GET to inspect recovery audit events."}},
+                        request_id,
+                    )
+                if self.ingress.inspect(operation_id) is None:
+                    return _response(
+                        start_response, 404,
+                        {"error": {"code": "OPERATION_NOT_FOUND", "message": "No ingress operation matches this ID."}},
+                        request_id,
+                    )
+                safe_events = []
+                for event in self.ingress.recovery_events(operation_id):
+                    evidence = event.get("evidence", {})
+                    safe_evidence = {
+                        key: evidence[key] for key in (
+                            "policy", "execution_request_fingerprint", "cee_phase_before",
+                            "pipeline_status", "protocol_decision", "exception_type",
+                        ) if key in evidence
+                    } if isinstance(evidence, dict) else {}
+                    safe_events.append({
+                        "action": event["action"],
+                        "phase_before": event["phase_before"],
+                        "phase_after": event["phase_after"],
+                        "created_at": event["created_at"],
+                        "evidence": safe_evidence,
+                    })
+                return _response(
+                    start_response, 200,
+                    {
+                        "operation_id": operation_id,
+                        "events": safe_events,
+                        "count": len(safe_events),
+                        "production_ready": False,
+                    },
                     request_id,
                 )
             if is_recovery_request:
