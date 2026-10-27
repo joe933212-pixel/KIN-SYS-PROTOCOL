@@ -56,10 +56,10 @@ def validate_minah_profile(profile: Any) -> dict[str, Any]:
         if not isinstance(value, str) or not value.strip():
             raise MinahProfileViolation("INVALID_" + field.upper())
 
-    if profile["owner_scope"] not in SCOPES:
+    if not isinstance(profile["owner_scope"], str) or profile["owner_scope"] not in SCOPES:
         raise MinahProfileViolation("INVALID_OWNER_SCOPE")
 
-    if profile["deployment_mode"] not in DEPLOYMENT_MODES:
+    if not isinstance(profile["deployment_mode"], str) or profile["deployment_mode"] not in DEPLOYMENT_MODES:
         raise MinahProfileViolation("INVALID_DEPLOYMENT_MODE")
 
     jurisdictions = profile["jurisdictions"]
