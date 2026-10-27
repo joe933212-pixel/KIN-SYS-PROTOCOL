@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from http_service import create_app
 from integrated_demo import DeterministicMinahAdapter
+from governed_contracts import compute_payload_digest
 
 
 class HttpServiceTests(unittest.TestCase):
@@ -309,6 +310,7 @@ class HttpServiceTests(unittest.TestCase):
                 "rule_refs": ["SYNTHETIC-RULE-1"],
             },
         }
+        payload["payload_digest"] = compute_payload_digest(payload)
         response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["status"], "COMMITTED")
@@ -356,10 +358,12 @@ class HttpServiceTests(unittest.TestCase):
                 "rule_refs": ["SYNTHETIC-RULE-1"],
             },
         }
+        payload["payload_digest"] = compute_payload_digest(payload)
         first_response, first_body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
         self.assertEqual(first_response["status"], 200)
         self.assertEqual(first_body["status"], "COMMITTED")
         changed = {**payload, "authority_ref": "authority-check:substituted"}
+        changed["payload_digest"] = compute_payload_digest(changed)
         second_response, second_body = self.request_with_app(app, "/protocol/instructions", "POST", changed)
         self.assertEqual(second_response["status"], 409)
         self.assertEqual(second_body["error"]["code"], "IDEMPOTENCY_OR_STATE_CONFLICT")
