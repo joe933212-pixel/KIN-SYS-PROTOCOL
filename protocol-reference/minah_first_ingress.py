@@ -298,17 +298,14 @@ class MinahFirstIngress:
                     "execution_request_fingerprint": row["execution_request_fingerprint"],
                 },
             })
-            completed = self._finish(operation_id, result)
-            self._record_recovery_event(
-                operation_id, "RECOVERY_COMPLETED", phase_before,
-                completed["protocol_decision"],
+            return self._finish_recovery(
+                operation_id, result, phase_before,
                 {
                     "pipeline_status": pipeline_result.get("status") if isinstance(pipeline_result, dict) else None,
-                    "protocol_decision": completed["protocol_decision"],
+                    "protocol_decision": result["protocol_decision"],
                     "cee_phase": pipeline_result.get("phase") if isinstance(pipeline_result, dict) else None,
                 },
             )
-            return completed
         except Exception as exc:
             self._set_phase(operation_id, "UNKNOWN_REQUIRES_RECONCILIATION")
             self._record_recovery_event(
@@ -612,6 +609,43 @@ class MinahFirstIngress:
         )
         self.db.commit()
         return result
+
+    def _finish_recovery(
+        self, operation_id: str, result: dict[str, Any], phase_before: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Commit the recovered decision and its completion audit event atomically."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute(
+                "SELECT result_json FROM minah_first_ingress WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise IngressConflict("INGRESS_OPERATION_NOT_FOUND_DURING_RECOVERY")
+            if row["result_json"]:
+                existing = json.loads(row["result_json"])
+                self.db.commit()
+                return {**existing, "duplicate": True}
+            self.db.execute(
+                "UPDATE minah_first_ingress SET phase=?, result_json=? WHERE operation_id=?",
+                (result["protocol_decision"], _canonical(result), operation_id),
+            )
+            self.db.execute(
+                """INSERT INTO minah_first_ingress_recovery_events
+                   (operation_id, action, phase_before, phase_after, evidence_json, created_at)
+                   VALUES (?, 'RECOVERY_COMPLETED', ?, ?, ?, ?)""",
+                (
+                    operation_id, phase_before, result["protocol_decision"],
+                    _canonical(evidence), datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            self.db.commit()
+            return result
+        except Exception:
+            if self.db.in_transaction:
+                self.db.rollback()
+            raise
 
     def _set_phase(self, operation_id: str, phase: str) -> None:
         self.db.execute(
