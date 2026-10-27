@@ -168,6 +168,60 @@ class MinahFirstIngress:
         assert_instruction_binding(instruction, checked)
         return self._finish(operation_id, decision)
 
+    def recover(
+        self, operation_id: str, *,
+        pipeline_recovery: Callable[[str], dict[str, Any]],
+        pipeline_inspector: Callable[[str], dict[str, Any] | None],
+    ) -> dict[str, Any] | None:
+        """Explicitly recover an existing uncertain operation; never accept new work."""
+        row = self.db.execute(
+            "SELECT instruction_json, result_json FROM minah_first_ingress WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["result_json"]:
+            return {**json.loads(row["result_json"]), "duplicate": True}
+
+        instruction = json.loads(row["instruction_json"])
+        self._set_phase(operation_id, "RECOVERY_IN_PROGRESS")
+        try:
+            pipeline_recovery(operation_id)
+            snapshot = pipeline_inspector(operation_id)
+            reconciled = self.reconcile(operation_id, snapshot)
+            if reconciled is not None and reconciled.get("result") is not None:
+                return reconciled["result"]
+        except Exception:
+            # Do not leak provider exceptions or imply the outcome is known.
+            self._set_phase(operation_id, "UNKNOWN_REQUIRES_RECONCILIATION")
+            unknown = self._unknown(
+                operation_id, "RECOVERY_FAILED_REQUIRES_RECONCILIATION"
+            )
+            unknown["recovery_required"] = True
+            if "contract_version" in instruction:
+                unknown.update({
+                    "contract_version": instruction["contract_version"],
+                    "request_id": instruction["request_id"],
+                    "rule_pack_version": instruction["rule_pack_version"],
+                })
+            return unknown
+
+        self._set_phase(operation_id, "UNKNOWN_REQUIRES_RECONCILIATION")
+        unknown = self._unknown(
+            operation_id, "RECOVERY_DID_NOT_ESTABLISH_FINAL_CEE_RESULT"
+        )
+        unknown["recovery_required"] = True
+        snapshot = pipeline_inspector(operation_id)
+        if isinstance(snapshot, dict):
+            unknown["cee_phase"] = snapshot.get("phase")
+        if "contract_version" in instruction:
+            unknown.update({
+                "contract_version": instruction["contract_version"],
+                "request_id": instruction["request_id"],
+                "rule_pack_version": instruction["rule_pack_version"],
+            })
+        return unknown
+
     def execute(
         self, instruction: dict[str, Any], *,
         execution_request: dict[str, Any] | None = None,
