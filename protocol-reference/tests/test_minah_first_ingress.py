@@ -119,6 +119,39 @@ class MinahFirstIngressTests(unittest.TestCase):
         with self.assertRaises(IngressConflict):
             self.ingress.execute(self.instruction(action="different_action"))
 
+
+    def test_pipeline_journal_replay_survives_ingress_object_restart(self):
+        instruction = self.instruction(
+            contract_version="kin-sys-governed-contract-0.1",
+            rule_pack_version="KIN-SYS-DEMO-RULES:1.0",
+        )
+        execution_calls = []
+
+        def execute_once(request):
+            execution_calls.append(request["operation_id"])
+            return {"operation_id": request["operation_id"], "status": "COMMITTED", "reason": None}
+
+        self.ingress.close()
+        first = MinahFirstIngress(self.db_path, pipeline_executor=execute_once)
+        result = first.execute(instruction, execution_request={"operation_id": "op-1"})
+        first.close()
+        self.assertEqual(result["protocol_decision"], "PASSED")
+        self.assertEqual(execution_calls, ["op-1"])
+
+        def must_not_execute(request):
+            raise AssertionError("a completed ingress replay must not call the pipeline")
+
+        reopened = MinahFirstIngress(self.db_path, pipeline_executor=must_not_execute)
+        try:
+            replay = reopened.execute(instruction, execution_request={"operation_id": "op-1"})
+            self.assertTrue(replay["duplicate"])
+            self.assertEqual(replay["protocol_decision"], "PASSED")
+            self.assertEqual(replay["pipeline_result"]["status"], "COMMITTED")
+            self.assertEqual(reopened.inspect("op-1")["phase"], "PASSED")
+            self.assertEqual(execution_calls, ["op-1"])
+        finally:
+            reopened.close()
+
     def test_interrupted_inflight_operation_is_unknown_not_resubmitted(self):
         class CrashingCEE(FakeCEE):
             def execute_governed_instruction(self, instruction, **context):
