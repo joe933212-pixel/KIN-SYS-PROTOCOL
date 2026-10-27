@@ -8,6 +8,7 @@ sys.path.insert(0, str(ROOT))
 
 from governed_contracts import (
     CONTRACT_VERSION, GovernedContractViolation, assert_instruction_binding,
+    compute_payload_digest, verify_instruction_payload_digest,
     validate_decision_envelope, validate_instruction_envelope,
 )
 
@@ -62,6 +63,24 @@ class GovernedContractTests(unittest.TestCase):
             validate_instruction_envelope(self.instruction(payload_digest="abcdef"))
         with self.assertRaisesRegex(GovernedContractViolation, "INVALID_PAYLOAD_DIGEST"):
             validate_instruction_envelope(self.instruction(payload_digest="sha256:" + ("g" * 64)))
+
+
+    def test_canonical_payload_digest_detects_envelope_tampering(self):
+        instruction = self.instruction()
+        instruction["payload_digest"] = compute_payload_digest(instruction)
+        checked = verify_instruction_payload_digest(instruction)
+        self.assertEqual(checked["payload_digest"], instruction["payload_digest"])
+        changed = {**instruction, "authority_ref": "authority-check:changed"}
+        with self.assertRaisesRegex(GovernedContractViolation, "PAYLOAD_DIGEST_MISMATCH"):
+            verify_instruction_payload_digest(changed)
+
+    def test_canonical_payload_digest_covers_execution_evidence_extension(self):
+        instruction = self.instruction(evidence={"commodity": "SYNTHETIC_MAIZE"})
+        instruction["payload_digest"] = compute_payload_digest(instruction)
+        verify_instruction_payload_digest(instruction)
+        changed = {**instruction, "evidence": {"commodity": "SYNTHETIC_GOLD"}}
+        with self.assertRaisesRegex(GovernedContractViolation, "PAYLOAD_DIGEST_MISMATCH"):
+            verify_instruction_payload_digest(changed)
 
     def test_pass_does_not_mean_external_effect_completed(self):
         result = validate_decision_envelope(self.decision())
