@@ -120,10 +120,19 @@ class MinahFirstIngressTests(unittest.TestCase):
             self.ingress.execute(self.instruction(action="different_action"))
 
     def test_interrupted_inflight_operation_is_unknown_not_resubmitted(self):
-        self.ingress._set_phase("op-1", "CEE_PENDING")
+        class CrashingCEE(FakeCEE):
+            def execute_governed_instruction(self, instruction, **context):
+                self.log.append("CEE")
+                self.calls += 1
+                raise RuntimeError("simulated interruption after handoff")
+        self.ingress.cee = CrashingCEE(self.log)
+        with self.assertRaisesRegex(RuntimeError, "simulated interruption"):
+            self.ingress.execute(self.instruction())
+        calls_before_retry = list(self.log)
         result = self.ingress.execute(self.instruction())
         self.assertEqual(result["protocol_decision"], "UNKNOWN")
-        self.assertEqual(self.cee.calls, 0)
+        self.assertEqual(self.log, calls_before_retry)
+        self.assertEqual(self.ingress.cee.calls, 1)
 
     def test_unknown_ceeresponse_is_not_reported_as_passed(self):
         class InvalidCEE(FakeCEE):
