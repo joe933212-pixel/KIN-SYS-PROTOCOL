@@ -436,6 +436,15 @@ os._exit(74)
         self.assertEqual(self.pipeline.cee.get("RECOVERY-AMBIGUOUS")["phase"], "REQUESTED")
         self.assertIsNone(self.pipeline.ivm.event("RECOVERY-EVENT"))
 
+
+    def test_recovery_rejects_replacement_request_even_for_finalized_cee(self):
+        self.pipeline.execute(request())
+        replacement = request(event_id="REPLACEMENT-EVENT")
+        with self.assertRaisesRegex(
+            ExecutionConflict, "RECOVERY_REQUEST_DIFFERS_FROM_DURABLE_INGRESS_REQUEST"
+        ):
+            self.pipeline.recover("OP-001", expected_request=replacement)
+
     def test_recovery_refuses_changed_minah_profile(self):
         payload = request(operation_id="RECOVERY-PROFILE", event_id="RECOVERY-PROFILE-EVENT", process_id="RECOVERY-PROFILE-PROC")
         self.pipeline.execute(payload)
