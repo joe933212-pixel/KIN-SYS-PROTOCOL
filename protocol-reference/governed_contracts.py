@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
+import hashlib
+import hmac
+import json
 import re
 from typing import Any
 
@@ -50,6 +53,36 @@ def _validate_datetime(value: Any, field: str) -> None:
         raise GovernedContractViolation(f"INVALID_{field.upper()}") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise GovernedContractViolation(f"{field.upper()}_MUST_INCLUDE_TIMEZONE")
+
+
+def compute_payload_digest(instruction: Any) -> str:
+    """Compute the v0.1 digest over canonical instruction JSON excluding payload_digest.
+
+    Canonicalisation uses UTF-8 JSON, sorted object keys, compact separators,
+    non-ASCII characters preserved, and NaN/Infinity disallowed. All other
+    envelope fields and extensions, including execution evidence, are covered.
+    """
+    if not isinstance(instruction, dict):
+        raise GovernedContractViolation("INSTRUCTION_MUST_BE_OBJECT")
+    payload = dict(instruction)
+    payload.pop("payload_digest", None)
+    try:
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise GovernedContractViolation("INSTRUCTION_NOT_CANONICALIZABLE") from exc
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+def verify_instruction_payload_digest(instruction: Any) -> dict[str, Any]:
+    """Validate an envelope and verify its declared digest against canonical content."""
+    checked = validate_instruction_envelope(instruction)
+    expected = compute_payload_digest(checked)
+    if not hmac.compare_digest(expected, checked["payload_digest"]):
+        raise GovernedContractViolation("PAYLOAD_DIGEST_MISMATCH")
+    return checked
 
 
 def validate_instruction_envelope(instruction: Any) -> dict[str, Any]:
