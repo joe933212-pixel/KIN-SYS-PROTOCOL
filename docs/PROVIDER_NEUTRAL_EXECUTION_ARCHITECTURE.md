@@ -74,7 +74,7 @@ Provider adapters are supporting infrastructure, not an alternate protocol path:
 
 Adapters must not independently decide to bypass a rejected or deferred protocol decision.
 
-## 4. Provider-neutral contracts
+## 5. Provider-neutral contracts
 
 The protocol should specify versioned contracts before adding vendor-specific integrations.
 
@@ -120,7 +120,7 @@ Each adapter contract must specify:
 
 A simulator must identify itself as a simulator in capability responses and operation traces. A simulator must never be presented as an authoritative institution, live identity source, or real payment provider.
 
-## 5. Human usability requirements
+## 6. Human usability requirements
 
 The protocol's clients and institutional workflows should:
 
@@ -137,7 +137,7 @@ The protocol's clients and institutional workflows should:
 
 These requirements apply to any UI built on KIN-SYS; the protocol itself should provide stable reason codes, states, and metadata so different clients can deliver consistent experiences.
 
-## 6. Deployment profiles
+## 7. Deployment profiles
 
 The protocol should define and test profiles without binding semantics to a vendor:
 
@@ -150,7 +150,7 @@ The protocol should define and test profiles without binding semantics to a vend
 
 Each profile needs its own capability declaration, security assumptions, resource requirements, acceptance tests, and limitations. A profile is accepted only after its own tests and operational gates pass.
 
-## 7. Conformance and non-bypass tests
+## 8. Conformance and non-bypass tests
 
 The shared test suite should include at least:
 
@@ -167,7 +167,7 @@ The shared test suite should include at least:
 
 Run the same externally observable scenarios against a well-engineered conventional baseline. Record complexity, failure recovery, integration cost, usability, performance, and security results; do not assume KIN-SYS is superior in advance.
 
-## 8. NVIDIA integration rule
+## 9. NVIDIA integration rule
 
 An NVIDIA integration may be added only as an optional adapter/profile after the provider-neutral contracts and baseline conformance tests are established.
 
@@ -182,7 +182,7 @@ The integration should document:
 
 No repository documentation should imply that NVIDIA is required, that KIN-SYS is already integrated with NVIDIA, or that NVIDIA runtime controls automatically establish institutional/legal legitimacy.
 
-## 9. Implementation order
+## 10. Implementation order
 
 1. Reconcile this proposal with `SPECIFICATION.md`, `ARCHITECTURE.md`, `INVARIANTS.md`, the API contracts, and the CEE integration plan; document conflicts rather than silently overriding them.
 2. Define versioned instruction, decision, capability, and adapter contracts.
@@ -193,6 +193,6 @@ No repository documentation should imply that NVIDIA is required, that KIN-SYS i
 7. Evaluate NVIDIA as one optional profile only after the shared contracts work.
 8. Keep implementation status explicit: proposed, implemented, simulator-backed, sandbox-validated, independently reviewed, or production-accepted.
 
-## 10. Acceptance criterion
+## 11. Acceptance criterion
 
 This design is not accepted merely because the document exists. The next milestone is reached when versioned contracts and automated tests demonstrate a user-understandable, provider-neutral governed instruction path, including refusal, deferral, failure, and recovery cases. The status must remain a research prototype until deployment-specific security, legal, operational, and integration gates have been independently satisfied.
