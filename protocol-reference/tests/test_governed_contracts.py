@@ -109,6 +109,16 @@ class GovernedContractTests(unittest.TestCase):
         with self.assertRaisesRegex(GovernedContractViolation, "OPERATION_ID_MISMATCH"):
             assert_instruction_binding(self.instruction(), self.decision(operation_id="other-op"))
 
+
+    def test_non_string_decision_statuses_fail_as_contract_errors(self):
+        for field, value, expected in (
+            ("protocol_decision", ["PASSED"], "INVALID_PROTOCOL_DECISION"),
+            ("external_effect_status", {"state": "CONFIRMED"}, "INVALID_EXTERNAL_EFFECT_STATUS"),
+        ):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(GovernedContractViolation, expected):
+                    validate_decision_envelope(self.decision(**{field: value}))
+
     def test_required_minah_and_cee_references(self):
         with self.assertRaisesRegex(GovernedContractViolation, "MISSING_OR_INVALID_CEE_EXECUTION_REF"):
             validate_decision_envelope(self.decision(cee_execution_ref=""))
