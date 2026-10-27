@@ -369,7 +369,62 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(second_body["error"]["code"], "IDEMPOTENCY_OR_STATE_CONFLICT")
 
 
-    def test_v01_digest_tampering_is_rejected_before_minah_or_journal_admission(self):
+
+    def test_v01_ingress_journal_replay_returns_stored_result_without_reinvoking_minah(self):
+        calls = []
+
+        class RecordingMinah:
+            def review(self, evidence):
+                calls.append("MINAH")
+                return DeterministicMinahAdapter().review(evidence)
+
+        app = create_app(
+            minah_adapter=RecordingMinah(),
+            identity_adapter=type("Identity", (), {
+                "verify_principal": lambda self, request: {"verified": True, "mode": "TEST"}
+            })(),
+            authority_adapter=type("Authority", (), {
+                "verify_action": lambda self, request: {"verified": True, "mode": "TEST"}
+            })(),
+        )
+        self.addCleanup(app.close)
+        payload = {
+            "contract_version": "kin-sys-governed-contract-0.1",
+            "request_id": "client-request-ingress-replay",
+            "operation_id": "HTTP-INGRESS-REPLAY-1",
+            "idempotency_key": "idempotency-ingress-replay",
+            "principal_ref": "AUTHORITY-001",
+            "authority_ref": "authority-check:replay",
+            "action": "ACTIVATE",
+            "target_ref": "HTTP-INGRESS-REPLAY-PROCESS",
+            "purpose": "ingress journal replay test",
+            "jurisdiction": "UG-DEMO",
+            "submitted_at": "2026-10-27T10:00:00+03:00",
+            "payload_digest": "sha256:" + ("d" * 64),
+            "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "evidence": {
+                "consignment_id": "HTTP-INGRESS-REPLAY-PROCESS",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        payload["payload_digest"] = compute_payload_digest(payload)
+        first_response, first_body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        second_response, second_body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        self.assertEqual(first_response["status"], 200)
+        self.assertEqual(second_response["status"], 200)
+        self.assertEqual(first_body["decision"]["protocol_decision"], "PASSED")
+        self.assertEqual(second_body["decision"]["protocol_decision"], "PASSED")
+        self.assertTrue(second_body["result"]["duplicate"])
+        self.assertEqual(calls, ["MINAH"])
+        inspect_response, inspect_body = self.request_with_app(
+            app, "/protocol/operations/HTTP-INGRESS-REPLAY-1", "GET"
+        )
+        self.assertEqual(inspect_response["status"], 200)
+        self.assertEqual(inspect_body["source"], "CEE_PIPELINE")
+\n    def test_v01_digest_tampering_is_rejected_before_minah_or_journal_admission(self):
         calls = []
 
         class RecordingMinah:
