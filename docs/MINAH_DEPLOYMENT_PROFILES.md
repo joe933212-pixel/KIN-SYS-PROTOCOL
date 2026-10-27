@@ -7,7 +7,7 @@
 
 MINAH is a protocol gatekeeper, but KIN-SYS does not require one globally shared MINAH instance. Each country, enterprise, or institution may deploy and govern its own MINAH instance or deployment profile, appropriate to its legal domain, mandate, risk, and operating environment.
 
-The protocol standardises MINAH's role and the evidence needed to establish which deployment handled an instruction. It does not standardise one universal model, prompt, legal corpus, vendor, hosting provider, or hardware platform.
+The protocol standardises MINAH's gatekeeping role and the evidence needed to establish which deployment handled an instruction. A deployment may continue the path after a valid preliminary review, reject, defer for missing information, or report an unknown outcome; rejection and unknown must stop progression to later gates. It does not standardise one universal model, prompt, legal corpus, vendor, hosting provider, or hardware platform.
 
 ## 2. Deployment is scoped to an owner and use case
 
