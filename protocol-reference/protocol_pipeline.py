@@ -24,6 +24,8 @@ AUTHORITY_ID = "AUTHORITY-001"
 LIFECYCLE = (
     "REQUESTED",
     "MINAH_REVIEWED",
+    "IDENTITY_VERIFIED",
+    "AUTHORITY_VERIFIED",
     "ADMITTED",
     "CONTEXT_ESTABLISHED",
     "AUTHORITY_EVALUATED",
@@ -37,6 +39,30 @@ LIFECYCLE = (
 
 class ExecutionConflict(ValueError):
     """An operation ID was reused with different instruction content."""
+
+
+class SyntheticIdentityAdapter:
+    """Local demonstration stub; this is not authentication of a real person."""
+
+    def verify_principal(self, request: dict[str, Any]) -> dict[str, Any]:
+        actor = request.get("actor_id")
+        return {"verified": isinstance(actor, str) and bool(actor.strip()), "mode": "SYNTHETIC_SCHEMA_CHECK"}
+
+
+class SyntheticAuthorityAdapter:
+    """Local demonstration stub; this does not establish legal authority."""
+
+    def __init__(self, *, authority_active: bool = True):
+        self.authority_active = authority_active
+
+    def verify_action(self, request: dict[str, Any]) -> dict[str, Any]:
+        actor = request.get("actor_id")
+        action = request.get("event_type")
+        return {
+            "verified": self.authority_active and isinstance(actor, str) and bool(actor.strip())
+                and action == "ACTIVATE",
+            "mode": "SYNTHETIC_RULE_CHECK",
+        }
 
 
 class LifecycleViolation(RuntimeError):
@@ -169,7 +195,7 @@ class CEEJournal:
             terminal_branch = (
                 next_phase == "FINALIZED"
                 and (
-                    (current in {"MINAH_REVIEWED", "AUTHORITY_EVALUATED"} and outcome in {"DEFERRED", "REJECTED"})
+                    (current in {"MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED", "AUTHORITY_EVALUATED"} and outcome in {"DEFERRED", "REJECTED"})
                     or (current == "COMMITTING" and outcome == "REJECTED")
                 )
             )
@@ -208,11 +234,15 @@ class KinSysProtocolPipeline:
         cee_database: str = ":memory:",
         ivm_database: str = ":memory:",
         minah_adapter: Any | None = None,
+        identity_adapter: Any | None = None,
+        authority_adapter: Any | None = None,
         authority_active: bool = True,
     ):
         self.cee = CEEJournal(cee_database)
         self.ivm = ProtocolStore(ivm_database)
         self.minah = minah_adapter or DeterministicMinahAdapter()
+        self.identity_adapter = identity_adapter or SyntheticIdentityAdapter()
+        self.authority_adapter = authority_adapter or SyntheticAuthorityAdapter(authority_active=authority_active)
         self.authority_active = authority_active
 
     def close(self) -> None:
@@ -299,11 +329,59 @@ class KinSysProtocolPipeline:
                 )
             return self._response_result(operation_id, result, duplicate=False)
 
-        # Admission and context pinning are downstream of a valid MINAH review.
+        # These are explicit adapter boundaries. Defaults are synthetic schema/rule
+        # checks only; they are not real identity authentication or legal authority.
         if operation["phase"] == "MINAH_REVIEWED":
+            identity = self.identity_adapter.verify_principal(request)
+            if not isinstance(identity, dict) or identity.get("verified") is not True:
+                result = {
+                    "operation_id": operation_id, "status": "REJECTED",
+                    "reason": "IDENTITY_NOT_VERIFIED", "minah_disposition": disposition,
+                    "identity_result": identity if isinstance(identity, dict) else {"verified": False},
+                    "ivm_decision": None, "funds_moved": False,
+                }
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="REJECTED", outcome="REJECTED",
+                    result=result, detail={"reason": result["reason"], "ivm_not_invoked": True},
+                )
+                return self._response_result(operation_id, result, duplicate=False)
+            self.cee.advance(
+                operation_id, "IDENTITY_VERIFIED", status="EVALUATED",
+                detail={"identity_mode": identity.get("mode", "ADAPTER"), "verified": True},
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "IDENTITY_VERIFIED":
+            authority = self.authority_adapter.verify_action(request)
+            if not isinstance(authority, dict) or authority.get("verified") is not True:
+                result = {
+                    "operation_id": operation_id, "status": "REJECTED",
+                    "reason": "AUTHORITY_NOT_VERIFIED", "minah_disposition": disposition,
+                    "authority_result": authority if isinstance(authority, dict) else {"verified": False},
+                    "ivm_decision": None, "funds_moved": False,
+                }
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="REJECTED", outcome="REJECTED",
+                    result=result, detail={"reason": result["reason"], "ivm_not_invoked": True},
+                )
+                return self._response_result(operation_id, result, duplicate=False)
+            self.cee.advance(
+                operation_id, "AUTHORITY_VERIFIED", status="EVALUATED",
+                detail={"authority_mode": authority.get("mode", "ADAPTER"), "verified": True},
+            )
+
+        # Admission and context pinning are downstream of MINAH, identity, and
+        # action checks. Only then does CEE admit the instruction.
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "AUTHORITY_VERIFIED":
             self.cee.advance(
                 operation_id, "ADMITTED",
-                detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED", "minah_gate_passed": True},
+                detail={
+                    "admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED",
+                    "minah_gate_passed": True, "identity_gate_passed": True,
+                    "authority_gate_passed": True,
+                },
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
@@ -522,6 +600,10 @@ class KinSysProtocolPipeline:
             })
 
         for event in events:
+            if event["phase"] == "IDENTITY_VERIFIED":
+                append("IDENTITY", "VERIFIED", {"mode": event["detail"].get("identity_mode"), "synthetic": True})
+            if event["phase"] == "AUTHORITY_VERIFIED":
+                append("AUTHORITY", "VERIFIED", {"mode": event["detail"].get("authority_mode"), "synthetic": True})
             if event["phase"] == "MINAH_REVIEWED" and not minah_inserted and isinstance(minah, dict):
                 append("MINAH", str(minah.get("status", "UNKNOWN")), {
                     "advisory_only": True,
