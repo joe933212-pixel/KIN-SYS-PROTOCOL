@@ -48,13 +48,13 @@ The route currently runs with synthetic adapters and no production authenticatio
 
 ## Evidence and acceptance gates
 
-CI includes both an application-level restart test and a separate subprocess test that terminates the process after the IVM transaction commits but before CEE receives the acknowledgement. The stores are reopened, explicit recovery is invoked, and the tests verify that the operation finalizes while IVM transition history still contains exactly one transition.
+CI includes both an application-level restart test and subprocess tests that terminate the process with `os._exit` at four durable boundaries: after CEE records `REQUESTED` but before a MINAH disposition; immediately before the IVM transaction; after the IVM commit but before CEE acknowledges it; and after CEE records `COMMITTED` but before `FINALIZED`. The stores are reopened and the tests verify the prescribed recovery or manual-reconciliation behaviour, including that IVM transition history never contains a duplicate transition.
 
-These tests demonstrate recovery at this specific CEE/IVM boundary in the reference implementation. They do not cover every durable phase or prove resilience against every operating-system, filesystem, power-loss, storage-corruption or multi-worker failure.
+These tests demonstrate recovery at four representative boundaries in the reference implementation. They do not cover every instruction between durable writes or prove resilience against every operating-system, filesystem, power-loss, storage-corruption or multi-worker failure.
 
 Still required before production consideration:
 
-- crash testing at every durable phase and additional process-termination points beyond the tested IVM-commit/CEE-acknowledgement gap;
+- crash testing at all remaining durable phase boundaries and under filesystem/power-loss fault injection;
 - reconciliation policy and operator evidence for missing/corrupt CEE or IVM stores;
 - transactional/outbox design for any future external side effects;
 - authenticated and authorised recovery requests, multi-worker/concurrency analysis, backup/restore drills and storage-integrity checks;
