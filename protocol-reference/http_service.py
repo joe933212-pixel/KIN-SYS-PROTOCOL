@@ -192,6 +192,7 @@ class KinSysPrototypeApplication:
                         "completed_replay": "RETURN_STORED_RESULT_WITHOUT_PIPELINE_RESUBMISSION",
                         "uncertain_inflight_replay": "UNKNOWN_UNTIL_EXPLICIT_RECOVERY_OR_RECONCILIATION",
                         "recovery_endpoint": "POST /protocol/operations/{operation_id}/recover",
+                        "recovery_audit_endpoint": "GET /protocol/operations/{operation_id}/recovery-events",
                         "recovery_semantics": "RESUME_PINNED_CEE_PHASE_WITH_STABLE_IVM_EVENT_ID; NO_REPLACEMENT_REQUEST",
                         "cross_store_reconciliation": "EXPLICIT_RECOVERY_FROM_DURABLE_MINAH_DISPOSITION; EARLY_AMBIGUOUS_PHASES_REMAIN_UNKNOWN; LOCAL_SQLITE_ONLY",
                         "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
