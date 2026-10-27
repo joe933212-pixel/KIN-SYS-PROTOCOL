@@ -478,6 +478,65 @@ class HttpServiceTests(unittest.TestCase):
                 finally:
                     app.close()
 
+
+    def test_http_minah_deferral_stops_before_identity_authority_and_ivm(self):
+        calls = []
+
+        class NeedsInformationMinah:
+            def review(self, evidence):
+                calls.append("MINAH")
+                return {
+                    "status": "NEEDS_INFORMATION",
+                    "missing_fields": ["invoice_reference"],
+                    "source_refs": ["TEST-POLICY-1"],
+                    "uncertainty": "MEDIUM",
+                    "may_authorise": False,
+                    "model_version": "deferral-test-minah",
+                }
+
+        class MustNotRun:
+            def verify_principal(self, request):
+                calls.append("IDENTITY")
+                raise AssertionError("identity must not run after MINAH deferral")
+            def verify_action(self, request):
+                calls.append("AUTHORITY")
+                raise AssertionError("authority must not run after MINAH deferral")
+
+        app = create_app(
+            minah_adapter=NeedsInformationMinah(),
+            identity_adapter=MustNotRun(),
+            authority_adapter=MustNotRun(),
+        )
+        self.addCleanup(app.close)
+        payload = {
+            "operation_id": "HTTP-MINAH-DEFER-1",
+            "event_id": "HTTP-MINAH-DEFER-EVENT-1",
+            "process_id": "HTTP-MINAH-DEFER-PROCESS-1",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "HTTP-MINAH-DEFER-PROCESS-1",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "DEFERRED")
+        self.assertEqual(body["decision"]["protocol_decision"], "DEFERRED")
+        self.assertEqual(body["decision"]["external_effect_status"], "NOT_ATTEMPTED")
+        self.assertEqual(calls, ["MINAH"])
+        self.assertIsNone(body["result"]["ivm_decision"])
+        phases = [event["phase"] for event in body["result"]["cee_events"]]
+        self.assertNotIn("IDENTITY_VERIFIED", phases)
+        self.assertNotIn("AUTHORITY_VERIFIED", phases)
+        self.assertNotIn("ADMITTED", phases)
+
     def test_http_minah_rejection_stops_before_identity_authority_and_execution(self):
         calls = []
 
