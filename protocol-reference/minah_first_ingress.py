@@ -162,7 +162,11 @@ class MinahFirstIngress:
         )
         self.db.commit()
 
-    def recover(self, operation_id: str) -> dict[str, Any] | None:
+    def recover(
+        self, operation_id: str, *,
+        pipeline_recovery: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+        pipeline_inspector: Callable[[str], dict[str, Any] | None] | None = None,
+    ) -> dict[str, Any] | None:
         """Explicitly recover from the pinned CEE lifecycle; never resubmit a new request."""
         row = self.db.execute(
             """SELECT operation_id, instruction_json, phase, result_json,
@@ -176,7 +180,8 @@ class MinahFirstIngress:
             return {**json.loads(row["result_json"]), "duplicate": True}
 
         phase_before = row["phase"]
-        if self.pipeline_recovery is None:
+        recovery_callback = pipeline_recovery or self.pipeline_recovery
+        if recovery_callback is None:
             self._record_recovery_event(
                 operation_id, "RECOVERY_BLOCKED", phase_before, phase_before,
                 {"reason": "PIPELINE_RECOVERY_NOT_CONFIGURED"},
@@ -198,15 +203,32 @@ class MinahFirstIngress:
             )
             return self._unknown(operation_id, "DURABLE_EXECUTION_REQUEST_FINGERPRINT_MISMATCH")
 
+        cee_snapshot = None
+        if pipeline_inspector is not None:
+            try:
+                cee_snapshot = pipeline_inspector(operation_id)
+            except Exception as exc:
+                self._record_recovery_event(
+                    operation_id, "RECOVERY_BLOCKED", phase_before, phase_before,
+                    {"reason": "CEE_INSPECTION_UNAVAILABLE", "exception_type": type(exc).__name__},
+                )
+                return self._unknown(operation_id, "CEE_INSPECTION_UNAVAILABLE")
+            if cee_snapshot is None:
+                self._record_recovery_event(
+                    operation_id, "RECOVERY_BLOCKED", phase_before, phase_before,
+                    {"reason": "CEE_OPERATION_NOT_FOUND_REQUIRES_MANUAL_RECONCILIATION"},
+                )
+                return self._unknown(operation_id, "CEE_OPERATION_NOT_FOUND_REQUIRES_MANUAL_RECONCILIATION")
         self._record_recovery_event(
             operation_id, "RECOVERY_STARTED", phase_before, phase_before,
             {
                 "execution_request_fingerprint": row["execution_request_fingerprint"],
                 "policy": "RESUME_PINNED_CEE_PHASE_ONLY",
+                "cee_phase_before": cee_snapshot.get("phase") if isinstance(cee_snapshot, dict) else None,
             },
         )
         try:
-            pipeline_result = self.pipeline_recovery(operation_id, execution_request)
+            pipeline_result = recovery_callback(operation_id, execution_request)
             status_map = {
                 "COMMITTED": "PASSED", "PASSED": "PASSED", "REJECTED": "REJECTED",
                 "DEFERRED": "DEFERRED", "UNKNOWN": "UNKNOWN",
