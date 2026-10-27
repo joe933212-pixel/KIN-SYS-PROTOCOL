@@ -11,6 +11,7 @@ Run from the repository root:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -24,7 +25,10 @@ from integrated_demo import IntegratedDemonstrator
 from cee_case_coordinator import CEECaseCoordinator, CaseConflict, CaseRecoveryRequired
 from protocol_pipeline import ExecutionConflict, KinSysProtocolPipeline
 from minah_profile_governance import MinahApprovalViolation
-from governed_contracts import CONTRACT_VERSION, validate_decision_envelope
+from governed_contracts import (
+    CONTRACT_VERSION, assert_instruction_binding, validate_decision_envelope,
+    validate_instruction_envelope,
+)
 from transition import EventIdConflict
 
 
@@ -54,6 +58,13 @@ _CEE_CASE_FIELDS = {
 _PROTOCOL_FIELDS = {
     "operation_id", "event_id", "process_id", "actor_id", "event_type",
     "jurisdiction", "rule_set", "rule_version", "evidence",
+    # Draft v0.1 instruction-envelope fields. "evidence" remains a required
+    # execution extension for this synthetic pipeline; references alone are not
+    # treated as evidence content.
+    "contract_version", "request_id", "idempotency_key", "principal_ref",
+    "authority_ref", "action", "target_ref", "purpose", "submitted_at",
+    "payload_digest", "rule_pack_version", "evidence_refs", "constraints",
+    "provider_profile",
 }
 
 
@@ -355,7 +366,41 @@ class KinSysPrototypeApplication:
                 )
             try:
                 payload = self._read_json(environ, allowed_fields=_PROTOCOL_FIELDS)
-                result = self.pipeline.execute(payload)
+                contract_instruction = None
+                decision_request_id = request_id
+                if "contract_version" in payload:
+                    contract_instruction = validate_instruction_envelope(payload)
+                    if not isinstance(payload.get("evidence"), dict):
+                        raise HttpServiceError(
+                            422, "CONTRACT_EXECUTION_EVIDENCE_REQUIRED",
+                            "This reference execution route requires an evidence object; evidence references alone are insufficient.",
+                        )
+                    rule_parts = contract_instruction["rule_pack_version"].rsplit(":", 1)
+                    if len(rule_parts) != 2 or not all(rule_parts):
+                        raise HttpServiceError(
+                            422, "UNSUPPORTED_RULE_PACK_VERSION",
+                            "The synthetic reference route expects rule_pack_version in RULE_SET:VERSION form.",
+                        )
+                    # The current reference runtime supports only its named synthetic
+                    # rule pack. Other packs must not be silently interpreted as it.
+                    internal_payload = {
+                        "operation_id": contract_instruction["operation_id"],
+                        "event_id": "EV-" + hashlib.sha256(
+                            contract_instruction["idempotency_key"].encode("utf-8")
+                        ).hexdigest()[:24],
+                        "process_id": contract_instruction["target_ref"],
+                        "actor_id": contract_instruction["principal_ref"],
+                        "event_type": contract_instruction["action"],
+                        "jurisdiction": contract_instruction["jurisdiction"],
+                        "rule_set": rule_parts[0],
+                        "rule_version": rule_parts[1],
+                        "evidence": payload["evidence"],
+                        "_contract_envelope": contract_instruction,
+                    }
+                    decision_request_id = contract_instruction["request_id"]
+                else:
+                    internal_payload = payload
+                result = self.pipeline.execute(internal_payload)
                 decision_status = {
                     "COMMITTED": "PASSED",
                     "REJECTED": "REJECTED",
@@ -368,19 +413,27 @@ class KinSysPrototypeApplication:
                     "DEFERRED": "The instruction needs additional information or review before it can proceed.",
                     "UNKNOWN": "The outcome could not be established safely. Reconcile the operation before retrying.",
                 }
+                rule_pack_version = (
+                    contract_instruction["rule_pack_version"]
+                    if contract_instruction is not None
+                    else f"{internal_payload['rule_set']}:{internal_payload['rule_version']}"
+                )
                 decision_envelope = validate_decision_envelope({
                     "contract_version": CONTRACT_VERSION,
-                    "request_id": request_id,
-                    "operation_id": payload["operation_id"],
+                    "request_id": decision_request_id,
+                    "operation_id": internal_payload["operation_id"],
                     "protocol_decision": decision_status,
                     "reason_code": str(result.get("reason") or "REQUIRED_GATES_PASSED"),
                     "user_message": decision_messages[decision_status],
-                    "rule_pack_version": f"{payload['rule_set']}:{payload['rule_version']}",
-                    "minah_disposition_ref": f"minah-disposition:{payload['operation_id']}",
-                    "cee_execution_ref": f"cee-operation:{payload['operation_id']}",
+                    "rule_pack_version": rule_pack_version,
+                    "minah_disposition_ref": f"minah-disposition:{internal_payload['operation_id']}",
+                    "cee_execution_ref": f"cee-operation:{internal_payload['operation_id']}",
                     "external_effect_status": "NOT_ATTEMPTED",
-                    "evidence_refs": [],
+                    "evidence_refs": contract_instruction.get("evidence_refs", [])
+                    if contract_instruction is not None else [],
                 })
+                if contract_instruction is not None:
+                    assert_instruction_binding(contract_instruction, decision_envelope)
                 return _response(
                     start_response, 200,
                     {
