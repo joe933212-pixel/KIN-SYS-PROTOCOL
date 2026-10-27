@@ -87,10 +87,11 @@ class KinSysPrototypeApplication:
 
     def __init__(self, demonstrator: IntegratedDemonstrator | None = None,
                  pipeline: KinSysProtocolPipeline | None = None,
-                 case_coordinator: CEECaseCoordinator | None = None):
+                 case_coordinator: CEECaseCoordinator | None = None, enable_legacy_demo_routes: bool = False):
         self.demonstrator = demonstrator or IntegratedDemonstrator()
         self.pipeline = pipeline or KinSysProtocolPipeline()
         self.case_coordinator = case_coordinator or CEECaseCoordinator()
+        self.enable_legacy_demo_routes = enable_legacy_demo_routes
 
     def close(self) -> None:
         self.demonstrator.close()
