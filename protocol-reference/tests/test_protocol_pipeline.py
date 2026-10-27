@@ -116,6 +116,38 @@ class ProtocolPipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "MINAH_MUST_NOT_GRANT_INSTITUTIONAL_AUTHORITY"):
             KinSysProtocolPipeline(minah_profile=profile)
 
+    def test_minah_rejection_and_unknown_stop_before_identity_authority_and_cee(self):
+        class FixedMinah:
+            def __init__(self, status):
+                self.status = status
+
+            def review(self, evidence):
+                return {
+                    "status": self.status,
+                    "missing_fields": [],
+                    "source_refs": ["TEST-SOURCE-REF"],
+                    "uncertainty": "HIGH" if self.status == "UNKNOWN" else "LOW",
+                    "may_authorise": False,
+                    "model_version": "test-minah-1",
+                }
+
+        for status in ("REJECTED", "UNKNOWN"):
+            with self.subTest(status=status):
+                pipeline = KinSysProtocolPipeline(minah_adapter=FixedMinah(status))
+                try:
+                    result = pipeline.execute(request(operation_id="MINAH-GATE-" + status))
+                    self.assertEqual(result["status"], status)
+                    self.assertIsNone(result["ivm_decision"])
+                    self.assertFalse(result["funds_moved"])
+                    phases = [event["phase"] for event in result["cee_events"]]
+                    self.assertIn("MINAH_REVIEWED", phases)
+                    self.assertNotIn("IDENTITY_VERIFIED", phases)
+                    self.assertNotIn("AUTHORITY_VERIFIED", phases)
+                    self.assertNotIn("ADMITTED", phases)
+                    self.assertEqual(result["minah_disposition"]["status"], status)
+                finally:
+                    pipeline.close()
+
     def test_complete_path_runs_minah_ivm_and_cee_in_order(self):
         result = self.pipeline.execute(request())
         self.assertEqual(result["status"], "COMMITTED")
