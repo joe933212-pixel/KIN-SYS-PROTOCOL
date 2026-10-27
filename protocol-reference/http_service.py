@@ -21,7 +21,7 @@ from typing import Any, Callable
 from wsgiref.simple_server import make_server
 
 from integrated_demo import IntegratedDemonstrator
-from cee_case_coordinator import CEECaseCoordinator, CaseConflict
+from cee_case_coordinator import CEECaseCoordinator, CaseConflict, CaseRecoveryRequired
 from protocol_pipeline import ExecutionConflict, KinSysProtocolPipeline
 from transition import EventIdConflict
 
@@ -198,6 +198,8 @@ class KinSysPrototypeApplication:
                 }, request_id)
             except HttpServiceError as exc:
                 return _response(start_response, exc.status, {"error": {"code": exc.code, "message": exc.message}}, request_id)
+            except CaseRecoveryRequired as exc:
+                return _response(start_response, 409, {"error": {"code": "RECOVERY_REQUIRED", "message": str(exc)}}, request_id)
             except CaseConflict as exc:
                 return _response(start_response, 409, {"error": {"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)}}, request_id)
             except KeyError as exc:
