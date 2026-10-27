@@ -383,6 +383,60 @@ class ProtocolPipelineTests(unittest.TestCase):
 
 
 
+
+    def test_recovery_matrix_resumes_every_durable_post_minah_phase(self):
+        recoverable_phases = (
+            "MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED",
+            "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+            "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED",
+        )
+        for phase in recoverable_phases:
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as tmp:
+                cee_db = str(Path(tmp) / "cee.sqlite3")
+                ivm_db = str(Path(tmp) / "ivm.sqlite3")
+                operation_id = "RECOVER-MATRIX-" + phase
+                process_id = "PROC-" + phase
+                event_id = "EV-" + phase
+                payload = request(
+                    operation_id=operation_id,
+                    process_id=process_id,
+                    event_id=event_id,
+                    evidence={
+                        "consignment_id": process_id,
+                        "commodity": "SYNTHETIC_MAIZE",
+                        "origin": "UGANDA-DEMO",
+                        "destination": "BORDER-DEMO",
+                        "rule_refs": ["SYNTHETIC-RULE-1"],
+                    },
+                )
+                first = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                original_advance = first.cee.advance
+
+                def interrupt_after_phase(op_id, next_phase, **kwargs):
+                    result = original_advance(op_id, next_phase, **kwargs)
+                    if op_id == operation_id and next_phase == phase:
+                        raise RuntimeError("INJECTED_FAILURE_AFTER_DURABLE_PHASE:" + phase)
+                    return result
+
+                first.cee.advance = interrupt_after_phase
+                try:
+                    with self.assertRaisesRegex(RuntimeError, phase):
+                        first.execute(payload)
+                    durable = first.cee.get(operation_id)
+                    self.assertEqual(durable["phase"], phase)
+                finally:
+                    first.close()
+
+                resumed = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                try:
+                    result = resumed.recover(operation_id)
+                    self.assertEqual(result["status"], "COMMITTED")
+                    self.assertEqual(resumed.cee.get(operation_id)["phase"], "FINALIZED")
+                    self.assertEqual(resumed.ivm.process(process_id)["state"], "ACTIVE")
+                    self.assertEqual(len(resumed.ivm.history(process_id)), 1)
+                finally:
+                    resumed.close()
+
     def test_process_termination_after_ivm_commit_recovers_without_duplicate_transition(self):
         with tempfile.TemporaryDirectory() as tmp:
             cee_db = str(Path(tmp) / "cee.sqlite3")
