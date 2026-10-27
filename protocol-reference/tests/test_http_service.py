@@ -108,6 +108,10 @@ class HttpServiceTests(unittest.TestCase):
             body["ingress_adapter_contract"]["recovery_audit_endpoint"],
             "GET /protocol/operations/{operation_id}/recovery-events",
         )
+        self.assertEqual(
+            body["ingress_adapter_contract"]["adapter_timeout_enforcement"],
+            "NOT_ENFORCED_BY_REFERENCE_PIPELINE; INJECTED_ADAPTERS_MUST_BOUND_CALLS",
+        )
         self.assertIn(
             "production identity and cryptographic authentication",
             body["not_yet_wired_as_production_components"],
