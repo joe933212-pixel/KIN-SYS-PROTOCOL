@@ -249,6 +249,7 @@ class HttpServiceTests(unittest.TestCase):
                 return {"verified": True, "mode": "LIVE_HTTP_TEST"}
 
         app = create_app(
+            enable_legacy_demo_routes=True,
             minah_adapter=RecordingMinah(),
             identity_adapter=RecordingIdentity(),
             authority_adapter=RecordingAuthority(),
