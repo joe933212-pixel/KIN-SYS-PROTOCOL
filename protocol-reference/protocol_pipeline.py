@@ -271,6 +271,14 @@ class KinSysProtocolPipeline:
         # MINAH is invoked. Replays cannot silently switch to another profile.
         journal_request = dict(request)
         journal_request["_minah_deployment_profile"] = self.minah_profile
+        prior_operation = self.cee.get(operation_id)
+        if (
+            prior_operation is not None
+            and prior_operation["phase"] in {"ADMITTED", "CONTEXT_ESTABLISHED"}
+            and prior_operation["minah_json"] is None
+            and "_minah_deployment_profile" not in prior_operation["request_json"]
+        ):
+            raise ExecutionConflict("LEGACY_OPERATION_REQUIRES_RECONCILIATION")
         operation = self.cee.start(operation_id, journal_request)
         if operation["phase"] == "FINALIZED":
             result = operation["result_json"]
