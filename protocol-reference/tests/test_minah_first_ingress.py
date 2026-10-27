@@ -149,7 +149,7 @@ class MinahFirstIngressTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "simulated interrupted"):
                 ingress.execute(
                     instruction,
-                    execution_request={"operation_id": "op-1", "event_id": "event-1"},
+                    execution_request={"operation_id": "op-1", "event_id": "event-1", "_contract_envelope": instruction},
                 )
             unresolved = ingress.recover(
                 "op-1",
@@ -209,7 +209,7 @@ class MinahFirstIngressTests(unittest.TestCase):
             ):
                 ingress.execute(
                     instruction,
-                    execution_request={"operation_id": "op-1", "event_id": "event-1"},
+                    execution_request={"operation_id": "op-1", "event_id": "event-1", "_contract_envelope": instruction},
                 )
             self.assertIsNone(ingress.inspect("op-1"))
         finally:
@@ -252,7 +252,7 @@ class MinahFirstIngressTests(unittest.TestCase):
 
         reopened = MinahFirstIngress(self.db_path, pipeline_executor=must_not_execute)
         try:
-            replay = reopened.execute(instruction, execution_request={"operation_id": "op-1"})
+            replay = reopened.execute(instruction, execution_request={"operation_id": "op-1", "_contract_envelope": instruction})
             self.assertTrue(replay["duplicate"])
             self.assertEqual(replay["protocol_decision"], "PASSED")
             self.assertEqual(replay["pipeline_result"]["status"], "COMMITTED")
@@ -289,7 +289,7 @@ class MinahFirstIngressTests(unittest.TestCase):
         self.ingress.close()
         first = MinahFirstIngress(self.db_path, pipeline_executor=interrupted)
         with self.assertRaisesRegex(RuntimeError, "simulated crash"):
-            first.execute(instruction, execution_request={"operation_id": "op-1"})
+            first.execute(instruction, execution_request={"operation_id": "op-1", "_contract_envelope": instruction})
         first.close()
 
         def must_not_replay(request):
@@ -297,7 +297,7 @@ class MinahFirstIngressTests(unittest.TestCase):
 
         reopened = MinahFirstIngress(self.db_path, pipeline_executor=must_not_replay)
         try:
-            result = reopened.execute(instruction, execution_request={"operation_id": "op-1"})
+            result = reopened.execute(instruction, execution_request={"operation_id": "op-1", "_contract_envelope": instruction})
             self.assertEqual(result["protocol_decision"], "UNKNOWN")
             self.assertEqual(result["reason_code"], "INGRESS_IN_FLIGHT_REQUIRES_RECONCILIATION")
             self.assertEqual(result["contract_version"], "kin-sys-governed-contract-0.1")
@@ -324,7 +324,7 @@ class MinahFirstIngressTests(unittest.TestCase):
         self.ingress.close()
         ingress = MinahFirstIngress(self.db_path, pipeline_executor=interrupted)
         with self.assertRaisesRegex(RuntimeError, "lost acknowledgement"):
-            ingress.execute(instruction, execution_request={"operation_id": "op-1"})
+            ingress.execute(instruction, execution_request={"operation_id": "op-1", "_contract_envelope": instruction})
 
         unresolved = ingress.reconcile("op-1", {
             "phase": "EXECUTING",
