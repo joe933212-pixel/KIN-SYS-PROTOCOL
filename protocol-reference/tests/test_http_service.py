@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from http_service import create_app
+from integrated_demo import DeterministicMinahAdapter
 
 
 class HttpServiceTests(unittest.TestCase):
@@ -126,6 +127,106 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(trace[-1]["detail"]["phase"], "FINALIZED")
         self.assertFalse(body["result"]["funds_moved"])
         self.assertFalse(body["protocol_boundary"]["distributed_finality"])
+
+    def test_http_ingress_injects_adapters_and_enforces_the_real_pipeline_order(self):
+        calls = []
+
+        class RecordingMinah:
+            def review(self, evidence):
+                calls.append("MINAH")
+                return DeterministicMinahAdapter().review(evidence)
+
+        class RecordingIdentity:
+            def verify_principal(self, request):
+                calls.append("IDENTITY")
+                return {"verified": True, "mode": "TEST_ADAPTER"}
+
+        class RecordingAuthority:
+            def verify_action(self, request):
+                calls.append("AUTHORITY")
+                return {"verified": True, "mode": "TEST_ADAPTER"}
+
+        app = create_app(
+            minah_adapter=RecordingMinah(),
+            identity_adapter=RecordingIdentity(),
+            authority_adapter=RecordingAuthority(),
+        )
+        self.addCleanup(app.close)
+        payload = {
+            "operation_id": "HTTP-ADAPTER-ORDER-1",
+            "event_id": "HTTP-ADAPTER-EVENT-1",
+            "process_id": "HTTP-ADAPTER-PROCESS-1",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "HTTP-ADAPTER-PROCESS-1",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "COMMITTED")
+        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
+        phases = [event["phase"] for event in body["result"]["cee_events"]]
+        self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
+        self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
+        self.assertLess(phases.index("AUTHORITY_VERIFIED"), phases.index("ADMITTED"))
+
+    def test_http_ingress_authority_denial_stops_before_cee_admission_and_ivm(self):
+        calls = []
+
+        class RecordingMinah:
+            def review(self, evidence):
+                calls.append("MINAH")
+                return DeterministicMinahAdapter().review(evidence)
+
+        class RecordingIdentity:
+            def verify_principal(self, request):
+                calls.append("IDENTITY")
+                return {"verified": True, "mode": "TEST_ADAPTER"}
+
+        class DenyAuthority:
+            def verify_action(self, request):
+                calls.append("AUTHORITY")
+                return {"verified": False, "mode": "TEST_DENY"}
+
+        app = create_app(
+            minah_adapter=RecordingMinah(),
+            identity_adapter=RecordingIdentity(),
+            authority_adapter=DenyAuthority(),
+        )
+        self.addCleanup(app.close)
+        payload = {
+            "operation_id": "HTTP-ADAPTER-DENY-1",
+            "event_id": "HTTP-ADAPTER-DENY-EVENT-1",
+            "process_id": "HTTP-ADAPTER-DENY-PROCESS-1",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "HTTP-ADAPTER-DENY-PROCESS-1",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "REJECTED")
+        self.assertEqual(body["result"]["reason"], "AUTHORITY_NOT_VERIFIED")
+        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
+        phases = [event["phase"] for event in body["result"]["cee_events"]]
+        self.assertNotIn("ADMITTED", phases)
+        self.assertIsNone(body["result"]["ivm_decision"])
 
     def test_protocol_operation_can_be_inspected_after_completion(self):
         payload = {
