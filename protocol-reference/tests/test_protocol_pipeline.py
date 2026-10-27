@@ -425,6 +425,111 @@ os._exit(74)
             finally:
                 recovered.close()
 
+
+    def test_process_termination_before_ivm_commit_recovers_transition_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cee_db = str(Path(tmp) / "cee.sqlite3")
+            ivm_db = str(Path(tmp) / "ivm.sqlite3")
+            payload = request()
+            script = f"""
+import os, sys
+sys.path.insert(0, {str(ROOT)!r})
+from protocol_pipeline import KinSysProtocolPipeline
+pipeline = KinSysProtocolPipeline(cee_database={cee_db!r}, ivm_database={ivm_db!r})
+def terminate_before_ivm_commit(event, **kwargs):
+    os._exit(72)
+pipeline.ivm.execute = terminate_before_ivm_commit
+pipeline.execute({payload!r})
+os._exit(74)
+"""
+            child = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(child.returncode, 72, child.stderr)
+            recovered = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+            try:
+                self.assertEqual(recovered.cee.get("OP-001")["phase"], "COMMITTING")
+                self.assertIsNone(recovered.ivm.event("EV-001"))
+                result = recovered.recover("OP-001")
+                self.assertEqual(result["status"], "COMMITTED")
+                self.assertEqual(recovered.cee.get("OP-001")["phase"], "FINALIZED")
+                self.assertEqual(len(recovered.ivm.history("PROC-001")), 1)
+            finally:
+                recovered.close()
+
+    def test_process_termination_after_cee_commit_finalizes_without_reapplying_ivm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cee_db = str(Path(tmp) / "cee.sqlite3")
+            ivm_db = str(Path(tmp) / "ivm.sqlite3")
+            payload = request()
+            script = f"""
+import os, sys
+sys.path.insert(0, {str(ROOT)!r})
+from protocol_pipeline import KinSysProtocolPipeline
+pipeline = KinSysProtocolPipeline(cee_database={cee_db!r}, ivm_database={ivm_db!r})
+original_advance = pipeline.cee.advance
+def advance_then_terminate(operation_id, next_phase, **kwargs):
+    result = original_advance(operation_id, next_phase, **kwargs)
+    if next_phase == "COMMITTED":
+        os._exit(74)
+    return result
+pipeline.cee.advance = advance_then_terminate
+pipeline.execute({payload!r})
+os._exit(75)
+"""
+            child = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(child.returncode, 74, child.stderr)
+            recovered = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+            try:
+                self.assertEqual(recovered.cee.get("OP-001")["phase"], "COMMITTED")
+                self.assertEqual(len(recovered.ivm.history("PROC-001")), 1)
+                result = recovered.recover("OP-001")
+                self.assertEqual(result["status"], "COMMITTED")
+                self.assertEqual(recovered.cee.get("OP-001")["phase"], "FINALIZED")
+                self.assertEqual(len(recovered.ivm.history("PROC-001")), 1)
+            finally:
+                recovered.close()
+
+    def test_process_termination_before_minah_disposition_stays_manual(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cee_db = str(Path(tmp) / "cee.sqlite3")
+            ivm_db = str(Path(tmp) / "ivm.sqlite3")
+            payload = request()
+            script = f"""
+import os, sys
+sys.path.insert(0, {str(ROOT)!r})
+from protocol_pipeline import KinSysProtocolPipeline
+pipeline = KinSysProtocolPipeline(cee_database={cee_db!r}, ivm_database={ivm_db!r})
+original_start = pipeline.cee.start
+def start_then_terminate(operation_id, request):
+    result = original_start(operation_id, request)
+    os._exit(75)
+pipeline.cee.start = start_then_terminate
+pipeline.execute({payload!r})
+os._exit(76)
+"""
+            child = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(child.returncode, 75, child.stderr)
+            recovered = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+            try:
+                with self.assertRaisesRegex(
+                    ExecutionConflict, "MINAH_DISPOSITION_NOT_DURABLE"
+                ):
+                    recovered.recover("OP-001")
+                operation = recovered.cee.get("OP-001")
+                self.assertEqual(operation["phase"], "REQUESTED")
+                self.assertIsNone(operation["minah_json"])
+                self.assertIsNone(recovered.ivm.event("EV-001"))
+            finally:
+                recovered.close()
+
     def test_recovery_refuses_to_repeat_minah_when_disposition_was_not_persisted(self):
         payload = request(operation_id="RECOVERY-AMBIGUOUS", event_id="RECOVERY-EVENT", process_id="RECOVERY-PROC")
         self.pipeline.cee.start("RECOVERY-AMBIGUOUS", {
