@@ -615,6 +615,11 @@ class HttpServiceTests(unittest.TestCase):
                 )
                 # The public audit projection omits raw exception messages.
                 self.assertNotIn("reason", audit_body["events"][0]["evidence"])
+                missing_response, missing_body = self.request_with_app(
+                    app2, "/protocol/operations/NO-SUCH-OP/recover", "POST"
+                )
+                self.assertEqual(missing_response["status"], 404)
+                self.assertEqual(missing_body["error"]["code"], "OPERATION_NOT_FOUND")
             finally:
                 app2.close()
 
