@@ -164,8 +164,12 @@ class ProtocolPipelineTests(unittest.TestCase):
     def test_legacy_unfinished_operation_without_minah_disposition_fails_closed(self):
         payload = request(operation_id="LEGACY-OP", event_id="LEGACY-EV", process_id="LEGACY-PROC")
         self.pipeline.cee.start("LEGACY-OP", payload)
-        self.pipeline.cee.advance("LEGACY-OP", "ADMITTED", detail={"legacy": True})
-        self.pipeline.cee.advance("LEGACY-OP", "CONTEXT_ESTABLISHED", detail={"legacy": True})
+        # Simulate a durable row created under the pre-MINAH-first lifecycle.
+        self.pipeline.cee.db.execute(
+            "UPDATE cee_operations SET phase='CONTEXT_ESTABLISHED' WHERE operation_id=?",
+            ("LEGACY-OP",),
+        )
+        self.pipeline.cee.db.commit()
         with self.assertRaisesRegex(ExecutionConflict, "LEGACY_OPERATION_REQUIRES_RECONCILIATION"):
             self.pipeline.execute(payload)
 
