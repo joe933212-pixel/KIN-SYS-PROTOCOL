@@ -7,7 +7,7 @@
 
 MINAH is a protocol gatekeeper, but KIN-SYS does not require one globally shared MINAH instance. Each country, enterprise, or institution may deploy and govern its own MINAH instance or deployment profile, appropriate to its legal domain, mandate, risk, and operating environment.
 
-The protocol standardises MINAH's gatekeeping role and the evidence needed to establish which deployment handled an instruction. A deployment may continue the path after a valid preliminary review, reject, defer for missing information, or report an unknown outcome; rejection and unknown must stop progression to later gates. It does not standardise one universal model, prompt, legal corpus, vendor, hosting provider, or hardware platform.
+The protocol standardises MINAH's gatekeeping role and the evidence needed to establish which deployment handled an instruction. The institution may supply an existing agent trained and configured for its mandate; MINAH is the protocol role and governed interface that agent occupies, not a requirement to use one centrally trained model. A deployment may continue the path after a valid preliminary review, reject, defer for missing information, or report an unknown outcome; rejection and unknown must stop progression to later gates. It does not standardise one universal model, prompt, legal corpus, vendor, hosting provider, or hardware platform.
 
 ## 2. Deployment is scoped to an owner and use case
 
@@ -41,7 +41,7 @@ Regardless of ownership or deployment technology:
 - No model, provider, adapter, or deployment administrator may create an alternate ungoverned path to protected effects.
 - The deployment must expose enough provenance for authorised audit without copying unnecessary sensitive source material into logs.
 
-The protocol may define minimum conformance requirements, but it must not dictate that every deployment use the same AI model or identical legal knowledge. The institution's policy choices remain institution-scoped; the protocol's execution and evidence requirements remain consistent.
+The protocol may define minimum conformance requirements, but it must not dictate that every deployment use the same AI model or identical legal knowledge. The institution's policy choices remain institution-scoped; the protocol's execution and evidence requirements remain consistent. Cross-institutional and cross-border operations should be coordinated through explicit participant scopes, accepted evidence, and agreed protocol outcomes—not by treating one participant's agent as the authority for all participants.
 
 ## 5. Failure, updates and independence
 
@@ -53,8 +53,8 @@ Separate institutions should not be able to inspect one another's prompts, sourc
 
 `protocol-reference/minah_deployment_profile.py` validates the shape of a draft profile and enforces the non-authorisation invariant. Its tests show that national and enterprise profiles can differ while satisfying the same structural contract.
 
-This validator does not deploy MINAH, authenticate an owner, verify the truth or legal validity of sources, prove jurisdictional correctness, or pin a profile into a live operation. Those are separate implementation and assurance tasks.
+This validator does not deploy an AI agent, authenticate an owner, verify the truth or legal validity of sources, or establish that the institution has legitimately delegated the claimed mandate. Those are separate implementation and assurance tasks. The runtime now checks that the request's jurisdiction exactly matches one of the configured profile jurisdictions before invoking the agent; a mismatch is rejected and does not reach identity verification or IVM. This is a scope check, not proof that the profile owner or jurisdiction claim is trustworthy.
 
 ## 7. Current implementation boundary
 
-The HTTP pipeline now accepts a validated MINAH deployment profile through `create_app(minah_profile=...)`. The profile is bound into the durable operation fingerprint before MINAH is invoked, recorded with the MINAH disposition, and included in the MINAH-reviewed event. A retry using the same operation ID with a different profile conflicts rather than silently switching deployments. The default profile is explicitly synthetic and local. This does not authenticate profile owners, securely route requests across multiple institutions, or yet enforce that the request jurisdiction is included in the profile's jurisdiction list. Those remain acceptance tasks.
+The HTTP pipeline now accepts a validated MINAH deployment profile through `create_app(minah_profile=...)`. The profile is bound into the durable operation fingerprint before MINAH is invoked, recorded with the MINAH disposition, and included in the MINAH-reviewed event. A retry using the same operation ID with a different profile conflicts rather than silently switching deployments. The default profile is explicitly synthetic and local, scoped to `UG-DEMO`. Jurisdiction mismatch is now rejected before the configured agent is invoked. Trusted profile-owner authentication, mandate/delegation verification, cryptographic profile approval and revocation, authenticated multi-institution routing, and cross-border policy negotiation are still unimplemented.
