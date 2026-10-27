@@ -99,7 +99,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["result"]["ivm_decision"]["to_state"], "ACTIVE")
         self.assertEqual(
             [event["phase"] for event in body["result"]["cee_events"]],
-            ["REQUESTED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+            ["REQUESTED", "MINAH_REVIEWED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
              "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED", "FINALIZED"],
         )
         trace = body["result"]["component_trace"]
@@ -221,8 +221,15 @@ class HttpServiceTests(unittest.TestCase):
         inspected, operation = self.request("/cee/operations/HTTP-CEE-CASE-1")
         self.assertEqual(inspected["status"], 200)
         self.assertEqual(operation["operation"]["phase"], "FINALIZED")
-        components = [event["component"] for event in operation["operation"]["events"]]
+        events = operation["operation"]["events"]
+        components = [event["component"] for event in events]
         self.assertIn("MINAH", components)
+        minah_index = next(i for i, event in enumerate(events) if event["component"] == "MINAH")
+        admission_index = next(
+            i for i, event in enumerate(events)
+            if event["component"] == "CEE" and event["phase"] == "ADMITTED"
+        )
+        self.assertLess(minah_index, admission_index)
         self.assertIn("INSTITUTIONAL", components)
         self.assertIn("IVM", components)
         self.assertIn("PAYMENT", components)
