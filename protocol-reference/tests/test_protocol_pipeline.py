@@ -102,7 +102,8 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertIsNone(result["ivm_decision"])
         phases = [event["phase"] for event in result["cee_events"]]
         self.assertNotIn("ADMITTED", phases)
-        self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
+        with self.assertRaises(ValueError):
+            self.pipeline.ivm.process("PROC-001")
 
     def test_revoked_authority_is_rejected(self):
         revoked = KinSysProtocolPipeline(authority_active=False)
