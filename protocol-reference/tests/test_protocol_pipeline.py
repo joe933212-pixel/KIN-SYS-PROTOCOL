@@ -2,6 +2,7 @@
 """End-to-end MINAH -> IVM -> CEE lifecycle and recovery tests."""
 import tempfile
 import subprocess
+import sqlite3
 import unittest
 from pathlib import Path
 import sys
@@ -383,6 +384,45 @@ class ProtocolPipelineTests(unittest.TestCase):
 
 
 
+
+
+    def test_recovery_refuses_inconsistent_ivm_event_and_history_evidence(self):
+        for corruption, expected_reason in (
+            ("delete_event", "IVM_HISTORY_WITHOUT_EVENT"),
+            ("change_digest", "IVM_EVENT_DIGEST_MISMATCH"),
+        ):
+            with self.subTest(corruption=corruption), tempfile.TemporaryDirectory() as tmp:
+                cee_db = str(Path(tmp) / "cee.sqlite3")
+                ivm_db = str(Path(tmp) / "ivm.sqlite3")
+                first = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                try:
+                    with self.assertRaisesRegex(RuntimeError, "INJECTED_FAILURE_AFTER_IVM_COMMIT"):
+                        first.execute(request(), fail_after_ivm_commit=True)
+                finally:
+                    first.close()
+
+                damaged = sqlite3.connect(ivm_db)
+                try:
+                    if corruption == "delete_event":
+                        damaged.execute("DELETE FROM events WHERE event_id=?", ("EV-001",))
+                    else:
+                        damaged.execute(
+                            "UPDATE events SET request_digest=? WHERE event_id=?",
+                            ("corrupted-digest", "EV-001"),
+                        )
+                    damaged.commit()
+                finally:
+                    damaged.close()
+
+                recovered = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                try:
+                    with self.assertRaisesRegex(ExecutionConflict, expected_reason):
+                        recovered.recover("OP-001")
+                    self.assertEqual(recovered.cee.get("OP-001")["phase"], "COMMITTING")
+                    self.assertEqual(recovered.ivm.process("PROC-001")["state"], "ACTIVE")
+                    self.assertEqual(len(recovered.ivm.history("PROC-001")), 1)
+                finally:
+                    recovered.close()
 
     def test_recovery_matrix_resumes_every_durable_post_minah_phase(self):
         recoverable_phases = (
