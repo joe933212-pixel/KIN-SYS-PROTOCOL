@@ -267,6 +267,8 @@ class KinSysPrototypeApplication:
                 }, request_id)
             except HttpServiceError as exc:
                 return _response(start_response, exc.status, {"error": {"code": exc.code, "message": exc.message}}, request_id)
+            except CaseRecoveryRequired as exc:
+                return _response(start_response, 409, {"error": {"code": "RECOVERY_REQUIRED", "message": str(exc)}}, request_id)
             except CaseConflict as exc:
                 return _response(start_response, 409, {"error": {"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)}}, request_id)
             except (ValueError, TypeError) as exc:
