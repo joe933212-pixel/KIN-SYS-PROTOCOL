@@ -7,11 +7,11 @@
 
 The earlier CEE case coordinator recorded admission/context before its MINAH adapter, which did not satisfy the stronger MINAH-first requirement. The `/protocol/instructions` pipeline enforces MINAH-first ordering, then identity and action-specific authority checks before CEE admission and IVM execution. For v0.1 instruction envelopes, the HTTP app now records the canonical envelope in the ingress journal before delegating to that pipeline. The legacy `/cee/cases` route remains disabled by default because it is not unified with the governed instruction flow.
 
-The standalone module makes the intended ingress order executable and testable at a boundary:
+The module supports two modes. Its standalone adapter mode is a conformance harness for isolated tests. Its HTTP-integrated mode persists the v0.1 instruction at ingress and delegates execution to the canonical pipeline. The actual gate order remains:
 
 **MINAH → identity verification → action-specific authority verification → CEE → final decision.**
 
-CEE remains responsible for the governed execution path, including institutional rules and IVM execution of CISA-defined semantics inside CEE. The module does not introduce an alternate execution engine; its CEE adapter must be the existing governed coordinator once integration is completed.
+CEE remains responsible for the governed execution path, including institutional rules and IVM execution of CISA-defined semantics inside CEE. The HTTP-integrated mode does not introduce an alternate execution engine.
 
 ## Adapter contracts
 
@@ -33,9 +33,9 @@ An operation left non-final after a process interruption returns UNKNOWN and req
 The tests use fake adapters to verify call order, fail-closed MINAH/identity/authority outcomes, explicit rejection and deferral before downstream checks, conflict detection, digest tampering, decision-envelope binding, and replay behaviour. The v0.1 HTTP path uses the durable ingress journal and delegates gate execution to the same pipeline; a non-final ingress record is reported as UNKNOWN rather than blindly resubmitted.
 
 They do **not** prove:
-- that the current HTTP routes use this gate;
 - that real identity or authority sources are contacted or trusted;
-- that the CEE coordinator is bypass-resistant;
+- that the CEE coordinator is bypass-resistant under hostile concurrent or multi-worker conditions;
+- reconciliation between ingress and CEE/IVM stores after a crash;
 - distributed atomicity, payment finality, legal correctness or production security.
 
-The HTTP application accepts `minah_adapter`, `identity_adapter` and `authority_adapter` through `create_app(...)`; these are passed into the existing `KinSysProtocolPipeline` used by `/protocol/instructions`. An institution-owned MINAH adapter can implement `review`, `verify_principal`, and `verify_action` so it orchestrates its approved API integrations while the pipeline retains distinct fail-closed identity and authority gates. The default adapters remain synthetic. HTTP-level tests exercise injected adapters and verify order and early rejection before CEE admission/IVM. A live loopback HTTP test also sends a request through the local WSGI server and verifies the same adapter order; it uses test adapters, not real identity or legal-authority services. This does not make the standalone `MinahFirstIngress` journal part of HTTP, does not integrate the opt-in legacy `/cee/cases` path, and does not provide production identity or legal-authority verification. The legacy `/demo/instructions` route is also disabled by default. Next: define production adapter trust/error/timeout/revocation contracts, add reconciliation across ingress and CEE state, and decide how to deprecate or unify legacy paths without creating an alternate execution route. The live loopback test covers the current single-threaded reference server; it does not establish multi-worker/thread safety.
+The HTTP application accepts `minah_adapter`, `identity_adapter` and `authority_adapter` through `create_app(...)`; these are passed into the canonical `KinSysProtocolPipeline`. For v0.1 instruction envelopes, the HTTP route records the envelope in `MinahFirstIngress` and then invokes that pipeline. The earlier internal request shape still calls the same pipeline directly and is retained for compatibility. An institution-owned MINAH adapter can implement `review`, `verify_principal`, and `verify_action` so it orchestrates approved API integrations while the pipeline retains distinct fail-closed identity and authority gates. Default adapters remain synthetic. The legacy `/cee/cases` and `/demo/instructions` routes remain opt-in synthetic demonstrations, not alternate production instruction routes. Next: define production adapter trust/error/timeout/revocation contracts, reconcile ingress with CEE/IVM state after a crash, and decide how to deprecate or unify legacy routes. The live loopback test covers the current single-threaded reference server; it does not establish multi-worker/thread safety.
