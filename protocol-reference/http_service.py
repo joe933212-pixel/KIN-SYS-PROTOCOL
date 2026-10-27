@@ -23,6 +23,7 @@ from wsgiref.simple_server import make_server
 from integrated_demo import IntegratedDemonstrator
 from cee_case_coordinator import CEECaseCoordinator, CaseConflict, CaseRecoveryRequired
 from protocol_pipeline import ExecutionConflict, KinSysProtocolPipeline
+from minah_profile_governance import MinahApprovalViolation
 from transition import EventIdConflict
 
 
@@ -96,6 +97,10 @@ class KinSysPrototypeApplication:
         identity_adapter: Any | None = None,
         authority_adapter: Any | None = None,
         minah_profile: dict[str, Any] | None = None,
+        minah_profile_approval: dict[str, Any] | None = None,
+        profile_signature_verifier: Any | None = None,
+        profile_revocation_checker: Any | None = None,
+        require_profile_approval: bool = False,
     ):
         if pipeline is not None and any(
             adapter is not None
@@ -108,6 +113,10 @@ class KinSysPrototypeApplication:
             identity_adapter=identity_adapter,
             authority_adapter=authority_adapter,
             minah_profile=minah_profile,
+            minah_profile_approval=minah_profile_approval,
+            profile_signature_verifier=profile_signature_verifier,
+            profile_revocation_checker=profile_revocation_checker,
+            require_profile_approval=require_profile_approval,
         )
         self.case_coordinator = case_coordinator or CEECaseCoordinator()
         self.enable_legacy_demo_routes = enable_legacy_demo_routes
@@ -163,6 +172,7 @@ class KinSysPrototypeApplication:
                         "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
                         "default_adapters": "SYNTHETIC_ONLY_NOT_REAL_AUTHENTICATION_OR_LEGAL_AUTHORITY",
                         "minah_profile": "VALIDATED_AND_PINNED_TO_OPERATION_FINGERPRINT_AND_MINAH_DISPOSITION",
+                        "profile_approval": "OPTIONAL_FAIL_CLOSED_PRE-MINAH_CHECK; REAL_TRUSTED_VERIFIERS_MUST_BE_INJECTED",
                         "profile_owner_authentication": "NOT_IMPLEMENTED",
                         "jurisdiction_profile_matching": "NOT_IMPLEMENTED",
                         "single_pipeline": True,
@@ -370,6 +380,12 @@ class KinSysPrototypeApplication:
                     {"error": {"code": exc.code, "message": exc.message}},
                     request_id,
                 )
+            except MinahApprovalViolation as exc:
+                return _response(
+                    start_response, 422,
+                    {"error": {"code": "MINAH_PROFILE_APPROVAL_REJECTED", "message": str(exc)[:240]}},
+                    request_id,
+                )
             except (ExecutionConflict, EventIdConflict) as exc:
                 return _response(
                     start_response, 409,
@@ -517,6 +533,10 @@ def create_app(
     identity_adapter: Any | None = None,
     authority_adapter: Any | None = None,
     minah_profile: dict[str, Any] | None = None,
+    minah_profile_approval: dict[str, Any] | None = None,
+    profile_signature_verifier: Any | None = None,
+    profile_revocation_checker: Any | None = None,
+    require_profile_approval: bool = False,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -525,6 +545,10 @@ def create_app(
         identity_adapter=identity_adapter,
         authority_adapter=authority_adapter,
         minah_profile=minah_profile,
+        minah_profile_approval=minah_profile_approval,
+        profile_signature_verifier=profile_signature_verifier,
+        profile_revocation_checker=profile_revocation_checker,
+        require_profile_approval=require_profile_approval,
     )
 
 
