@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
@@ -308,10 +309,15 @@ class MinahFirstIngress:
             )
         except Exception as exc:
             self._set_phase(operation_id, "UNKNOWN_REQUIRES_RECONCILIATION")
+            raw_reason = str(exc)
+            reason_code = (
+                raw_reason if re.fullmatch(r"[A-Z0-9_:-]{1,80}", raw_reason)
+                else "RECOVERY_CALLBACK_ERROR"
+            )
             self._record_recovery_event(
                 operation_id, "RECOVERY_BLOCKED", phase_before,
                 "UNKNOWN_REQUIRES_RECONCILIATION",
-                {"reason": str(exc)[:240], "exception_type": type(exc).__name__},
+                {"reason_code": reason_code, "exception_type": type(exc).__name__},
             )
             return self._unknown(operation_id, "RECOVERY_REQUIRES_RECONCILIATION")
 
