@@ -310,11 +310,17 @@ class KinSysProtocolPipeline:
                     "uncertainty": "HIGH",
                     "may_authorise": False,
                     "model_version": "UNTRUSTED_OUTPUT",
+                    "deployment_profile": self.minah_profile,
                     "contract_error": contract_error,
                 }
                 self.cee.advance(
                     operation_id, "MINAH_REVIEWED", status="REJECTED",
-                    detail={"minah_contract_error": contract_error, "ivm_not_invoked": True},
+                    detail={
+                        "minah_contract_error": contract_error,
+                        "minah_deployment_id": self.minah_profile["deployment_id"],
+                        "minah_profile_version": self.minah_profile["profile_version"],
+                        "ivm_not_invoked": True,
+                    },
                     minah=safe_disposition,
                 )
                 result = {
