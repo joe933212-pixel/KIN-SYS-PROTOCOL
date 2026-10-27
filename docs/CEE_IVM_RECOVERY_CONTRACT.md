@@ -14,7 +14,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 
 - **Operation identity is stable.** Recovery uses the existing operation ID and the original request; a caller cannot submit replacement content through the recovery endpoint.
 - **Ingress content is pinned.** The v0.1 instruction and mapped execution request are durably stored with fingerprints. Reusing an operation ID with changed instruction or mapped execution content is a conflict.
-- **CEE is the lifecycle authority.** Recovery reads the CEE journal and resumes only from a recognised durable phase.
+- **CEE is the lifecycle authority.** Recovery reads the CEE journal and resumes only from a recognised durable phase. Passive reconciliation additionally requires the CEE request fingerprint, with MINAH-specific pins removed, to match the mapped execution-request fingerprint stored at ingress.
 - **MINAH disposition must be durable.** A CEE operation still in `REQUESTED` without a persisted MINAH disposition is ambiguous. Recovery stops rather than automatically asking MINAH again.
 - **Profile and approval are pinned.** A changed MINAH profile or approval cannot be substituted during recovery.
 - **IVM event identity is stable.** The same IVM event ID and request digest are used on retry. The local IVM store returns the recorded outcome for an identical event and rejects the same ID with different content.
@@ -38,7 +38,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 
 ## HTTP contract
 
-- `GET /protocol/operations/{operation_id}` is for inspection and passive reconciliation from an already-finalized CEE result. It does not resume execution.
+`GET /protocol/operations/{operation_id}` is for inspection and passive reconciliation from an already-finalized CEE result. It verifies that CEE's pinned request fingerprint matches the ingress execution-request fingerprint before copying the result; it does not resume execution.
 - `POST /protocol/operations/{operation_id}/recover` requests explicit recovery of an existing uncertain operation. It accepts no replacement instruction body.
 - Completed ingress replay returns the stored result without rerunning the pipeline.
 - Recovery outcomes are recorded in the ingress recovery-event journal. `GET /protocol/operations/{operation_id}/recovery-events` exposes a sanitized audit projection with action, phase, timestamp and allow-listed evidence; raw exception messages are not returned by this route.
