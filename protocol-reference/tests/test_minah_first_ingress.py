@@ -167,6 +167,37 @@ class MinahFirstIngressTests(unittest.TestCase):
         self.assertEqual(self.log, calls_before_retry)
         self.assertEqual(self.ingress.cee.calls, 1)
 
+
+    def test_pipeline_inflight_replay_preserves_contract_binding_and_stays_unknown(self):
+        instruction = self.instruction(
+            contract_version="kin-sys-governed-contract-0.1",
+            rule_pack_version="KIN-SYS-DEMO-RULES:1.0",
+        )
+
+        def interrupted(request):
+            raise RuntimeError("simulated crash after ingress handoff")
+
+        self.ingress.close()
+        first = MinahFirstIngress(self.db_path, pipeline_executor=interrupted)
+        with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+            first.execute(instruction, execution_request={"operation_id": "op-1"})
+        first.close()
+
+        def must_not_replay(request):
+            raise AssertionError("uncertain operation must not be resubmitted")
+
+        reopened = MinahFirstIngress(self.db_path, pipeline_executor=must_not_replay)
+        try:
+            result = reopened.execute(instruction, execution_request={"operation_id": "op-1"})
+            self.assertEqual(result["protocol_decision"], "UNKNOWN")
+            self.assertEqual(result["reason_code"], "INGRESS_IN_FLIGHT_REQUIRES_RECONCILIATION")
+            self.assertEqual(result["contract_version"], "kin-sys-governed-contract-0.1")
+            self.assertEqual(result["request_id"], instruction["request_id"])
+            self.assertEqual(result["rule_pack_version"], "KIN-SYS-DEMO-RULES:1.0")
+            self.assertEqual(reopened.inspect("op-1")["phase"], "UNKNOWN_REQUIRES_RECONCILIATION")
+        finally:
+            reopened.close()
+
     def test_unknown_ceeresponse_is_not_reported_as_passed(self):
         class InvalidCEE(FakeCEE):
             def execute_governed_instruction(self, instruction, **context):
