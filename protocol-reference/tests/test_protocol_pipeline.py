@@ -65,6 +65,40 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertEqual(reviewed["detail"]["minah_deployment_id"], "enterprise-finance-minah-02")
         self.assertEqual(reviewed["detail"]["minah_profile_version"], "kin-sys-minah-profile-0.1")
 
+    def test_retry_cannot_switch_minah_deployment_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cee_db = str(Path(directory) / "cee.sqlite")
+            ivm_db = str(Path(directory) / "ivm.sqlite")
+            profile_a = {
+                "profile_version": "kin-sys-minah-profile-0.1",
+                "deployment_id": "institution-minah-a",
+                "owner_scope": "INSTITUTION",
+                "owner_ref": "INSTITUTION-A",
+                "use_case": "CASE_REVIEW",
+                "jurisdictions": ["UG-DEMO"],
+                "policy_pack_version": "POLICY-1",
+                "source_pack_version": "SOURCES-1",
+                "model_ref": "model-a",
+                "deployment_mode": "SELF_HOSTED",
+                "may_authorise": False,
+            }
+            profile_b = dict(profile_a, deployment_id="institution-minah-b", model_ref="model-b")
+            first = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db, minah_profile=profile_a
+            )
+            try:
+                first.execute(request(operation_id="PROFILE-SWITCH-01"))
+            finally:
+                first.close()
+            second = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db, minah_profile=profile_b
+            )
+            try:
+                with self.assertRaisesRegex(ExecutionConflict, "OPERATION_ID_REUSED_WITH_DIFFERENT_CONTENT"):
+                    second.execute(request(operation_id="PROFILE-SWITCH-01"))
+            finally:
+                second.close()
+
     def test_rejects_minah_profile_that_claims_institutional_authority(self):
         profile = {
             "profile_version": "kin-sys-minah-profile-0.1",
