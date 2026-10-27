@@ -72,6 +72,14 @@ MINAH is not a root administrator and cannot unilaterally alter the rules, grant
 
 Jurisdiction-specific MINAH deployments require controlled legal-source ingestion, jurisdiction and effective-date tracking, provenance, conflict/uncertainty handling, evaluation against approved cases, and a governed process for updating or replacing legal knowledge. A model's assertion that it knows the law is not proof of completeness or correctness. When a question requires discretion reserved to a court, official, or institution, or when authoritative sources conflict or are incomplete, the disposition must defer to the designated process rather than fabricate certainty. The protocol must distinguish MINAH's jurisprudential determination from deterministic enforcement and from decisions legally reserved to independent institutions.
 
+### Institution-owned deployment profiles and gate outcomes
+
+MINAH is not a single globally shared service. Each national/sovereign, enterprise, or institutional owner may operate a distinct deployment with its own approved legal/source corpus, policy pack, jurisdictions, integrations, and infrastructure. The protocol standardises her gatekeeping role and evidence requirements, while preserving institutional control over the implementation.
+
+Every protected operation must be bound to the MINAH deployment profile and version used for its disposition. A governed retry cannot silently move to a different profile. Any routing between deployments must use authenticated institutional context and an explicit policy; callers cannot choose a more permissive profile by editing a request. Profile changes require versioning, approval, revocation, and auditable rollout.
+
+The gate outcomes are explicit: `ADVISORY_ONLY` permits progression to the next required gate but does not authorise the action; `NEEDS_INFORMATION` defers; `REJECTED` stops; and `UNKNOWN` stops pending resolution. Invalid, rejected, deferred, and unknown outcomes do not proceed to CEE execution. Identity, action-specific authority, institution-owned decisions, and CEE enforcement remain separate controls. The profile validator and operation pinning now exist in the research reference pipeline, but trusted ownership, jurisdiction matching, secure multi-institution routing, and production assurance are not yet implemented.
+
 ## 7. Economic and token boundary
 
 $KIN is a proposed economic component whose function and rules remain unresolved in this foundation. Before implementation, define any relationship to fees, incentives, governance, access, or settlement, along with issuance, custody, accounting, duplicate protection, disputes, and failure behaviour. A token does not by itself establish legal title.
