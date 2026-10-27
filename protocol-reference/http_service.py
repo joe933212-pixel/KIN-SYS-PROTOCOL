@@ -228,7 +228,7 @@ class KinSysPrototypeApplication:
                         "minah_profile": "VALIDATED_AND_PINNED_TO_OPERATION_FINGERPRINT_AND_MINAH_DISPOSITION",
                         "profile_approval": "OPTIONAL_FAIL_CLOSED_PRE-MINAH_CHECK; REAL_TRUSTED_VERIFIERS_MUST_BE_INJECTED",
                         "profile_owner_authentication": "NOT_IMPLEMENTED",
-                        "jurisdiction_profile_matching": "NOT_IMPLEMENTED",
+                        "jurisdiction_profile_matching": "EXACT_STRING_MATCH_AGAINST_PINNED_PROFILE; NOT_AUTHENTICATED_JURISDICTION_ATTESTATION",
                         "single_pipeline": True,
                     },
                     "protocol_pipeline": {
