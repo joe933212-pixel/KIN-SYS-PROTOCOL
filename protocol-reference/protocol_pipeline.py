@@ -686,7 +686,9 @@ class KinSysProtocolPipeline:
             return self._response_result(operation_id, result, duplicate=True)
         raise LifecycleViolation(f"UNHANDLED_RESUMABLE_PHASE:{operation['phase']}")
 
-    def recover(self, operation_id: str) -> dict[str, Any]:
+    def recover(
+        self, operation_id: str, expected_request: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Resume only an existing operation whose identity and authority gates are durable.
 
         Recovery never creates a new operation. Early phases remain unresolved because
@@ -758,6 +760,13 @@ class KinSysProtocolPipeline:
         ):
             raise ExecutionConflict("LEGACY_OPERATION_REQUIRES_RECONCILIATION")
         pinned_request = operation["request_json"]
+        if expected_request is not None:
+            recoverable_request = {
+                key: value for key, value in pinned_request.items()
+                if not key.startswith("_minah_")
+            }
+            if _canonical(recoverable_request) != _canonical(expected_request):
+                raise ExecutionConflict("RECOVERY_REQUEST_DIFFERS_FROM_DURABLE_INGRESS_REQUEST")
         pinned_profile = pinned_request.get("_minah_deployment_profile")
         if pinned_profile != self.minah_profile:
             raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
