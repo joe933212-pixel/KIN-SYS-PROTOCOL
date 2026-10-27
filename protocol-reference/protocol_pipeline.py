@@ -955,6 +955,8 @@ class KinSysProtocolPipeline:
             for field, internal_value, envelope_value in bindings:
                 if internal_value != envelope_value:
                     raise ValueError("CONTRACT_BINDING_MISMATCH:" + field)
+            if not isinstance(envelope.get("evidence"), dict) or request["evidence"] != envelope["evidence"]:
+                raise ValueError("CONTRACT_BINDING_MISMATCH:evidence")
             expected_event_id = "EV-" + hashlib.sha256(
                 envelope["idempotency_key"].encode("utf-8")
             ).hexdigest()[:24]
