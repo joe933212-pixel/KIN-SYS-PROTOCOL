@@ -181,7 +181,7 @@ class HttpServiceTests(unittest.TestCase):
                 calls.append("AUTHORITY")
                 return {"verified": True, "mode": "TEST_ADAPTER"}
 
-        app = create_app(
+        app = create_app(enable_legacy_demo_routes=True, 
             minah_adapter=RecordingMinah(),
             identity_adapter=RecordingIdentity(),
             authority_adapter=RecordingAuthority(),
@@ -734,7 +734,7 @@ class HttpServiceTests(unittest.TestCase):
         )
         for name, identity_adapter, authority_adapter, reason in scenarios:
             with self.subTest(gate=name):
-                app = create_app(
+                app = create_app(enable_legacy_demo_routes=True, 
                     identity_adapter=identity_adapter,
                     authority_adapter=authority_adapter,
                 )
@@ -791,7 +791,7 @@ class HttpServiceTests(unittest.TestCase):
                 calls.append("AUTHORITY")
                 raise AssertionError("authority must not run after MINAH deferral")
 
-        app = create_app(
+        app = create_app(enable_legacy_demo_routes=True, 
             minah_adapter=NeedsInformationMinah(),
             identity_adapter=MustNotRun(),
             authority_adapter=MustNotRun(),
@@ -851,7 +851,7 @@ class HttpServiceTests(unittest.TestCase):
                 calls.append("AUTHORITY")
                 raise AssertionError("authority must not run after MINAH rejection")
 
-        app = create_app(
+        app = create_app(enable_legacy_demo_routes=True, 
             minah_adapter=RejectingMinah(),
             identity_adapter=MustNotRunIdentity(),
             authority_adapter=MustNotRunAuthority(),
@@ -904,7 +904,7 @@ class HttpServiceTests(unittest.TestCase):
                 calls.append("AUTHORITY")
                 return {"verified": False, "mode": "TEST_DENY"}
 
-        app = create_app(
+        app = create_app(enable_legacy_demo_routes=True, 
             minah_adapter=RecordingMinah(),
             identity_adapter=RecordingIdentity(),
             authority_adapter=DenyAuthority(),
