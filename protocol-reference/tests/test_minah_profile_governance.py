@@ -80,9 +80,11 @@ class MinahProfileGovernanceTests(unittest.TestCase):
         self.assertTrue(result["revocation_checked"])
 
     def test_modified_profile_invalidates_approval_digest(self):
+        original = profile()
         changed = profile(policy_pack_version="UNAPPROVED-POLICY")
+        original_approval = approval_for(original)
         with self.assertRaisesRegex(MinahApprovalViolation, "PROFILE_DIGEST_MISMATCH"):
-            self.verify(value=changed)
+            self.verify(value=changed, envelope=original_approval)
 
     def test_invalid_signature_is_rejected(self):
         with self.assertRaisesRegex(MinahApprovalViolation, "SIGNATURE_INVALID_OR_UNTRUSTED"):
