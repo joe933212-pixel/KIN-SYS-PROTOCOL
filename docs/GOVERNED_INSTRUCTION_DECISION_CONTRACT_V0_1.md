@@ -40,6 +40,22 @@ The v0.1 reference implementation requires the following fields:
 
 Unknown versions must not be silently interpreted as current. The reference canonicalisation is UTF-8 JSON with sorted object keys, compact separators, non-ASCII characters preserved, and NaN/Infinity disallowed. A production wire standard still needs schema evolution policy, authenticated transport, replay protection, key management and privacy review.
 
+### Binding to the internal execution request
+
+The payload digest alone is not sufficient. Before CEE accepts a v0.1 instruction, the reference pipeline verifies that the internal execution request is bound to the validated envelope:
+
+| Envelope field | Internal field or rule |
+|---|---|
+| operation_id | Exact match to internal operation_id. |
+| principal_ref | Exact match to internal actor_id. |
+| action | Exact match to internal event_type. |
+| target_ref | Exact match to internal process_id. |
+| jurisdiction | Exact match to internal jurisdiction. |
+| rule_pack_version | Exact match to internal `rule_set:rule_version`. |
+| idempotency_key | Determines the stable internal event ID as `EV-` plus the first 24 hexadecimal characters of SHA-256(idempotency_key). |
+
+The complete envelope is also stored inside the durable CEE request fingerprint. A mismatch is rejected before the pipeline can admit the operation. The ingress journal independently checks the envelope digest, operation ID and exact `_contract_envelope` binding before creating its record.
+
 ## Decision envelope
 
 The protocol decision is one of:
