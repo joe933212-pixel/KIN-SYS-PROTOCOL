@@ -31,6 +31,10 @@ class CaseConflict(ValueError):
     """Operation ID was reused with different case content."""
 
 
+class CaseRecoveryRequired(RuntimeError):
+    """An operation created under an earlier lifecycle ordering needs reconciliation."""
+
+
 class CEECaseCoordinator:
     """Orchestrate one synthetic case through CEE, MINAH, institutions, IVM and payment."""
 
@@ -149,6 +153,8 @@ class CEECaseCoordinator:
         # any institutional workflow, IVM gate, obligation, or payment work.
         state = self._case_row(operation_id)
         minah = state.get("minah")
+        if state["phase"] in {"ADMITTED", "CONTEXT_PINNED"} and minah is None:
+            raise CaseRecoveryRequired("LEGACY_CASE_REQUIRES_RECONCILIATION")
         if minah is None:
             raw = self.minah.review(evidence)
             if not isinstance(raw, dict) or raw.get("may_authorise") is not False or raw.get("status") not in {"ADVISORY_ONLY", "NEEDS_INFORMATION"}:
