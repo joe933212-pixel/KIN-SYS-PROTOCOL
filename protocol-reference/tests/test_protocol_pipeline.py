@@ -99,6 +99,7 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "REJECTED")
         self.assertEqual(result["reason"], "AUTHORITY_NOT_VERIFIED")
         self.assertIsNone(result["ivm_decision"])
+        self.assertIsNone(result["ivm_decision"])
         phases = [event["phase"] for event in result["cee_events"]]
         self.assertNotIn("ADMITTED", phases)
         self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
