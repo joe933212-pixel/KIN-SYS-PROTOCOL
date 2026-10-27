@@ -60,6 +60,14 @@ class HttpServiceTests(unittest.TestCase):
             response, body = self.request_with_app(app, path, "POST", {})
             self.assertEqual(response["status"], 404)
             self.assertEqual(body["error"]["code"], "ROUTE_NOT_AVAILABLE")
+        capability_response, capabilities = self.request_with_app(app, "/system/capabilities")
+        self.assertEqual(capability_response["status"], 200)
+        self.assertFalse(capabilities["legacy_demo_routes"]["enabled_in_this_instance"])
+        self.assertFalse(capabilities["legacy_demo_routes"]["default_enabled"])
+        self.assertEqual(
+            capabilities["legacy_demo_routes"]["classification"],
+            "SYNTHETIC_ONLY_NOT_THE_GOVERNED_V0_1_INSTRUCTION_PATH",
+        )
 
     def test_health_is_live_and_carries_request_id(self):
         response, body = self.request("/system/health", headers={"HTTP_X_REQUEST_ID": "test-request-1"})
