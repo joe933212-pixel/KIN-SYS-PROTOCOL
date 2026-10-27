@@ -387,9 +387,8 @@ class ProtocolPipelineTests(unittest.TestCase):
             **payload,
             "_minah_deployment_profile": self.pipeline.minah_profile,
         })
-        result = self.pipeline.recover("RECOVERY-AMBIGUOUS")
-        self.assertEqual(result["status"], "UNKNOWN")
-        self.assertEqual(result["reason"], "RECOVERY_REQUIRES_MANUAL_RECONCILIATION")
+        with self.assertRaisesRegex(ExecutionConflict, "MINAH_DISPOSITION_NOT_DURABLE"):
+            self.pipeline.recover("RECOVERY-AMBIGUOUS")
         self.assertEqual(self.pipeline.cee.get("RECOVERY-AMBIGUOUS")["phase"], "REQUESTED")
         self.assertIsNone(self.pipeline.ivm.event("RECOVERY-EVENT"))
 
