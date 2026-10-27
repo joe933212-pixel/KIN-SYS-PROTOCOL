@@ -123,8 +123,18 @@ class MinahFirstIngress:
                     return {**result, "duplicate": True}
                 # A crash may have occurred after a downstream call. Never guess
                 # whether it took effect; require reconciliation, not blind replay.
+                stored_instruction = json.loads(prior["instruction_json"])
                 self.db.commit()
-                return self._unknown(operation_id, "INGRESS_IN_FLIGHT_REQUIRES_RECONCILIATION")
+                unknown = self._unknown(
+                    operation_id, "INGRESS_IN_FLIGHT_REQUIRES_RECONCILIATION"
+                )
+                if self.pipeline_executor is not None:
+                    unknown.update({
+                        "contract_version": stored_instruction["contract_version"],
+                        "request_id": stored_instruction["request_id"],
+                        "rule_pack_version": stored_instruction["rule_pack_version"],
+                    })
+                return unknown
             self.db.execute(
                 """INSERT INTO minah_first_ingress
                    (operation_id, request_fingerprint, instruction_json, phase)
