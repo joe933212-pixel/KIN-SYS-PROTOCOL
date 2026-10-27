@@ -770,6 +770,11 @@ class KinSysProtocolPipeline:
             return None
         events = self.cee.events(operation_id)
         request = operation["request_json"]
+        request_without_pins = {
+            key: value for key, value in request.items()
+            if not key.startswith("_minah_")
+        }
+        request_fingerprint = _digest(request_without_pins)
         ivm_event = self.ivm.event(request["event_id"])
         if operation["phase"] == "FINALIZED" and isinstance(operation["result_json"], dict):
             result = operation["result_json"]
@@ -777,6 +782,7 @@ class KinSysProtocolPipeline:
             return {
                 "operation_id": operation_id,
                 "phase": operation["phase"],
+                "request_fingerprint": request_fingerprint,
                 "resumable": False,
                 "result": result,
                 "cee_events": events,
@@ -786,6 +792,7 @@ class KinSysProtocolPipeline:
         return {
             "operation_id": operation_id,
             "phase": operation["phase"],
+            "request_fingerprint": request_fingerprint,
             "resumable": True,
             "minah_disposition": operation["minah_json"],
             "ivm_decision": operation["ivm_json"],
