@@ -3,7 +3,10 @@
 import io
 import json
 import sys
+import threading
 import unittest
+from urllib.request import Request, urlopen
+from wsgiref.simple_server import make_server
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -177,6 +180,71 @@ class HttpServiceTests(unittest.TestCase):
         self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
         self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
         self.assertLess(phases.index("AUTHORITY_VERIFIED"), phases.index("ADMITTED"))
+
+    def test_live_http_server_enforces_injected_minah_identity_authority_order(self):
+        calls = []
+
+        class RecordingMinah:
+            def review(self, evidence):
+                calls.append("MINAH")
+                return DeterministicMinahAdapter().review(evidence)
+
+        class RecordingIdentity:
+            def verify_principal(self, request):
+                calls.append("IDENTITY")
+                return {"verified": True, "mode": "LIVE_HTTP_TEST"}
+
+        class RecordingAuthority:
+            def verify_action(self, request):
+                calls.append("AUTHORITY")
+                return {"verified": True, "mode": "LIVE_HTTP_TEST"}
+
+        app = create_app(
+            minah_adapter=RecordingMinah(),
+            identity_adapter=RecordingIdentity(),
+            authority_adapter=RecordingAuthority(),
+        )
+        server = make_server("127.0.0.1", 0, app)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            payload = {
+                "operation_id": "LIVE-HTTP-ORDER-1",
+                "event_id": "LIVE-HTTP-EVENT-1",
+                "process_id": "LIVE-HTTP-PROCESS-1",
+                "actor_id": "AUTHORITY-001",
+                "event_type": "ACTIVATE",
+                "jurisdiction": "UG-DEMO",
+                "rule_set": "KIN-SYS-DEMO-RULES",
+                "rule_version": "1.0",
+                "evidence": {
+                    "consignment_id": "LIVE-HTTP-PROCESS-1",
+                    "commodity": "SYNTHETIC_MAIZE",
+                    "origin": "UGANDA-DEMO",
+                    "destination": "BORDER-DEMO",
+                    "rule_refs": ["SYNTHETIC-RULE-1"],
+                },
+            }
+            request = Request(
+                f"http://127.0.0.1:{server.server_port}/protocol/instructions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                body = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(response.status, 200)
+            self.assertEqual(body["status"], "COMMITTED")
+            self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
+            phases = [event["phase"] for event in body["result"]["cee_events"]]
+            self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
+            self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
+            self.assertLess(phases.index("AUTHORITY_VERIFIED"), phases.index("ADMITTED"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+            app.close()
 
     def test_http_ingress_authority_denial_stops_before_cee_admission_and_ivm(self):
         calls = []
