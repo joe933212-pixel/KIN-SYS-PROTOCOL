@@ -454,6 +454,12 @@ class KinSysPrototypeApplication:
                             {"error": {"code": "OPERATION_NOT_FOUND_OR_NOT_RECOVERABLE", "message": "No recoverable CEE lifecycle was found for this operation ID."}},
                             request_id,
                         )
+                    if recovered.get("reason") == "OPERATION_NOT_FOUND":
+                        return _response(
+                            start_response, 404,
+                            {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol or ingress journal operation matches this ID."}},
+                            request_id,
+                        )
                 return _response(
                     start_response, 200,
                     {
