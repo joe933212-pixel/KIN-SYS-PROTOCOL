@@ -24,6 +24,7 @@ from integrated_demo import IntegratedDemonstrator
 from cee_case_coordinator import CEECaseCoordinator, CaseConflict, CaseRecoveryRequired
 from protocol_pipeline import ExecutionConflict, KinSysProtocolPipeline
 from minah_profile_governance import MinahApprovalViolation
+from governed_contracts import CONTRACT_VERSION, validate_decision_envelope
 from transition import EventIdConflict
 
 
@@ -355,10 +356,36 @@ class KinSysPrototypeApplication:
             try:
                 payload = self._read_json(environ, allowed_fields=_PROTOCOL_FIELDS)
                 result = self.pipeline.execute(payload)
+                decision_status = {
+                    "COMMITTED": "PASSED",
+                    "REJECTED": "REJECTED",
+                    "DEFERRED": "DEFERRED",
+                    "UNKNOWN": "UNKNOWN",
+                }.get(result.get("status"), "UNKNOWN")
+                decision_messages = {
+                    "PASSED": "The required synthetic protocol gates passed. No external effect is implied.",
+                    "REJECTED": "A required protocol gate rejected the instruction. No external effect was performed.",
+                    "DEFERRED": "The instruction needs additional information or review before it can proceed.",
+                    "UNKNOWN": "The outcome could not be established safely. Reconcile the operation before retrying.",
+                }
+                decision_envelope = validate_decision_envelope({
+                    "contract_version": CONTRACT_VERSION,
+                    "request_id": request_id,
+                    "operation_id": payload["operation_id"],
+                    "protocol_decision": decision_status,
+                    "reason_code": str(result.get("reason") or "REQUIRED_GATES_PASSED"),
+                    "user_message": decision_messages[decision_status],
+                    "rule_pack_version": f"{payload['rule_set']}:{payload['rule_version']}",
+                    "minah_disposition_ref": f"minah-disposition:{payload['operation_id']}",
+                    "cee_execution_ref": f"cee-operation:{payload['operation_id']}",
+                    "external_effect_status": "NOT_ATTEMPTED",
+                    "evidence_refs": [],
+                })
                 return _response(
                     start_response, 200,
                     {
                         "status": result["status"],
+                        "decision": decision_envelope,
                         "production_ready": False,
                         "result": result,
                         "protocol_boundary": {
