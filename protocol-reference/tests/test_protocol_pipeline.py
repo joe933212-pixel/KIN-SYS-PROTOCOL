@@ -183,6 +183,36 @@ class ProtocolPipelineTests(unittest.TestCase):
                 finally:
                     pipeline.close()
 
+    def test_institution_owned_minah_can_coordinate_identity_and_authority_checks(self):
+        class InstitutionAgent:
+            def __init__(self):
+                self.calls = []
+            def review(self, evidence):
+                self.calls.append('review')
+                return {'status': 'ADVISORY_ONLY', 'missing_fields': [], 'source_refs': ['OWNER-POLICY-1'], 'uncertainty': 'LOW', 'may_authorise': False, 'model_version': 'institution-agent-v1'}
+            def verify_principal(self, payload):
+                self.calls.append('identity_api')
+                return {'verified': True, 'mode': 'INSTITUTION_MINAH_IDENTITY_API'}
+            def verify_action(self, payload):
+                self.calls.append('authority_api')
+                return {'verified': True, 'mode': 'INSTITUTION_MINAH_AUTHORITY_API'}
+
+        agent = InstitutionAgent()
+        pipeline = KinSysProtocolPipeline(minah_adapter=agent)
+        try:
+            result = pipeline.execute(request())
+            self.assertEqual(result['status'], 'COMMITTED')
+            self.assertEqual(agent.calls, ['review', 'identity_api', 'authority_api'])
+            phases = [event['phase'] for event in result['cee_events']]
+            self.assertLess(phases.index('MINAH_REVIEWED'), phases.index('IDENTITY_VERIFIED'))
+            self.assertLess(phases.index('IDENTITY_VERIFIED'), phases.index('AUTHORITY_VERIFIED'))
+            identity_event = next(event for event in result['cee_events'] if event['phase'] == 'IDENTITY_VERIFIED')
+            authority_event = next(event for event in result['cee_events'] if event['phase'] == 'AUTHORITY_VERIFIED')
+            self.assertEqual(identity_event['detail']['identity_mode'], 'INSTITUTION_MINAH_IDENTITY_API')
+            self.assertEqual(authority_event['detail']['authority_mode'], 'INSTITUTION_MINAH_AUTHORITY_API')
+        finally:
+            pipeline.close()
+
     def test_complete_path_runs_minah_ivm_and_cee_in_order(self):
         result = self.pipeline.execute(request())
         self.assertEqual(result["status"], "COMMITTED")
