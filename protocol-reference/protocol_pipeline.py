@@ -23,6 +23,7 @@ RULE_VERSION = "1.0"
 AUTHORITY_ID = "AUTHORITY-001"
 LIFECYCLE = (
     "REQUESTED",
+    "MINAH_REVIEWED",
     "ADMITTED",
     "CONTEXT_ESTABLISHED",
     "AUTHORITY_EVALUATED",
@@ -168,7 +169,7 @@ class CEEJournal:
             terminal_branch = (
                 next_phase == "FINALIZED"
                 and (
-                    (current == "AUTHORITY_EVALUATED" and outcome in {"DEFERRED", "REJECTED"})
+                    (current in {"MINAH_REVIEWED", "AUTHORITY_EVALUATED"} and outcome in {"DEFERRED", "REJECTED"})
                     or (current == "COMMITTING" and outcome == "REJECTED")
                 )
             )
@@ -230,35 +231,12 @@ class KinSysProtocolPipeline:
         operation = self.cee.get(operation_id)
         assert operation is not None
 
-        # CEE admits the instruction and pins its context before invoking MINAH.
-        # The MINAH disposition is then stored with AUTHORITY_EVALUATED, so retries
-        # after that boundary reuse the same decision rather than re-querying a model.
-        if operation["phase"] == "REQUESTED":
-            self.cee.advance(
-                operation_id, "ADMITTED",
-                detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
-            )
-        operation = self.cee.get(operation_id)
-        assert operation is not None
-        if operation["phase"] == "ADMITTED":
-            self.cee.advance(
-                operation_id, "CONTEXT_ESTABLISHED",
-                detail={
-                    "jurisdiction": request["jurisdiction"],
-                    "rule_set": request["rule_set"],
-                    "rule_version": request["rule_version"],
-                    "evidence_digest": _digest(evidence),
-                },
-            )
-        operation = self.cee.get(operation_id)
-        assert operation is not None
-
-        if operation["phase"] == "CONTEXT_ESTABLISHED" and operation["minah_json"] is None:
+        # REQUESTED is an idempotency/receipt record only. MINAH receives the
+        # instruction before CEE admission or context establishment.
+        if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
             disposition = self.minah.review(evidence)
             contract_error = self._minah_contract_error(disposition)
             if contract_error:
-                # A malformed or self-authorising MINAH output is recorded as a
-                # rejected advisory result; it never reaches the IVM transition.
                 safe_disposition = {
                     "status": "INVALID_DISPOSITION",
                     "missing_fields": [],
@@ -269,7 +247,7 @@ class KinSysProtocolPipeline:
                     "contract_error": contract_error,
                 }
                 self.cee.advance(
-                    operation_id, "AUTHORITY_EVALUATED", status="REJECTED",
+                    operation_id, "MINAH_REVIEWED", status="REJECTED",
                     detail={"minah_contract_error": contract_error, "ivm_not_invoked": True},
                     minah=safe_disposition,
                 )
@@ -288,8 +266,57 @@ class KinSysProtocolPipeline:
                 )
                 return self._response_result(operation_id, result, duplicate=False)
             self.cee.advance(
-                operation_id, "AUTHORITY_EVALUATED",
+                operation_id, "MINAH_REVIEWED",
                 status="DEFERRED" if disposition["status"] == "NEEDS_INFORMATION" else "EVALUATED",
+                detail={"minah_is_advisory": True, "may_authorise": False},
+                minah=disposition,
+            )
+
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        disposition = operation["minah_json"]
+
+        if disposition is not None and disposition["status"] == "NEEDS_INFORMATION":
+            result = {
+                "operation_id": operation_id,
+                "status": "DEFERRED",
+                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE",
+                "minah_disposition": disposition,
+                "ivm_decision": None,
+                "funds_moved": False,
+            }
+            if operation["phase"] == "MINAH_REVIEWED":
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="DEFERRED",
+                    outcome="DEFERRED", result=result,
+                    detail={"reason": result["reason"], "ivm_not_invoked": True},
+                )
+            return self._response_result(operation_id, result, duplicate=False)
+
+        # Admission and context pinning are downstream of a valid MINAH review.
+        if operation["phase"] == "MINAH_REVIEWED":
+            self.cee.advance(
+                operation_id, "ADMITTED",
+                detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED", "minah_gate_passed": True},
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "ADMITTED":
+            self.cee.advance(
+                operation_id, "CONTEXT_ESTABLISHED",
+                detail={
+                    "jurisdiction": request["jurisdiction"],
+                    "rule_set": request["rule_set"],
+                    "rule_version": request["rule_version"],
+                    "evidence_digest": _digest(evidence),
+                },
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "CONTEXT_ESTABLISHED":
+            self.cee.advance(
+                operation_id, "AUTHORITY_EVALUATED",
+                status="EVALUATED",
                 detail={"minah_is_advisory": True, "may_authorise": False},
                 minah=disposition,
             )
@@ -489,7 +516,7 @@ class KinSysProtocolPipeline:
             })
 
         for event in events:
-            if event["phase"] == "AUTHORITY_EVALUATED" and not minah_inserted and isinstance(minah, dict):
+            if event["phase"] == "MINAH_REVIEWED" and not minah_inserted and isinstance(minah, dict):
                 append("MINAH", str(minah.get("status", "UNKNOWN")), {
                     "advisory_only": True,
                     "may_authorise": False,
