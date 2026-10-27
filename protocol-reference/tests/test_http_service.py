@@ -205,9 +205,9 @@ class HttpServiceTests(unittest.TestCase):
             authority_adapter=RecordingAuthority(),
         )
         server = make_server("127.0.0.1", 0, app)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
+        outcome = {}
+
+        def client_request():
             payload = {
                 "operation_id": "LIVE-HTTP-ORDER-1",
                 "event_id": "LIVE-HTTP-EVENT-1",
@@ -231,9 +231,27 @@ class HttpServiceTests(unittest.TestCase):
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urlopen(request, timeout=5) as response:
-                body = json.loads(response.read().decode("utf-8"))
-                self.assertEqual(response.status, 200)
+            try:
+                with urlopen(request, timeout=5) as response:
+                    outcome["status"] = response.status
+                    outcome["body"] = json.loads(response.read().decode("utf-8"))
+            except Exception as exc:
+                outcome["error"] = exc
+            finally:
+                server.shutdown()
+
+        client = threading.Thread(target=client_request, daemon=True)
+        client.start()
+        try:
+            # Serve the WSGI request on the same thread that created the SQLite
+            # connections, matching the current single-threaded reference server.
+            server.serve_forever()
+            client.join(timeout=5)
+            self.assertFalse(client.is_alive(), "HTTP client did not finish")
+            if "error" in outcome:
+                raise outcome["error"]
+            body = outcome["body"]
+            self.assertEqual(outcome["status"], 200)
             self.assertEqual(body["status"], "COMMITTED")
             self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
             phases = [event["phase"] for event in body["result"]["cee_events"]]
@@ -241,8 +259,6 @@ class HttpServiceTests(unittest.TestCase):
             self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
             self.assertLess(phases.index("AUTHORITY_VERIFIED"), phases.index("ADMITTED"))
         finally:
-            server.shutdown()
-            thread.join(timeout=5)
             server.server_close()
             app.close()
 
