@@ -324,7 +324,9 @@ class MinahFirstIngress:
         unresolved and must not be resubmitted automatically.
         """
         row = self.db.execute(
-            "SELECT operation_id, phase, instruction_json, result_json FROM minah_first_ingress WHERE operation_id=?",
+            """SELECT operation_id, phase, instruction_json, result_json,
+                      execution_request_fingerprint
+               FROM minah_first_ingress WHERE operation_id=?""",
             (operation_id,),
         ).fetchone()
         if row is None:
@@ -332,6 +334,22 @@ class MinahFirstIngress:
         if row["result_json"]:
             return self.inspect(operation_id)
         if not isinstance(pipeline_snapshot, dict) or pipeline_snapshot.get("phase") != "FINALIZED":
+            return self.inspect(operation_id)
+        snapshot_fingerprint = pipeline_snapshot.get("request_fingerprint")
+        if (
+            not row["execution_request_fingerprint"]
+            or not isinstance(snapshot_fingerprint, str)
+            or snapshot_fingerprint != row["execution_request_fingerprint"]
+        ):
+            self._record_recovery_event(
+                operation_id, "RECONCILIATION_BLOCKED", row["phase"],
+                row["phase"],
+                {
+                    "reason": "CEE_REQUEST_FINGERPRINT_DOES_NOT_MATCH_INGRESS",
+                    "ingress_request_fingerprint_present": bool(row["execution_request_fingerprint"]),
+                    "cee_request_fingerprint_present": isinstance(snapshot_fingerprint, str),
+                },
+            )
             return self.inspect(operation_id)
         raw_result = pipeline_snapshot.get("result")
         if not isinstance(raw_result, dict):
