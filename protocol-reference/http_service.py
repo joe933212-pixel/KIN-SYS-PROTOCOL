@@ -408,6 +408,12 @@ class KinSysPrototypeApplication:
                         {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to request explicit operation recovery."}},
                         request_id,
                     )
+                if environ.get("CONTENT_LENGTH", "0") not in {"", "0"}:
+                    return _response(
+                        start_response, 400,
+                        {"error": {"code": "RECOVERY_BODY_NOT_ALLOWED", "message": "Recovery uses the original pinned request and does not accept replacement content."}},
+                        request_id,
+                    )
                 recovered = self.ingress.recover(
                     operation_id,
                     pipeline_recovery=self.pipeline.recover,
