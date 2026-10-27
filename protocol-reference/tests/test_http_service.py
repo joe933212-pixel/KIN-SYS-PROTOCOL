@@ -321,6 +321,12 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["decision"]["evidence_refs"], payload["evidence_refs"])
         self.assertEqual(body["decision"]["external_effect_status"], "NOT_ATTEMPTED")
         self.assertEqual(identity.asserted, payload["principal_ref"])
+        ingress_record = app.ingress.inspect(payload["operation_id"])
+        self.assertIsNotNone(ingress_record)
+        self.assertEqual(ingress_record["phase"], "PASSED")
+        self.assertEqual(
+            ingress_record["result"]["pipeline_result"]["status"], "COMMITTED"
+        )
         phases = [event["phase"] for event in body["result"]["cee_events"]]
         self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
         self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
