@@ -119,9 +119,15 @@ def validate_decision_envelope(decision: Any) -> dict[str, Any]:
     if decision["contract_version"] != CONTRACT_VERSION:
         raise GovernedContractViolation("CONTRACT_VERSION_MISMATCH")
     _require_nonempty_strings(decision, DECISION_REQUIRED - {"contract_version", "evidence_refs", "external_effect_status"})
-    if decision["protocol_decision"] not in PROTOCOL_DECISIONS:
+    if (
+        not isinstance(decision["protocol_decision"], str)
+        or decision["protocol_decision"] not in PROTOCOL_DECISIONS
+    ):
         raise GovernedContractViolation("INVALID_PROTOCOL_DECISION")
-    if decision["external_effect_status"] not in EFFECT_STATUSES:
+    if (
+        not isinstance(decision["external_effect_status"], str)
+        or decision["external_effect_status"] not in EFFECT_STATUSES
+    ):
         raise GovernedContractViolation("INVALID_EXTERNAL_EFFECT_STATUS")
     if not isinstance(decision["evidence_refs"], list) or any(
         not _nonempty_string(ref) for ref in decision["evidence_refs"]
