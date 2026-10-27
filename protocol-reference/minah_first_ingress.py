@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 from minah_profile_governance import MinahApprovalViolation
-from governed_contracts import assert_instruction_binding, verify_instruction_payload_digest, validate_decision_envelope
+from governed_contracts import CONTRACT_VERSION, assert_instruction_binding, verify_instruction_payload_digest, validate_decision_envelope
 
 
 def _canonical(value: Any) -> str:
@@ -406,7 +406,16 @@ class MinahFirstIngress:
         self._validate_minimum_instruction(instruction)
         operation_id = instruction["operation_id"]
         fingerprint = _fingerprint(instruction)
+        if execution_request is not None and not isinstance(execution_request, dict):
+            raise ValueError("EXECUTION_REQUEST_MUST_BE_OBJECT")
         effective_execution_request = dict(execution_request or instruction)
+        if self.pipeline_executor is not None:
+            if effective_execution_request.get("operation_id") != operation_id:
+                raise IngressConflict("EXECUTION_REQUEST_OPERATION_ID_MISMATCH")
+            if instruction.get("contract_version") == CONTRACT_VERSION:
+                checked_instruction = verify_instruction_payload_digest(instruction)
+                if effective_execution_request.get("_contract_envelope") != checked_instruction:
+                    raise IngressConflict("EXECUTION_REQUEST_NOT_BOUND_TO_INGRESS_INSTRUCTION")
         execution_request_fingerprint = _fingerprint(effective_execution_request)
 
         self.db.execute("BEGIN IMMEDIATE")
