@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from minah_first_ingress import IngressConflict, MinahFirstIngress
+from minah_first_ingress import IngressConflict, MinahFirstIngress, _fingerprint
 from governed_contracts import compute_payload_digest
 
 
@@ -282,12 +282,25 @@ class MinahFirstIngressTests(unittest.TestCase):
         self.assertIsNone(unresolved["result"])
         self.assertEqual(unresolved["phase"], "UNKNOWN_REQUIRES_RECONCILIATION")
 
-        recovered = ingress.reconcile("op-1", {
+        finalized_snapshot = {
             "phase": "FINALIZED",
             "result": {"operation_id": "op-1", "status": "COMMITTED", "reason": None},
             "cee_events": [{"phase": "FINALIZED", "status": "COMMITTED"}],
             "component_trace": [{"component": "CEE", "detail": {"phase": "FINALIZED"}}],
-        })
+        }
+        mismatch = ingress.reconcile(
+            "op-1", {**finalized_snapshot, "request_fingerprint": "wrong-fingerprint"}
+        )
+        self.assertIsNone(mismatch["result"])
+        self.assertEqual(mismatch["phase"], "UNKNOWN_REQUIRES_RECONCILIATION")
+
+        recovered = ingress.reconcile(
+            "op-1",
+            {
+                **finalized_snapshot,
+                "request_fingerprint": _fingerprint({"operation_id": "op-1"}),
+            },
+        )
         self.assertEqual(recovered["protocol_decision"], "PASSED")
         self.assertTrue(recovered["reconciled"])
         self.assertEqual(recovered["pipeline_result"]["status"], "COMMITTED")
