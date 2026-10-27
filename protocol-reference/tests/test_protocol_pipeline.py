@@ -40,6 +40,48 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.pipeline = KinSysProtocolPipeline()
         self.addCleanup(self.pipeline.close)
 
+    def test_operation_records_its_institution_owned_minah_profile(self):
+        profile = {
+            "profile_version": "kin-sys-minah-profile-0.1",
+            "deployment_id": "enterprise-finance-minah-02",
+            "owner_scope": "ENTERPRISE",
+            "owner_ref": "FINANCE-ENTITY-02",
+            "use_case": "PAYMENT_APPROVAL",
+            "jurisdictions": ["UG"],
+            "policy_pack_version": "FINANCE-POLICY-7",
+            "source_pack_version": "FINANCE-SOURCES-4",
+            "model_ref": "enterprise-selected-model-v3",
+            "deployment_mode": "ON_PREMISES",
+            "may_authorise": False,
+        }
+        pipeline = KinSysProtocolPipeline(minah_profile=profile)
+        self.addCleanup(pipeline.close)
+        result = pipeline.execute(request(operation_id="PROFILE-PIN-01"))
+        recorded = result["minah_disposition"]["deployment_profile"]
+        self.assertEqual(recorded["deployment_id"], "enterprise-finance-minah-02")
+        self.assertEqual(recorded["owner_scope"], "ENTERPRISE")
+        self.assertEqual(recorded["policy_pack_version"], "FINANCE-POLICY-7")
+        reviewed = next(event for event in result["cee_events"] if event["phase"] == "MINAH_REVIEWED")
+        self.assertEqual(reviewed["detail"]["minah_deployment_id"], "enterprise-finance-minah-02")
+        self.assertEqual(reviewed["detail"]["minah_profile_version"], "kin-sys-minah-profile-0.1")
+
+    def test_rejects_minah_profile_that_claims_institutional_authority(self):
+        profile = {
+            "profile_version": "kin-sys-minah-profile-0.1",
+            "deployment_id": "invalid-profile",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "INSTITUTION-01",
+            "use_case": "CASE_REVIEW",
+            "jurisdictions": ["UG"],
+            "policy_pack_version": "POLICY-1",
+            "source_pack_version": "SOURCES-1",
+            "model_ref": "model-1",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": True,
+        }
+        with self.assertRaisesRegex(ValueError, "MINAH_MUST_NOT_GRANT_INSTITUTIONAL_AUTHORITY"):
+            KinSysProtocolPipeline(minah_profile=profile)
+
     def test_complete_path_runs_minah_ivm_and_cee_in_order(self):
         result = self.pipeline.execute(request())
         self.assertEqual(result["status"], "COMMITTED")
