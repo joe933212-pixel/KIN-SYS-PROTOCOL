@@ -87,7 +87,10 @@ class MinahFirstIngress:
     def close(self) -> None:
         self.db.close()
 
-    def execute(self, instruction: dict[str, Any]) -> dict[str, Any]:
+    def execute(
+        self, instruction: dict[str, Any], *,
+        execution_request: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         self._validate_minimum_instruction(instruction)
         operation_id = instruction["operation_id"]
         fingerprint = _fingerprint(instruction)
