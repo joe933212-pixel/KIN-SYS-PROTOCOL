@@ -14,6 +14,7 @@ The objective is to specify a system in which independently operated components 
 - [MINAH deployment profiles and institutional ownership](docs/MINAH_DEPLOYMENT_PROFILES.md)
 - [MINAH-first ingress gate](docs/MINAH_FIRST_INGRESS_GATE.md)
 - [Governed instruction/decision contract v0.1](docs/GOVERNED_INSTRUCTION_DECISION_CONTRACT_V0_1.md)
+- [CEE–IVM crash recovery contract and failure-point matrix](docs/CEE_IVM_RECOVERY_CONTRACT.md)
 
 MINAH is an institution-owned gatekeeper deployment, not a single global service. The reference pipeline supports a versioned deployment profile and pins it to each operation's durable request fingerprint and MINAH disposition trace. This remains a research reference implementation, not production deployment or legal assurance.
 
