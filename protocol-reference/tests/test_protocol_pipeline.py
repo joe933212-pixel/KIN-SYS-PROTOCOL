@@ -604,14 +604,26 @@ os._exit(76)
         ):
             self.pipeline.recover("OP-001", expected_request=replacement)
 
-    def test_recovery_refuses_changed_minah_profile(self):
+    def test_recovery_refuses_changed_minah_profile_for_nonfinal_operation(self):
         payload = request(operation_id="RECOVERY-PROFILE", event_id="RECOVERY-PROFILE-EVENT", process_id="RECOVERY-PROFILE-PROC")
-        self.pipeline.execute(payload)
+        with self.assertRaisesRegex(RuntimeError, "INJECTED_FAILURE_AFTER_IVM_COMMIT"):
+            self.pipeline.execute(payload, fail_after_ivm_commit=True)
         changed_profile = dict(self.pipeline.minah_profile)
         changed_profile["deployment_id"] = "different-institution-profile"
         self.pipeline.minah_profile = changed_profile
         with self.assertRaisesRegex(ExecutionConflict, "RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE"):
             self.pipeline.recover("RECOVERY-PROFILE")
+
+    def test_finalized_cee_result_remains_reconcilable_after_profile_change(self):
+        payload = request(operation_id="FINAL-PROFILE-CHANGE", event_id="FINAL-PROFILE-EVENT", process_id="FINAL-PROFILE-PROC")
+        self.pipeline.execute(payload)
+        changed_profile = dict(self.pipeline.minah_profile)
+        changed_profile["deployment_id"] = "later-institution-profile"
+        self.pipeline.minah_profile = changed_profile
+        result = self.pipeline.recover("FINAL-PROFILE-CHANGE")
+        self.assertEqual(result["status"], "COMMITTED")
+        self.assertTrue(result["duplicate"])
+        self.assertEqual(self.pipeline.cee.get("FINAL-PROFILE-CHANGE")["phase"], "FINALIZED")
 
     def test_finalized_operation_is_idempotent(self):
         first = self.pipeline.execute(request())
