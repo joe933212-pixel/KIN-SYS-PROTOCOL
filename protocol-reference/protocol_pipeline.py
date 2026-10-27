@@ -252,7 +252,7 @@ class KinSysProtocolPipeline:
             "owner_scope": "INSTITUTION",
             "owner_ref": "LOCAL-DEMONSTRATOR",
             "use_case": "PROTOCOL_REFERENCE_TEST",
-            "jurisdictions": ["UNSPECIFIED"],
+            "jurisdictions": ["UG-DEMO"],
             "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
             "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
             "model_ref": "deterministic-minah-mock",
@@ -297,7 +297,22 @@ class KinSysProtocolPipeline:
         # REQUESTED is an idempotency/receipt record only. MINAH receives the
         # instruction before CEE admission or context establishment.
         if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
-            disposition = self.minah.review(evidence)
+            # A profile is scoped to an explicit jurisdiction set; it must not
+            # silently act as a universal agent or fall back across jurisdictions.
+            requested_jurisdiction = request["jurisdiction"]
+            if requested_jurisdiction not in self.minah_profile["jurisdictions"]:
+                disposition = {
+                    "status": "REJECTED",
+                    "missing_fields": [],
+                    "source_refs": [],
+                    "uncertainty": "HIGH",
+                    "may_authorise": False,
+                    "model_version": self.minah_profile["model_ref"],
+                    "deployment_profile": self.minah_profile,
+                    "reason": "MINAH_PROFILE_JURISDICTION_MISMATCH",
+                }
+            else:
+                disposition = self.minah.review(evidence)
             if isinstance(disposition, dict):
                 disposition = dict(disposition)
                 disposition["deployment_profile"] = self.minah_profile
