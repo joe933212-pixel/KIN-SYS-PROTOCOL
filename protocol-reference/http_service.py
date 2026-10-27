@@ -482,8 +482,13 @@ def create_app(
     demonstrator: IntegratedDemonstrator | None = None,
     pipeline: KinSysProtocolPipeline | None = None,
     case_coordinator: CEECaseCoordinator | None = None,
+    *,
+    enable_legacy_demo_routes: bool = False,
 ) -> KinSysPrototypeApplication:
-    return KinSysPrototypeApplication(demonstrator, pipeline, case_coordinator)
+    return KinSysPrototypeApplication(
+        demonstrator, pipeline, case_coordinator,
+        enable_legacy_demo_routes=enable_legacy_demo_routes,
+    )
 
 
 def main() -> None:
@@ -517,7 +522,11 @@ def main() -> None:
         cee_database=case_db, ivm_database=case_ivm_db,
         workflow_database=case_workflow_db, payment_database=case_payment_db,
     )
-    app = create_app(pipeline=pipeline, case_coordinator=case_coordinator)
+    legacy_demo_enabled = os.environ.get("KIN_SYS_ENABLE_LEGACY_DEMO_ROUTES", "").lower() in {"1", "true", "yes"}
+    app = create_app(
+        pipeline=pipeline, case_coordinator=case_coordinator,
+        enable_legacy_demo_routes=legacy_demo_enabled,
+    )
     for database in (cee_database, ivm_database, *case_databases):
         if database != ":memory:" and Path(database).exists():
             try:
