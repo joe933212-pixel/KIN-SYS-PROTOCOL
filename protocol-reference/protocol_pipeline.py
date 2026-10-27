@@ -417,16 +417,23 @@ class KinSysProtocolPipeline:
         if operation["phase"] == "MINAH_REVIEWED":
             # Institution-owned MINAH agents may invoke their approved identity API.
             minah_identity_check = getattr(self.minah, "verify_principal", None)
-            identity = minah_identity_check(request) if callable(minah_identity_check) else self.identity_adapter.verify_principal(request)
+            try:
+                identity = minah_identity_check(request) if callable(minah_identity_check) else self.identity_adapter.verify_principal(request)
+            except Exception:
+                identity = {"verified": False, "status": "UNKNOWN", "mode": "VERIFICATION_UNAVAILABLE"}
             if not isinstance(identity, dict) or identity.get("verified") is not True:
+                identity_unknown = isinstance(identity, dict) and identity.get("status") == "UNKNOWN"
                 result = {
-                    "operation_id": operation_id, "status": "REJECTED",
-                    "reason": "IDENTITY_NOT_VERIFIED", "minah_disposition": disposition,
+                    "operation_id": operation_id,
+                    "status": "UNKNOWN" if identity_unknown else "REJECTED",
+                    "reason": "IDENTITY_VERIFICATION_UNAVAILABLE" if identity_unknown else "IDENTITY_NOT_VERIFIED",
+                    "minah_disposition": disposition,
                     "identity_result": identity if isinstance(identity, dict) else {"verified": False},
                     "ivm_decision": None, "funds_moved": False,
                 }
+                terminal_status = result["status"]
                 self.cee.advance(
-                    operation_id, "FINALIZED", status="REJECTED", outcome="REJECTED",
+                    operation_id, "FINALIZED", status=terminal_status, outcome=terminal_status,
                     result=result, detail={"reason": result["reason"], "ivm_not_invoked": True},
                 )
                 return self._response_result(operation_id, result, duplicate=False)
@@ -439,16 +446,23 @@ class KinSysProtocolPipeline:
         if operation["phase"] == "IDENTITY_VERIFIED":
             # MINAH may coordinate action-specific authority checks through approved APIs.
             minah_authority_check = getattr(self.minah, "verify_action", None)
-            authority = minah_authority_check(request) if callable(minah_authority_check) else self.authority_adapter.verify_action(request)
+            try:
+                authority = minah_authority_check(request) if callable(minah_authority_check) else self.authority_adapter.verify_action(request)
+            except Exception:
+                authority = {"verified": False, "status": "UNKNOWN", "mode": "VERIFICATION_UNAVAILABLE"}
             if not isinstance(authority, dict) or authority.get("verified") is not True:
+                authority_unknown = isinstance(authority, dict) and authority.get("status") == "UNKNOWN"
                 result = {
-                    "operation_id": operation_id, "status": "REJECTED",
-                    "reason": "AUTHORITY_NOT_VERIFIED", "minah_disposition": disposition,
+                    "operation_id": operation_id,
+                    "status": "UNKNOWN" if authority_unknown else "REJECTED",
+                    "reason": "AUTHORITY_VERIFICATION_UNAVAILABLE" if authority_unknown else "AUTHORITY_NOT_VERIFIED",
+                    "minah_disposition": disposition,
                     "authority_result": authority if isinstance(authority, dict) else {"verified": False},
                     "ivm_decision": None, "funds_moved": False,
                 }
+                terminal_status = result["status"]
                 self.cee.advance(
-                    operation_id, "FINALIZED", status="REJECTED", outcome="REJECTED",
+                    operation_id, "FINALIZED", status=terminal_status, outcome=terminal_status,
                     result=result, detail={"reason": result["reason"], "ivm_not_invoked": True},
                 )
                 return self._response_result(operation_id, result, duplicate=False)
