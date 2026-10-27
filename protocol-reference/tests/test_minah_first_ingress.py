@@ -121,6 +121,21 @@ class MinahFirstIngressTests(unittest.TestCase):
             self.ingress.execute(self.instruction(action="different_action"))
 
 
+
+    def test_operation_id_cannot_be_rebound_to_different_execution_request(self):
+        instruction = self.instruction()
+        self.ingress.execute(
+            instruction,
+            execution_request={"operation_id": "op-1", "event_id": "stable-event-1"},
+        )
+        with self.assertRaisesRegex(
+            IngressConflict, "OPERATION_ID_REUSED_WITH_DIFFERENT_EXECUTION_REQUEST"
+        ):
+            self.ingress.execute(
+                instruction,
+                execution_request={"operation_id": "op-1", "event_id": "different-event"},
+            )
+
     def test_pipeline_journal_replay_survives_ingress_object_restart(self):
         instruction = self.instruction(
             contract_version="kin-sys-governed-contract-0.1",
