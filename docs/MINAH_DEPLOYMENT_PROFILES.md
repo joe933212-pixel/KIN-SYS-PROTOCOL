@@ -43,7 +43,15 @@ Regardless of ownership or deployment technology:
 
 The protocol may define minimum conformance requirements, but it must not dictate that every deployment use the same AI model or identical legal knowledge. The institution's policy choices remain institution-scoped; the protocol's execution and evidence requirements remain consistent. Cross-institutional and cross-border operations should be coordinated through explicit participant scopes, accepted evidence, and agreed protocol outcomes—not by treating one participant's agent as the authority for all participants.
 
-## 5. Failure, updates and independence
+## 5. Profile approval and revocation reference contract
+
+A profile's `owner_ref` is descriptive metadata, not proof of ownership or approval. Before trusting a profile for a protected deployment, a deployment trust service must verify an approval bound to the exact canonical profile and confirm the approval is current and not revoked.
+
+The reference seam is `protocol-reference/minah_profile_governance.py`. It computes a deterministic SHA-256 digest of canonical profile JSON and validates an approval envelope, profile digest, timezone-aware approval/expiry times, signature-verifier result, and revocation-check result. Missing, malformed, expired, mismatched, revoked, unknown, or unavailable outcomes fail closed.
+
+This is a validation contract, not a cryptographic implementation. Tests use test doubles; they do not prove real signature verification, signer identity, key custody, or a trustworthy revocation registry. The contract is not yet wired into HTTP ingress or the execution pipeline. Production integration must use a reviewed cryptographic library and trusted key store, authenticate the profile owner, persist revocation state, and reject untrusted profiles before protected operations.
+
+## 6. Failure, updates and independence
 
 A profile update is versioned. New operations may use the newly approved profile version; in-flight operations retain the version pinned at admission unless a defined, auditable re-evaluation procedure requires otherwise. Emergency revocation or a compromised profile needs an explicit fail-closed procedure and reconciliation rules.
 
