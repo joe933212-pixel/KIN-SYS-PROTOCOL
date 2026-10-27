@@ -187,6 +187,18 @@ class MinahFirstIngressTests(unittest.TestCase):
             ingress.close()
 
 
+
+    def test_standalone_ingress_rejects_tampered_v01_digest_before_minah(self):
+        instruction = self.instruction(
+            contract_version="kin-sys-governed-contract-0.1",
+            rule_pack_version="KIN-SYS-DEMO-RULES:1.0",
+        )
+        instruction["authority_ref"] = "authority:tampered-without-rehash"
+        with self.assertRaisesRegex(ValueError, "PAYLOAD_DIGEST_MISMATCH"):
+            self.ingress.execute(instruction)
+        self.assertEqual(self.log, [])
+        self.assertIsNone(self.ingress.inspect("op-1"))
+
     def test_pipeline_ingress_rejects_operation_id_mismatch_before_journaling(self):
         self.ingress.close()
         ingress = MinahFirstIngress(
