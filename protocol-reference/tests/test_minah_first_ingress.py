@@ -209,7 +209,7 @@ class MinahFirstIngressTests(unittest.TestCase):
             ):
                 ingress.execute(
                     instruction,
-                    execution_request={"operation_id": "op-1", "event_id": "event-1", "_contract_envelope": instruction},
+                    execution_request={"operation_id": "op-1", "event_id": "event-1"},
                 )
             self.assertIsNone(ingress.inspect("op-1"))
         finally:
