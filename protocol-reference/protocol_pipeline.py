@@ -14,6 +14,8 @@ import json
 import sqlite3
 from typing import Any
 
+from minah_deployment_profile import PROFILE_VERSION, validate_minah_profile
+
 from integrated_demo import DeterministicMinahAdapter
 from transition import EventIdConflict, ProtocolStore
 
@@ -236,6 +238,7 @@ class KinSysProtocolPipeline:
         identity_adapter: Any | None = None,
         authority_adapter: Any | None = None,
         authority_active: bool = True,
+        minah_profile: dict[str, Any] | None = None,
     ):
         self.cee = CEEJournal(cee_database)
         self.ivm = ProtocolStore(ivm_database)
@@ -243,6 +246,19 @@ class KinSysProtocolPipeline:
         self.identity_adapter = identity_adapter or SyntheticIdentityAdapter()
         self.authority_adapter = authority_adapter or SyntheticAuthorityAdapter(authority_active=authority_active)
         self.authority_active = authority_active
+        self.minah_profile = validate_minah_profile(minah_profile or {
+            "profile_version": PROFILE_VERSION,
+            "deployment_id": "synthetic-local-default",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "LOCAL-DEMONSTRATOR",
+            "use_case": "PROTOCOL_REFERENCE_TEST",
+            "jurisdictions": ["UNSPECIFIED"],
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            "model_ref": "deterministic-minah-mock",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": False,
+        })
 
     def close(self) -> None:
         self.cee.close()
@@ -251,7 +267,11 @@ class KinSysProtocolPipeline:
     def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
         self._validate(request)
         operation_id = request["operation_id"]
-        operation = self.cee.start(operation_id, request)
+        # Pin the deployment profile into the durable operation fingerprint before
+        # MINAH is invoked. Replays cannot silently switch to another profile.
+        journal_request = dict(request)
+        journal_request["_minah_deployment_profile"] = self.minah_profile
+        operation = self.cee.start(operation_id, journal_request)
         if operation["phase"] == "FINALIZED":
             result = operation["result_json"]
             return self._response_result(operation_id, result, duplicate=True)
@@ -270,6 +290,9 @@ class KinSysProtocolPipeline:
         # instruction before CEE admission or context establishment.
         if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
             disposition = self.minah.review(evidence)
+            if isinstance(disposition, dict):
+                disposition = dict(disposition)
+                disposition["deployment_profile"] = self.minah_profile
             contract_error = self._minah_contract_error(disposition)
             if contract_error:
                 safe_disposition = {
@@ -303,7 +326,12 @@ class KinSysProtocolPipeline:
             self.cee.advance(
                 operation_id, "MINAH_REVIEWED",
                 status="DEFERRED" if disposition["status"] == "NEEDS_INFORMATION" else "EVALUATED",
-                detail={"minah_is_advisory": True, "may_authorise": False},
+                detail={
+                    "minah_is_advisory": True,
+                    "may_authorise": False,
+                    "minah_deployment_id": self.minah_profile["deployment_id"],
+                    "minah_profile_version": self.minah_profile["profile_version"],
+                },
                 minah=disposition,
             )
 
