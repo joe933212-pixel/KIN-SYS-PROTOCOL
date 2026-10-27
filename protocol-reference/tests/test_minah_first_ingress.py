@@ -167,6 +167,22 @@ class MinahFirstIngressTests(unittest.TestCase):
             self.assertEqual(
                 ingress.inspect("op-1")["phase"], "UNKNOWN_REQUIRES_RECONCILIATION"
             )
+
+            def exception_with_sensitive_detail(operation_id, request):
+                raise RuntimeError("database path /secret/provider-token")
+
+            ingress.recover(
+                "op-1",
+                pipeline_recovery=exception_with_sensitive_detail,
+                pipeline_inspector=lambda operation_id: {"phase": "COMMITTING"},
+            )
+            blocked_event = ingress.recovery_events("op-1")[-1]
+            self.assertEqual(blocked_event["action"], "RECOVERY_BLOCKED")
+            self.assertEqual(
+                blocked_event["evidence"]["reason_code"], "RECOVERY_CALLBACK_ERROR"
+            )
+            self.assertNotIn("secret", str(blocked_event["evidence"]))
+            self.assertIsNone(ingress.inspect("op-1")["result"])
         finally:
             ingress.close()
 
