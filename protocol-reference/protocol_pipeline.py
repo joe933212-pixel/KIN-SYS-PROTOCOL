@@ -716,6 +716,14 @@ class KinSysProtocolPipeline:
             if not isinstance(pinned_approval_metadata, dict) or pinned_approval_metadata.get("status") != "APPROVED":
                 raise ExecutionConflict("PINNED_PROFILE_APPROVAL_EVIDENCE_MISSING")
 
+        request_without_pins = {
+            key: value for key, value in pinned_request.items()
+            if not key.startswith("_minah_")
+        }
+        if expected_request is not None:
+            if _canonical(request_without_pins) != _canonical(expected_request):
+                raise ExecutionConflict("RECOVERY_REQUEST_DIFFERS_FROM_DURABLE_INGRESS_REQUEST")
+
         if operation["phase"] == "FINALIZED":
             result = operation["result_json"]
             if isinstance(result, dict):
@@ -750,13 +758,6 @@ class KinSysProtocolPipeline:
                 "recovery_required": True,
             }
 
-        request_without_pins = {
-            key: value for key, value in pinned_request.items()
-            if not key.startswith("_minah_")
-        }
-        if expected_request is not None:
-            if _canonical(request_without_pins) != _canonical(expected_request):
-                raise ExecutionConflict("RECOVERY_REQUEST_DIFFERS_FROM_DURABLE_INGRESS_REQUEST")
         # execute() will reconstruct the same pinned request metadata and resume
         # from the stored phase. Existing profile approval evidence is reused rather
         # than revalidated against the current clock during recovery.
