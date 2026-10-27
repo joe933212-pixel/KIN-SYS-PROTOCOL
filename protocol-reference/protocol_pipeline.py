@@ -689,11 +689,12 @@ class KinSysProtocolPipeline:
     def recover(
         self, operation_id: str, expected_request: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Resume only an existing operation whose identity and authority gates are durable.
+        """Resume an existing operation only from durable, recoverable lifecycle state.
 
-        Recovery never creates a new operation. Early phases remain unresolved because
-        the journal cannot prove all pre-execution gates completed. Later phases resume
-        against the same CEE request fingerprint and stable IVM event identifier.
+        Recovery never creates a new operation or accepts replacement request content.
+        A persisted MINAH disposition is required; after that point the canonical
+        pipeline resumes in phase order, with IVM's stable event ID preventing a
+        committed local transition from being applied twice.
         """
         operation = self.cee.get(operation_id)
         if operation is None:
@@ -703,6 +704,18 @@ class KinSysProtocolPipeline:
                 "reason": "OPERATION_NOT_FOUND",
                 "recovery_required": True,
             }
+
+        pinned_request = operation["request_json"]
+        pinned_profile = pinned_request.get("_minah_deployment_profile")
+        if pinned_profile != self.minah_profile:
+            raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
+        if self.require_profile_approval:
+            if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
+                raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
+            pinned_approval_metadata = pinned_request.get("_minah_profile_approval_verification")
+            if not isinstance(pinned_approval_metadata, dict) or pinned_approval_metadata.get("status") != "APPROVED":
+                raise ExecutionConflict("PINNED_PROFILE_APPROVAL_EVIDENCE_MISSING")
+
         if operation["phase"] == "FINALIZED":
             result = operation["result_json"]
             if isinstance(result, dict):
@@ -710,11 +723,14 @@ class KinSysProtocolPipeline:
             return {
                 "operation_id": operation_id,
                 "status": "UNKNOWN",
-                "reason": "FINALIZED_RESULT_MISSING",
+                "reason": "FINALIZED_CEE_RESULT_MISSING",
                 "recovery_required": True,
             }
+
         recoverable_phases = {
-            "AUTHORITY_EVALUATED", "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED",
+            "MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED",
+            "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+            "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED",
         }
         if operation["phase"] not in recoverable_phases or operation["minah_json"] is None:
             return {
@@ -724,60 +740,18 @@ class KinSysProtocolPipeline:
                 "cee_phase": operation["phase"],
                 "recovery_required": True,
             }
-        pinned_request = dict(operation["request_json"])
-        # These fields are protocol-owned fingerprint metadata, not request fields.
-        for key in tuple(pinned_request):
-            if key.startswith("_minah_"):
-                pinned_request.pop(key)
-        # execute() recognises the existing CEE operation, checks its pinned profile,
-        # and resumes from the durable phase without repeating completed gates.
-        return self.execute(pinned_request)
 
-    def recover(self, operation_id: str) -> dict[str, Any]:
-        """Resume a durable CEE operation from its pinned request and lifecycle phase.
-
-        Recovery never accepts a replacement request. It refuses ambiguous early
-        states where MINAH's disposition was not durably recorded, and it refuses
-        to resume under a different deployment profile. The stable IVM event ID
-        makes a retry after an IVM commit idempotent within the local SQLite store.
-        """
-        operation = self.cee.get(operation_id)
-        if operation is None:
-            raise ExecutionConflict("CEE_OPERATION_NOT_FOUND_REQUIRES_MANUAL_RECONCILIATION")
-        if operation["phase"] == "FINALIZED":
-            if not isinstance(operation["result_json"], dict):
-                raise ExecutionConflict("FINALIZED_CEE_RESULT_MISSING")
-            return self._response_result(
-                operation_id, operation["result_json"], duplicate=True
-            )
-        if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
-            raise ExecutionConflict(
-                "MINAH_DISPOSITION_NOT_DURABLE_REQUIRES_MANUAL_RECONCILIATION"
-            )
-        if (
-            operation["phase"] in {"ADMITTED", "CONTEXT_ESTABLISHED"}
-            and operation["minah_json"] is None
-        ):
-            raise ExecutionConflict("LEGACY_OPERATION_REQUIRES_RECONCILIATION")
-        pinned_request = operation["request_json"]
+        request_without_pins = {
+            key: value for key, value in pinned_request.items()
+            if not key.startswith("_minah_")
+        }
         if expected_request is not None:
-            recoverable_request = {
-                key: value for key, value in pinned_request.items()
-                if not key.startswith("_minah_")
-            }
-            if _canonical(recoverable_request) != _canonical(expected_request):
+            if _canonical(request_without_pins) != _canonical(expected_request):
                 raise ExecutionConflict("RECOVERY_REQUEST_DIFFERS_FROM_DURABLE_INGRESS_REQUEST")
-        pinned_profile = pinned_request.get("_minah_deployment_profile")
-        if pinned_profile != self.minah_profile:
-            raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
-        if self.require_profile_approval:
-            pinned_approval = pinned_request.get("_minah_profile_approval")
-            if pinned_approval != self.minah_profile_approval:
-                raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
-        # execute() is phase-aware. From MINAH_REVIEWED onward it resumes the
-        # stored CEE lifecycle; during COMMITTING, IVM's stable event ID returns
-        # the already committed transition instead of applying it twice.
-        return self.execute(pinned_request)
+        # execute() will reconstruct the same pinned request metadata and resume
+        # from the stored phase. Existing profile approval evidence is reused rather
+        # than revalidated against the current clock during recovery.
+        return self.execute(request_without_pins)
 
     def inspect(self, operation_id: str) -> dict[str, Any] | None:
         """Read a lifecycle snapshot without mutating or resuming the operation."""
