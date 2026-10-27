@@ -78,7 +78,7 @@ Adapters must not independently decide to bypass a rejected or deferred protocol
 
 The protocol should specify versioned contracts before adding vendor-specific integrations.
 
-### 4.1 Instruction envelope
+### 5.1 Instruction envelope
 
 At minimum, the governed instruction context should include:
 
@@ -93,7 +93,7 @@ At minimum, the governed instruction context should include:
 
 Retain references and minimal necessary data rather than copying sensitive identity records into every trace. The exact schema must be defined in the protocol contracts and reviewed for privacy and security.
 
-### 4.2 Decision envelope
+### 5.2 Decision envelope
 
 A decision response should distinguish at least:
 
@@ -106,7 +106,7 @@ The implementation may use more detailed internal states, but must not collapse 
 
 Each response should include a stable reason code, a plain-language explanation safe for the intended audience, references to applicable rules/evidence where disclosure is permitted, the operation ID, and the next safe step. Sensitive internal details should be available only to authorised roles.
 
-### 4.3 Adapter requirements
+### 5.3 Adapter requirements
 
 Each adapter contract must specify:
 
