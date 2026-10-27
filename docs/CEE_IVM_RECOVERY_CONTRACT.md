@@ -48,13 +48,13 @@ The route currently runs with synthetic adapters and no production authenticatio
 
 ## Evidence and acceptance gates
 
-CI includes a full application-object restart test using persistent CEE, IVM and ingress SQLite files. The test injects an interruption after the IVM transaction commits but before CEE receives the acknowledgement, reopens the stores, invokes explicit recovery, and verifies that the operation finalizes while the IVM transition history still contains exactly one transition. A separate pipeline test covers the same CEE/IVM boundary.
+CI includes both an application-level restart test and a separate subprocess test that terminates the process after the IVM transaction commits but before CEE receives the acknowledgement. The stores are reopened, explicit recovery is invoked, and the tests verify that the operation finalizes while IVM transition history still contains exactly one transition.
 
-These tests demonstrate restart behaviour for the reference implementation; the injected exception is a deterministic failure-point simulation, not proof against every operating-system, filesystem, power-loss or multi-worker failure.
+These tests demonstrate recovery at this specific CEE/IVM boundary in the reference implementation. They do not cover every durable phase or prove resilience against every operating-system, filesystem, power-loss, storage-corruption or multi-worker failure.
 
 Still required before production consideration:
 
-- crash testing at every durable phase, including process termination rather than only injected exceptions;
+- crash testing at every durable phase and additional process-termination points beyond the tested IVM-commit/CEE-acknowledgement gap;
 - reconciliation policy and operator evidence for missing/corrupt CEE or IVM stores;
 - transactional/outbox design for any future external side effects;
 - authenticated and authorised recovery requests, multi-worker/concurrency analysis, backup/restore drills and storage-integrity checks;
