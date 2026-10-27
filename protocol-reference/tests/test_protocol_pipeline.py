@@ -48,6 +48,8 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertFalse(result["minah_disposition"]["may_authorise"])
         self.assertEqual(result["ivm_decision"]["to_state"], "ACTIVE")
         self.assertEqual([event["phase"] for event in result["cee_events"]], list(LIFECYCLE))
+        self.assertEqual(result["cee_events"][0]["phase"], "REQUESTED")
+        self.assertEqual(result["cee_events"][1]["phase"], "MINAH_REVIEWED")
         components = [event["component"] for event in result["component_trace"]]
         self.assertLess(components.index("MINAH"), components.index("IVM"))
         self.assertEqual(components[-1], "CEE")
