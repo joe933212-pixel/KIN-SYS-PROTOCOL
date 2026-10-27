@@ -353,6 +353,33 @@ class KinSysProtocolPipeline:
         assert operation is not None
         disposition = operation["minah_json"]
 
+        if disposition is not None and disposition["status"] in {"REJECTED", "UNKNOWN"}:
+            result_status = disposition["status"]
+            result = {
+                "operation_id": operation_id,
+                "status": result_status,
+                "reason": (
+                    "MINAH_REJECTED_INSTRUCTION"
+                    if result_status == "REJECTED"
+                    else "MINAH_DISPOSITION_UNKNOWN"
+                ),
+                "minah_disposition": disposition,
+                "ivm_decision": None,
+                "funds_moved": False,
+            }
+            if operation["phase"] == "MINAH_REVIEWED":
+                self.cee.advance(
+                    operation_id, "FINALIZED", status=result_status,
+                    outcome=result_status, result=result,
+                    detail={
+                        "reason": result["reason"],
+                        "minah_deployment_id": self.minah_profile["deployment_id"],
+                        "minah_profile_version": self.minah_profile["profile_version"],
+                        "ivm_not_invoked": True,
+                    },
+                )
+            return self._response_result(operation_id, result, duplicate=False)
+
         if disposition is not None and disposition["status"] == "NEEDS_INFORMATION":
             result = {
                 "operation_id": operation_id,
@@ -684,7 +711,7 @@ class KinSysProtocolPipeline:
         required = {"status", "missing_fields", "source_refs", "uncertainty", "may_authorise", "model_version"}
         if required - set(disposition):
             return "MISSING_REQUIRED_FIELDS"
-        if disposition.get("status") not in {"NEEDS_INFORMATION", "ADVISORY_ONLY"}:
+        if disposition.get("status") not in {"NEEDS_INFORMATION", "ADVISORY_ONLY", "REJECTED", "UNKNOWN"}:
             return "INVALID_STATUS"
         if disposition.get("may_authorise") is not False:
             return "MINAH_MUST_NOT_AUTHORISE"
