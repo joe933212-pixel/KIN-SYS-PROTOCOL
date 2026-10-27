@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 from protocol_pipeline import (
     ExecutionConflict, KinSysProtocolPipeline, LIFECYCLE, LifecycleViolation,
 )
+from governed_contracts import compute_payload_digest
 
 
 def request(**overrides):
@@ -623,6 +624,37 @@ os._exit(76)
                 self.assertIsNone(recovered.ivm.event("EV-001"))
             finally:
                 recovered.close()
+
+
+    def _contract_envelope_for_internal_request(self, **overrides):
+        envelope = {
+            "contract_version": "kin-sys-governed-contract-0.1",
+            "request_id": "request-binding-001",
+            "operation_id": "OP-001",
+            "idempotency_key": "idempotency-binding-001",
+            "principal_ref": "AUTHORITY-001",
+            "authority_ref": "authority-check:binding",
+            "action": "ACTIVATE",
+            "target_ref": "PROC-001",
+            "purpose": "test execution envelope binding",
+            "jurisdiction": "UG-DEMO",
+            "submitted_at": "2026-10-27T10:00:00+03:00",
+            "payload_digest": "sha256:" + ("0" * 64),
+            "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+        }
+        envelope.update(overrides)
+        envelope["payload_digest"] = compute_payload_digest(envelope)
+        return envelope
+
+    def test_pipeline_rejects_contract_envelope_operation_mismatch(self):
+        envelope = self._contract_envelope_for_internal_request(operation_id="OTHER-OPERATION")
+        with self.assertRaisesRegex(ValueError, "CONTRACT_BINDING_MISMATCH:operation_id"):
+            self.pipeline._validate(request(_contract_envelope=envelope))
+
+    def test_pipeline_derives_ivm_event_id_from_contract_idempotency_key(self):
+        envelope = self._contract_envelope_for_internal_request()
+        with self.assertRaisesRegex(ValueError, "CONTRACT_BINDING_MISMATCH:idempotency_key"):
+            self.pipeline._validate(request(_contract_envelope=envelope))
 
     def test_recovery_refuses_to_repeat_minah_when_disposition_was_not_persisted(self):
         payload = request(operation_id="RECOVERY-AMBIGUOUS", event_id="RECOVERY-EVENT", process_id="RECOVERY-PROC")
