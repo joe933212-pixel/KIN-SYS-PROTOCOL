@@ -1,6 +1,7 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """End-to-end MINAH -> IVM -> CEE lifecycle and recovery tests."""
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
 import sys
@@ -380,6 +381,49 @@ class ProtocolPipelineTests(unittest.TestCase):
             finally:
                 resumed.close()
 
+
+
+    def test_process_termination_after_ivm_commit_recovers_without_duplicate_transition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cee_db = str(Path(tmp) / "cee.sqlite3")
+            ivm_db = str(Path(tmp) / "ivm.sqlite3")
+            payload = request()
+            script = f"""
+import os, sys
+sys.path.insert(0, {str(ROOT)!r})
+from protocol_pipeline import KinSysProtocolPipeline
+pipeline = KinSysProtocolPipeline(cee_database={cee_db!r}, ivm_database={ivm_db!r})
+original_execute = pipeline.ivm.execute
+def commit_then_terminate(event, **kwargs):
+    decision = original_execute(event, **kwargs)
+    if decision.status == "ACCEPTED" and not decision.duplicate:
+        os._exit(73)
+    return decision
+pipeline.ivm.execute = commit_then_terminate
+pipeline.execute({payload!r})
+os._exit(74)
+"""
+            child = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(child.returncode, 73, child.stderr)
+
+            recovered = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+            try:
+                self.assertEqual(recovered.cee.get("OP-001")["phase"], "COMMITTING")
+                self.assertIsNotNone(recovered.ivm.event("EV-001"))
+                self.assertEqual(recovered.ivm.process("PROC-001")["state"], "ACTIVE")
+                self.assertEqual(len(recovered.ivm.history("PROC-001")), 1)
+
+                result = recovered.recover("OP-001")
+                self.assertEqual(result["status"], "COMMITTED")
+                self.assertTrue(result["duplicate"])
+                self.assertEqual(recovered.cee.get("OP-001")["phase"], "FINALIZED")
+                self.assertEqual(recovered.ivm.process("PROC-001")["state"], "ACTIVE")
+                self.assertEqual(len(recovered.ivm.history("PROC-001")), 1)
+            finally:
+                recovered.close()
 
     def test_recovery_refuses_to_repeat_minah_when_disposition_was_not_persisted(self):
         payload = request(operation_id="RECOVERY-AMBIGUOUS", event_id="RECOVERY-EVENT", process_id="RECOVERY-PROC")
