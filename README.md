@@ -52,6 +52,8 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 0. [CEE-controlled integrated execution plan: institutional, payment, edge, recovery and acceptance gates](docs/CEE_INTEGRATION_PLAN.md)
 0. [Draft production integration API contract (OpenAPI 3.1 JSON; not yet routed)](api/openapi.json)
 0. [API implementation matrix: owner, dependencies and acceptance gate for every route](api/implementation-matrix.json)
+0. [Provider-neutral instruction and decision contract v0.1](docs/GOVERNED_INSTRUCTION_DECISION_CONTRACT_V0_1.md) — draft semantics and reference validators; not a production wire standard.
+0. [Provider-neutral execution architecture and human usability](docs/PROVIDER_NEUTRAL_EXECUTION_ARCHITECTURE.md) — deployment profiles, adapter boundaries and conformance requirements.
 
 - [Local HTTP prototype adapter](protocol-reference/http_service.py) — runnable synthetic vertical slice, not the production API. It exposes health/readiness/capabilities and `POST /demo/instructions`; IVM and CEE are explicitly marked as not yet wired as separate runtime components.
 
