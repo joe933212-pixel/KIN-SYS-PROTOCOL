@@ -3,6 +3,7 @@
 import io
 import json
 import sys
+import tempfile
 import threading
 import unittest
 from urllib.request import Request, urlopen
@@ -13,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from http_service import create_app
+from protocol_pipeline import KinSysProtocolPipeline
 from integrated_demo import DeterministicMinahAdapter
 from governed_contracts import compute_payload_digest
 
@@ -438,6 +440,100 @@ class HttpServiceTests(unittest.TestCase):
         )
         self.assertEqual(inspect_response["status"], 200)
         self.assertEqual(inspect_body["source"], "MINAH_FIRST_INGRESS_JOURNAL")
+
+
+    def test_explicit_recovery_after_ivm_commit_survives_full_app_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cee_db = str(Path(directory) / "cee.sqlite3")
+            ivm_db = str(Path(directory) / "ivm.sqlite3")
+            ingress_db = str(Path(directory) / "ingress.sqlite3")
+            payload = {
+                "contract_version": "kin-sys-governed-contract-0.1",
+                "request_id": "client-request-recover-commit",
+                "operation_id": "HTTP-RECOVER-COMMIT-1",
+                "idempotency_key": "idempotency-recover-commit",
+                "principal_ref": "AUTHORITY-001",
+                "authority_ref": "authority-check:recover-commit",
+                "action": "ACTIVATE",
+                "target_ref": "HTTP-RECOVER-COMMIT-PROCESS",
+                "purpose": "recover committed IVM transition after lost acknowledgement",
+                "jurisdiction": "UG-DEMO",
+                "submitted_at": "2026-10-27T10:00:00+03:00",
+                "payload_digest": "sha256:" + ("a" * 64),
+                "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+                "evidence": {
+                    "consignment_id": "HTTP-RECOVER-COMMIT-PROCESS",
+                    "commodity": "SYNTHETIC_MAIZE",
+                    "origin": "UGANDA-DEMO",
+                    "destination": "BORDER-DEMO",
+                    "rule_refs": ["SYNTHETIC-RULE-1"],
+                },
+            }
+            payload["payload_digest"] = compute_payload_digest(payload)
+
+            pipeline1 = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+            app1 = create_app(pipeline=pipeline1, ingress_database=ingress_db)
+            original_execute = pipeline1.ivm.execute
+
+            def commit_then_lose_ack(event, **kwargs):
+                decision = original_execute(event, **kwargs)
+                if decision.status == "ACCEPTED" and not decision.duplicate:
+                    raise RuntimeError("SIMULATED_PROCESS_FAILURE_AFTER_IVM_COMMIT")
+                return decision
+
+            pipeline1.ivm.execute = commit_then_lose_ack
+            try:
+                failed_response, failed_body = self.request_with_app(
+                    app1, "/protocol/instructions", "POST", payload
+                )
+                self.assertEqual(failed_response["status"], 500)
+                self.assertEqual(
+                    app1.ingress.inspect(payload["operation_id"])["phase"],
+                    "UNKNOWN_REQUIRES_RECONCILIATION",
+                )
+                self.assertEqual(
+                    app1.pipeline.cee.get(payload["operation_id"])["phase"], "COMMITTING"
+                )
+                self.assertEqual(
+                    app1.pipeline.ivm.process(payload["target_ref"])["state"], "ACTIVE"
+                )
+                self.assertEqual(
+                    len(app1.pipeline.ivm.history(payload["target_ref"])), 1
+                )
+            finally:
+                app1.close()
+
+            pipeline2 = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+            app2 = create_app(pipeline=pipeline2, ingress_database=ingress_db)
+            try:
+                recovery_response, recovery_body = self.request_with_app(
+                    app2,
+                    "/protocol/operations/HTTP-RECOVER-COMMIT-1/recover",
+                    "POST",
+                )
+                self.assertEqual(recovery_response["status"], 200)
+                self.assertEqual(recovery_body["status"], "PASSED")
+                self.assertFalse(recovery_body["recovery_required"])
+                self.assertTrue(recovery_body["result"]["recovery"]["recovered"])
+                self.assertEqual(
+                    recovery_body["result"]["pipeline_result"]["status"], "COMMITTED"
+                )
+                self.assertEqual(
+                    app2.pipeline.cee.get(payload["operation_id"])["phase"], "FINALIZED"
+                )
+                self.assertEqual(
+                    app2.pipeline.ivm.process(payload["target_ref"])["state"], "ACTIVE"
+                )
+                self.assertEqual(
+                    len(app2.pipeline.ivm.history(payload["target_ref"])), 1
+                )
+                audit = app2.ingress.recovery_events(payload["operation_id"])
+                self.assertEqual(
+                    [event["action"] for event in audit],
+                    ["RECOVERY_STARTED", "RECOVERY_COMPLETED"],
+                )
+            finally:
+                app2.close()
 
     def test_v01_digest_tampering_is_rejected_before_minah_or_journal_admission(self):
         calls = []
