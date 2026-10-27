@@ -413,6 +413,19 @@ class ProtocolPipelineTests(unittest.TestCase):
         with self.assertRaises(LifecycleViolation):
             self.pipeline.cee.advance("OP-X", "COMMITTED")
 
+
+    def test_recovery_refuses_to_resume_before_authority_gate_is_durable(self):
+        payload = request(operation_id="EARLY-RECOVERY", event_id="EV-EARLY", process_id="PROC-EARLY")
+        self.pipeline.cee.start("EARLY-RECOVERY", {
+            **payload, "_minah_deployment_profile": self.pipeline.minah_profile,
+        })
+        result = self.pipeline.recover("EARLY-RECOVERY")
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertEqual(result["reason"], "RECOVERY_REQUIRES_MANUAL_RECONCILIATION")
+        self.assertEqual(result["cee_phase"], "REQUESTED")
+        self.assertTrue(result["recovery_required"])
+        self.assertEqual(self.pipeline.ivm.history("PROC-EARLY"), [])
+
     def test_legacy_unfinished_operation_without_minah_disposition_fails_closed(self):
         payload = request(operation_id="LEGACY-OP", event_id="LEGACY-EV", process_id="LEGACY-PROC")
         self.pipeline.cee.start("LEGACY-OP", payload)
