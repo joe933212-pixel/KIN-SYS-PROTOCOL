@@ -1,13 +1,13 @@
 # MINAH-First Ingress Gate — Reference Implementation
 
-**Status:** Experimental reference module and unit tests. Not yet wired into the HTTP service or the existing CEE case coordinator.  
+**Status:** Experimental reference module and unit tests. The existing synthetic `/protocol/instructions` and `/cee/cases` paths have been reordered so MINAH review precedes CEE admission/context. The standalone `MinahFirstIngress` adapter gate is still not wired into HTTP.  
 **Copyright:** Joel Kagoro © 2026. See repository licensing and notice files.
 
 ## Why this slice exists
 
 The current CEE case coordinator records a CEE request/admission/context phase before it calls its MINAH adapter. Although the existing coordinator consults MINAH before institutional decisions, the order does not yet satisfy the stronger architectural requirement that MINAH is the first protocol-facing recipient of every protected instruction.
 
-This module makes that intended ingress order executable and testable at a boundary:
+The standalone module makes the intended ingress order executable and testable at a boundary:
 
 **MINAH → identity verification → action-specific authority verification → CEE → final decision.**
 
@@ -38,4 +38,4 @@ They do **not** prove:
 - that the CEE coordinator is bypass-resistant;
 - distributed atomicity, payment finality, legal correctness or production security.
 
-The next step is to wire this boundary into the actual protected HTTP ingress, remove or constrain any bypass routes, and test the complete MINAH → CEE → final-decision path against the running service.
+The current HTTP integration is an incremental ordering correction, not a complete implementation of the standalone gate. It does not yet wire real identity/authority adapters or inject their verified results into the CEE coordinator. The legacy `/demo/instructions` route remains a synthetic demonstration and must not be treated as a production protected ingress. Next: add explicit provider-neutral identity and action-specific authority adapter contracts to the real HTTP ingress, ensure every protected route uses one governed path, and test the complete MINAH → identity → authority → CEE → final-decision sequence against the running service.
