@@ -726,6 +726,15 @@ class KinSysProtocolPipeline:
                 "reason": "FINALIZED_CEE_RESULT_MISSING",
                 "recovery_required": True,
             }
+        if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
+            raise ExecutionConflict(
+                "MINAH_DISPOSITION_NOT_DURABLE_REQUIRES_MANUAL_RECONCILIATION"
+            )
+        if (
+            operation["phase"] in {"ADMITTED", "CONTEXT_ESTABLISHED"}
+            and operation["minah_json"] is None
+        ):
+            raise ExecutionConflict("LEGACY_OPERATION_REQUIRES_RECONCILIATION")
 
         recoverable_phases = {
             "MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED",
