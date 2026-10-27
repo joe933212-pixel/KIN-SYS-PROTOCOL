@@ -112,6 +112,14 @@ class HttpServiceTests(unittest.TestCase):
             body["ingress_adapter_contract"]["adapter_timeout_enforcement"],
             "NOT_ENFORCED_BY_REFERENCE_PIPELINE; INJECTED_ADAPTERS_MUST_BOUND_CALLS",
         )
+        self.assertEqual(
+            body["ingress_adapter_contract"]["jurisdiction_profile_matching"],
+            "EXACT_STRING_MATCH_AGAINST_PINNED_PROFILE; NOT_AUTHENTICATED_JURISDICTION_ATTESTATION",
+        )
+        self.assertEqual(
+            body["ingress_adapter_contract"]["profile_owner_authentication"],
+            "NOT_IMPLEMENTED",
+        )
         self.assertIn(
             "production identity and cryptographic authentication",
             body["not_yet_wired_as_production_components"],
