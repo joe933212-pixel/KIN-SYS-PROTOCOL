@@ -437,7 +437,7 @@ class HttpServiceTests(unittest.TestCase):
             app, "/protocol/operations/HTTP-INGRESS-REPLAY-1", "GET"
         )
         self.assertEqual(inspect_response["status"], 200)
-        self.assertEqual(inspect_body["source"], "CEE_PIPELINE")
+        self.assertEqual(inspect_body["source"], "MINAH_FIRST_INGRESS_JOURNAL")
 
     def test_v01_digest_tampering_is_rejected_before_minah_or_journal_admission(self):
         calls = []
