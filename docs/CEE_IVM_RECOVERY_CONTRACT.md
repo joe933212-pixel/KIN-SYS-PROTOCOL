@@ -17,7 +17,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 - **CEE is the lifecycle authority.** Recovery reads the CEE journal and resumes only from a recognised durable phase. Passive reconciliation additionally requires the CEE request fingerprint, with MINAH-specific pins removed, to match the mapped execution-request fingerprint stored at ingress.
 - **MINAH disposition must be durable.** A CEE operation still in `REQUESTED` without a persisted MINAH disposition is ambiguous. Recovery stops rather than automatically asking MINAH again.
 - **Profile and approval are pinned.** A changed MINAH profile or approval cannot be substituted during recovery.
-- **IVM event identity is stable.** The same IVM event ID and request digest are used on retry. The local IVM store returns the recorded outcome for an identical event and rejects the same ID with different content.
+- **IVM event identity and history must agree.** The same IVM event ID and request digest are used on retry. Before resuming the commit phase, the runtime checks the pinned event digest and confirms that an accepted event has exactly one matching transition-history entry. A missing event with surviving history, a changed digest, or inconsistent history remains unresolved; the runtime must not convert store corruption into a normal rejection.
 - **Unknown stays unknown.** Missing or inconsistent evidence, an unsupported phase, or a failed recovery does not become a successful decision.
 - **Recovery is auditable without storing raw errors.** Ingress records recovery start, completion, or blocked attempts, including the phase, stable reason codes and exception type. Raw exception messages and provider response bodies are not stored in the recovery audit trail.
 
@@ -34,7 +34,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 | CEE `COMMITTED`; final response was not written | Durable IVM decision stored in CEE | Finalize from the stored IVM decision without reapplying the transition. |
 | CEE `FINALIZED`; ingress result was not written | Durable final CEE result | Recovery copies the established result into the ingress journal and records the recovery event. |
 | Request, event, profile or approval does not match pinned evidence | Conflicting fingerprints or trust metadata | Fail closed with a conflict or unresolved status. Do not overwrite the original record. |
-| CEE/IVM stores disagree, are unavailable, or contain an unsupported state | Incomplete or contradictory durable evidence | Keep `UNKNOWN`; require operator-led reconciliation. Do not infer finality from one incomplete store. |
+| CEE/IVM stores disagree, an IVM event digest changes, or event/history rows are inconsistent | Incomplete or contradictory durable evidence | Keep `UNKNOWN`; recovery raises a conflict and does not overwrite the original record. Require operator-led reconciliation. |
 
 ## HTTP contract
 
