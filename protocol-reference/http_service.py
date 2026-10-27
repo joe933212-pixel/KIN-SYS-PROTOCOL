@@ -176,6 +176,7 @@ class KinSysPrototypeApplication:
                         "POST /demo/instructions",
                         "POST /protocol/instructions",
                         "GET /protocol/operations/{operation_id}",
+                        "POST /protocol/operations/{operation_id}/recover",
                         "POST /cee/cases",
                         "GET /cee/operations/{operation_id}",
                         "POST /cee/reconciliation",
@@ -367,11 +368,12 @@ class KinSysPrototypeApplication:
                     pipeline_inspector=self.pipeline.inspect,
                 )
                 if recovered is None:
-                    recovered = self.pipeline.recover(operation_id)
-                    if recovered.get("reason") == "OPERATION_NOT_FOUND":
+                    try:
+                        recovered = self.pipeline.recover(operation_id)
+                    except ExecutionConflict:
                         return _response(
                             start_response, 404,
-                            {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol or ingress journal operation matches this ID."}},
+                            {"error": {"code": "OPERATION_NOT_FOUND_OR_NOT_RECOVERABLE", "message": "No recoverable CEE lifecycle was found for this operation ID."}},
                             request_id,
                         )
                 return _response(
