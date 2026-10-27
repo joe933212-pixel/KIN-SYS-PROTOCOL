@@ -25,6 +25,7 @@ from integrated_demo import IntegratedDemonstrator
 from cee_case_coordinator import CEECaseCoordinator, CaseConflict, CaseRecoveryRequired
 from protocol_pipeline import ExecutionConflict, KinSysProtocolPipeline
 from minah_profile_governance import MinahApprovalViolation
+from minah_first_ingress import IngressConflict, MinahFirstIngress
 from governed_contracts import (
     CONTRACT_VERSION, assert_instruction_binding, validate_decision_envelope,
     validate_instruction_envelope,
@@ -113,6 +114,7 @@ class KinSysPrototypeApplication:
         profile_signature_verifier: Any | None = None,
         profile_revocation_checker: Any | None = None,
         require_profile_approval: bool = False,
+        ingress_database: str = ":memory:",
     ):
         if pipeline is not None and any(
             adapter is not None
@@ -130,12 +132,16 @@ class KinSysPrototypeApplication:
             profile_revocation_checker=profile_revocation_checker,
             require_profile_approval=require_profile_approval,
         )
+        self.ingress = MinahFirstIngress(
+            ingress_database, pipeline_executor=self.pipeline.execute
+        )
         self.case_coordinator = case_coordinator or CEECaseCoordinator()
         self.enable_legacy_demo_routes = enable_legacy_demo_routes
 
     def close(self) -> None:
         self.demonstrator.close()
         self.pipeline.close()
+        self.ingress.close()
         self.case_coordinator.close()
 
     def __call__(self, environ: dict[str, Any], start_response: Callable):
@@ -400,40 +406,76 @@ class KinSysPrototypeApplication:
                     decision_request_id = contract_instruction["request_id"]
                 else:
                     internal_payload = payload
-                result = self.pipeline.execute(internal_payload)
-                decision_status = {
-                    "COMMITTED": "PASSED",
-                    "REJECTED": "REJECTED",
-                    "DEFERRED": "DEFERRED",
-                    "UNKNOWN": "UNKNOWN",
-                }.get(result.get("status"), "UNKNOWN")
-                decision_messages = {
-                    "PASSED": "The required synthetic protocol gates passed. No external effect is implied.",
-                    "REJECTED": "A required protocol gate rejected the instruction. No external effect was performed.",
-                    "DEFERRED": "The instruction needs additional information or review before it can proceed.",
-                    "UNKNOWN": "The outcome could not be established safely. Reconcile the operation before retrying.",
-                }
-                rule_pack_version = (
-                    contract_instruction["rule_pack_version"]
-                    if contract_instruction is not None
-                    else f"{internal_payload['rule_set']}:{internal_payload['rule_version']}"
-                )
-                decision_envelope = validate_decision_envelope({
-                    "contract_version": CONTRACT_VERSION,
-                    "request_id": decision_request_id,
-                    "operation_id": internal_payload["operation_id"],
-                    "protocol_decision": decision_status,
-                    "reason_code": str(result.get("reason") or "REQUIRED_GATES_PASSED"),
-                    "user_message": decision_messages[decision_status],
-                    "rule_pack_version": rule_pack_version,
-                    "minah_disposition_ref": f"minah-disposition:{internal_payload['operation_id']}",
-                    "cee_execution_ref": f"cee-operation:{internal_payload['operation_id']}",
-                    "external_effect_status": "NOT_ATTEMPTED",
-                    "evidence_refs": contract_instruction.get("evidence_refs", [])
-                    if contract_instruction is not None else [],
-                })
+                ingress_result = None
                 if contract_instruction is not None:
+                    # Reject unsupported internal execution requests before creating
+                    # an ingress journal row. The ingress then journals and delegates
+                    # exactly once to this same pipeline.
+                    self.pipeline._validate(internal_payload)
+                    ingress_result = self.ingress.execute(
+                        contract_instruction, execution_request=internal_payload
+                    )
+                    if ingress_result.get("error_code") == "MINAH_PROFILE_APPROVAL_REJECTED":
+                        return _response(
+                            start_response, 422,
+                            {"error": {
+                                "code": ingress_result["error_code"],
+                                "message": ingress_result.get("error_detail", "MINAH profile approval rejected."),
+                            }},
+                            request_id,
+                        )
+                    result = ingress_result.get("pipeline_result")
+                    if not isinstance(result, dict):
+                        result = {
+                            "operation_id": internal_payload["operation_id"],
+                            "status": ingress_result["protocol_decision"],
+                            "reason": ingress_result["reason_code"],
+                            "funds_moved": False,
+                            "ivm_decision": None,
+                        }
+                    elif ingress_result.get("duplicate"):
+                        result = {**result, "duplicate": True}
+                    decision_envelope = validate_decision_envelope({
+                        "contract_version": ingress_result["contract_version"],
+                        "request_id": ingress_result["request_id"],
+                        "operation_id": ingress_result["operation_id"],
+                        "protocol_decision": ingress_result["protocol_decision"],
+                        "reason_code": ingress_result["reason_code"],
+                        "user_message": ingress_result["user_message"],
+                        "rule_pack_version": ingress_result["rule_pack_version"],
+                        "minah_disposition_ref": ingress_result["minah_disposition_ref"],
+                        "cee_execution_ref": ingress_result["cee_execution_ref"],
+                        "external_effect_status": ingress_result["external_effect_status"],
+                        "evidence_refs": ingress_result["evidence_refs"],
+                    })
                     assert_instruction_binding(contract_instruction, decision_envelope)
+                else:
+                    result = self.pipeline.execute(internal_payload)
+                    decision_status = {
+                        "COMMITTED": "PASSED",
+                        "REJECTED": "REJECTED",
+                        "DEFERRED": "DEFERRED",
+                        "UNKNOWN": "UNKNOWN",
+                    }.get(result.get("status"), "UNKNOWN")
+                    decision_messages = {
+                        "PASSED": "The required synthetic protocol gates passed. No external effect is implied.",
+                        "REJECTED": "A required protocol gate rejected the instruction. No external effect was performed.",
+                        "DEFERRED": "The instruction needs additional information or review before it can proceed.",
+                        "UNKNOWN": "The outcome could not be established safely. Reconcile the operation before retrying.",
+                    }
+                    decision_envelope = validate_decision_envelope({
+                        "contract_version": CONTRACT_VERSION,
+                        "request_id": request_id,
+                        "operation_id": internal_payload["operation_id"],
+                        "protocol_decision": decision_status,
+                        "reason_code": str(result.get("reason") or "REQUIRED_GATES_PASSED"),
+                        "user_message": decision_messages[decision_status],
+                        "rule_pack_version": f"{internal_payload['rule_set']}:{internal_payload['rule_version']}",
+                        "minah_disposition_ref": f"minah-disposition:{internal_payload['operation_id']}",
+                        "cee_execution_ref": f"cee-operation:{internal_payload['operation_id']}",
+                        "external_effect_status": "NOT_ATTEMPTED",
+                        "evidence_refs": [],
+                    })
                 return _response(
                     start_response, 200,
                     {
@@ -466,7 +508,7 @@ class KinSysPrototypeApplication:
                     {"error": {"code": "MINAH_PROFILE_APPROVAL_REJECTED", "message": str(exc)[:240]}},
                     request_id,
                 )
-            except (ExecutionConflict, EventIdConflict) as exc:
+            except (IngressConflict, ExecutionConflict, EventIdConflict) as exc:
                 return _response(
                     start_response, 409,
                     {"error": {"code": "IDEMPOTENCY_OR_STATE_CONFLICT", "message": str(exc)[:240]}},
@@ -617,6 +659,7 @@ def create_app(
     profile_signature_verifier: Any | None = None,
     profile_revocation_checker: Any | None = None,
     require_profile_approval: bool = False,
+    ingress_database: str = ":memory:",
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -629,6 +672,7 @@ def create_app(
         profile_signature_verifier=profile_signature_verifier,
         profile_revocation_checker=profile_revocation_checker,
         require_profile_approval=require_profile_approval,
+        ingress_database=ingress_database,
     )
 
 
@@ -651,6 +695,9 @@ def main() -> None:
         cee_database=cee_database,
         ivm_database=ivm_database,
     )
+    ingress_db = os.environ.get("KIN_SYS_INGRESS_DB", str(data_dir / "ingress.sqlite3"))
+    if ingress_db != ":memory:":
+        Path(ingress_db).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     case_db = os.environ.get("KIN_SYS_CASE_CEE_DB", str(data_dir / "case-cee.sqlite3"))
     case_ivm_db = os.environ.get("KIN_SYS_CASE_IVM_DB", str(data_dir / "case-ivm.sqlite3"))
     case_workflow_db = os.environ.get("KIN_SYS_CASE_WORKFLOW_DB", str(data_dir / "case-workflow.sqlite3"))
@@ -667,15 +714,16 @@ def main() -> None:
     app = create_app(
         pipeline=pipeline, case_coordinator=case_coordinator,
         enable_legacy_demo_routes=legacy_demo_enabled,
+        ingress_database=ingress_db,
     )
-    for database in (cee_database, ivm_database, *case_databases):
+    for database in (cee_database, ivm_database, ingress_db, *case_databases):
         if database != ":memory:" and Path(database).exists():
             try:
                 os.chmod(database, 0o600)
             except OSError:
                 pass
     print(f"KIN-SYS local synthetic prototype listening on http://{host}:{port}")
-    print(f"CEE journal: {cee_database}; IVM store: {ivm_database}")
+    print(f"CEE journal: {cee_database}; IVM store: {ivm_database}; ingress journal: {ingress_db}")
     print(f"CEE case journal: {case_db}; case IVM: {case_ivm_db}; workflow: {case_workflow_db}; payments: {case_payment_db}")
     print("WARNING: this is not a production API; do not expose it to the public internet.")
     try:
