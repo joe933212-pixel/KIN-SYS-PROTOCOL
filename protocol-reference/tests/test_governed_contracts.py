@@ -60,6 +60,8 @@ class GovernedContractTests(unittest.TestCase):
             validate_instruction_envelope(self.instruction(submitted_at="2026-10-27T10:00:00"))
         with self.assertRaisesRegex(GovernedContractViolation, "PAYLOAD_DIGEST_MUST_DECLARE_ALGORITHM"):
             validate_instruction_envelope(self.instruction(payload_digest="abcdef"))
+        with self.assertRaisesRegex(GovernedContractViolation, "INVALID_PAYLOAD_DIGEST"):
+            validate_instruction_envelope(self.instruction(payload_digest="sha256:" + ("g" * 64)))
 
     def test_pass_does_not_mean_external_effect_completed(self):
         result = validate_decision_envelope(self.decision())
