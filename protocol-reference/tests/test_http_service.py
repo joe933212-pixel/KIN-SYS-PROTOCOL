@@ -82,7 +82,7 @@ class HttpServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             body["ingress_adapter_contract"]["cross_store_reconciliation"],
-            "NOT_IMPLEMENTED",
+            "FINALIZED_CEE_RESULT_ONLY; NON_FINAL_CEE_IVM_RECOVERY_NOT_IMPLEMENTED",
         )
         self.assertIn(
             "production identity and cryptographic authentication",
