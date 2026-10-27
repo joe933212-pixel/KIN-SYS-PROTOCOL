@@ -483,6 +483,75 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(operation_response["status"], 404)
         self.assertEqual(operation_body["error"]["code"], "OPERATION_NOT_FOUND")
 
+
+    def test_http_inspection_reconciles_lost_ingress_ack_from_finalized_cee(self):
+        calls = []
+
+        class RecordingMinah:
+            def review(self, evidence):
+                calls.append("MINAH")
+                return DeterministicMinahAdapter().review(evidence)
+
+        app = create_app(
+            minah_adapter=RecordingMinah(),
+            identity_adapter=type("Identity", (), {
+                "verify_principal": lambda self, request: {"verified": True, "mode": "TEST"}
+            })(),
+            authority_adapter=type("Authority", (), {
+                "verify_action": lambda self, request: {"verified": True, "mode": "TEST"}
+            })(),
+        )
+        self.addCleanup(app.close)
+        payload = {
+            "contract_version": "kin-sys-governed-contract-0.1",
+            "request_id": "client-request-reconcile-1",
+            "operation_id": "HTTP-RECONCILE-1",
+            "idempotency_key": "idempotency-reconcile-1",
+            "principal_ref": "AUTHORITY-001",
+            "authority_ref": "authority-check:reconcile",
+            "action": "ACTIVATE",
+            "target_ref": "HTTP-RECONCILE-PROCESS",
+            "purpose": "lost ingress acknowledgement test",
+            "jurisdiction": "UG-DEMO",
+            "submitted_at": "2026-10-27T10:00:00+03:00",
+            "payload_digest": "sha256:" + ("f" * 64),
+            "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "evidence": {
+                "consignment_id": "HTTP-RECONCILE-PROCESS",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        payload["payload_digest"] = compute_payload_digest(payload)
+        original_finish = app.ingress._finish
+
+        def lose_ingress_ack(operation_id, result):
+            raise RuntimeError("simulated lost ingress acknowledgement")
+
+        app.ingress._finish = lose_ingress_ack
+        response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 500)
+        self.assertEqual(body["error"]["code"], "INTERNAL_ERROR")
+        self.assertEqual(calls, ["MINAH"])
+        self.assertEqual(app.ingress.inspect(payload["operation_id"])["phase"],
+                         "UNKNOWN_REQUIRES_RECONCILIATION")
+
+        app.ingress._finish = original_finish
+        inspect_response, inspect_body = self.request_with_app(
+            app, "/protocol/operations/HTTP-RECONCILE-1", "GET"
+        )
+        self.assertEqual(inspect_response["status"], 200)
+        self.assertEqual(inspect_body["source"], "MINAH_FIRST_INGRESS_JOURNAL")
+        self.assertEqual(inspect_body["status"], "PASSED")
+        self.assertFalse(inspect_body["reconciliation_required"])
+        self.assertTrue(inspect_body["operation"]["result"]["reconciled"])
+        self.assertEqual(
+            inspect_body["operation"]["result"]["pipeline_result"]["status"], "COMMITTED"
+        )
+        self.assertEqual(calls, ["MINAH"])
+
     def test_http_verification_outages_return_unknown_without_cee_admission(self):
         class IdentityUnavailable:
             def verify_principal(self, request):
