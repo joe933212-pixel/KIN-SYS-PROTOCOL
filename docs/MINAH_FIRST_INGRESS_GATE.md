@@ -26,11 +26,11 @@ No vendor, cloud, AI model, operating system, GPU or hardware is mandated. Adapt
 
 The SQLite ingress journal binds an operation ID to a canonical request fingerprint. Reusing an operation ID with different content raises a conflict. For a completed v0.1 HTTP operation, replay returns the stored decision and pipeline result without invoking the pipeline again. The local server persists this journal at `KIN_SYS_INGRESS_DB`, defaulting to `.kin-sys-prototype/ingress.sqlite3`; tests may use an in-memory or temporary database.
 
-An operation left non-final after a process interruption returns UNKNOWN and requires reconciliation; it is never automatically sent to CEE a second time. `GET /protocol/operations/{operation_id}` checks the CEE journal first and then the ingress journal. This avoids blind resubmission but does not itself resolve whether a downstream transition happened. Reconciliation between ingress and CEE/IVM durable state remains an open acceptance gate.
+An operation left non-final after a process interruption returns UNKNOWN and is never automatically sent to CEE a second time. `GET /protocol/operations/{operation_id}` may reconcile an uncertain ingress record only when the CEE journal already contains a `FINALIZED` result; it copies that established result into the ingress journal. If CEE is absent or non-final, the operation remains UNKNOWN and requires further reconciliation. Recovery across non-final CEE and IVM states remains an open acceptance gate.
 
 ## What tests prove
 
-The tests use fake adapters to verify call order, fail-closed MINAH/identity/authority outcomes, explicit rejection and deferral before downstream checks, conflict detection, digest tampering, decision-envelope binding, and replay behaviour. The v0.1 HTTP path uses the durable ingress journal and delegates gate execution to the same pipeline; a non-final ingress record is reported as UNKNOWN rather than blindly resubmitted.
+The tests use fake adapters to verify call order, fail-closed MINAH/identity/authority outcomes, explicit rejection and deferral before downstream checks, conflict detection, digest tampering, decision-envelope binding, durable replay after reopening the journal, and safe reconciliation from an already-finalized CEE result. The v0.1 HTTP path uses the durable ingress journal and delegates gate execution to the same pipeline; uncertain non-final records are reported as UNKNOWN rather than blindly resubmitted.
 
 They do **not** prove:
 - that real identity or authority sources are contacted or trusted;
