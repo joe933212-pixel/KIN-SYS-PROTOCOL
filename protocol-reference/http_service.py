@@ -11,6 +11,7 @@ Run from the repository root:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,8 +22,14 @@ from typing import Any, Callable
 from wsgiref.simple_server import make_server
 
 from integrated_demo import IntegratedDemonstrator
-from cee_case_coordinator import CEECaseCoordinator, CaseConflict
+from cee_case_coordinator import CEECaseCoordinator, CaseConflict, CaseRecoveryRequired
 from protocol_pipeline import ExecutionConflict, KinSysProtocolPipeline
+from minah_profile_governance import MinahApprovalViolation
+from minah_first_ingress import IngressConflict, MinahFirstIngress
+from governed_contracts import (
+    CONTRACT_VERSION, assert_instruction_binding, validate_decision_envelope,
+    validate_instruction_envelope,
+)
 from transition import EventIdConflict
 
 
@@ -52,6 +59,13 @@ _CEE_CASE_FIELDS = {
 _PROTOCOL_FIELDS = {
     "operation_id", "event_id", "process_id", "actor_id", "event_type",
     "jurisdiction", "rule_set", "rule_version", "evidence",
+    # Draft v0.1 instruction-envelope fields. "evidence" remains a required
+    # execution extension for this synthetic pipeline; references alone are not
+    # treated as evidence content.
+    "contract_version", "request_id", "idempotency_key", "principal_ref",
+    "authority_ref", "action", "target_ref", "purpose", "submitted_at",
+    "payload_digest", "rule_pack_version", "evidence_refs", "constraints",
+    "provider_profile",
 }
 
 
@@ -85,16 +99,49 @@ def _response(start_response: Callable, status: int, body: dict[str, Any], reque
 class KinSysPrototypeApplication:
     """Small WSGI application exposing only the local synthetic vertical slice."""
 
-    def __init__(self, demonstrator: IntegratedDemonstrator | None = None,
-                 pipeline: KinSysProtocolPipeline | None = None,
-                 case_coordinator: CEECaseCoordinator | None = None):
+    def __init__(
+        self,
+        demonstrator: IntegratedDemonstrator | None = None,
+        pipeline: KinSysProtocolPipeline | None = None,
+        case_coordinator: CEECaseCoordinator | None = None,
+        enable_legacy_demo_routes: bool = False,
+        *,
+        minah_adapter: Any | None = None,
+        identity_adapter: Any | None = None,
+        authority_adapter: Any | None = None,
+        minah_profile: dict[str, Any] | None = None,
+        minah_profile_approval: dict[str, Any] | None = None,
+        profile_signature_verifier: Any | None = None,
+        profile_revocation_checker: Any | None = None,
+        require_profile_approval: bool = False,
+        ingress_database: str = ":memory:",
+    ):
+        if pipeline is not None and any(
+            adapter is not None
+            for adapter in (minah_adapter, identity_adapter, authority_adapter, minah_profile, minah_profile_approval, profile_signature_verifier, profile_revocation_checker)
+        ):
+            raise ValueError("Pass either a configured pipeline or ingress adapters/profile, not both.")
         self.demonstrator = demonstrator or IntegratedDemonstrator()
-        self.pipeline = pipeline or KinSysProtocolPipeline()
+        self.pipeline = pipeline or KinSysProtocolPipeline(
+            minah_adapter=minah_adapter,
+            identity_adapter=identity_adapter,
+            authority_adapter=authority_adapter,
+            minah_profile=minah_profile,
+            minah_profile_approval=minah_profile_approval,
+            profile_signature_verifier=profile_signature_verifier,
+            profile_revocation_checker=profile_revocation_checker,
+            require_profile_approval=require_profile_approval,
+        )
+        self.ingress = MinahFirstIngress(
+            ingress_database, pipeline_executor=self.pipeline.execute
+        )
         self.case_coordinator = case_coordinator or CEECaseCoordinator()
+        self.enable_legacy_demo_routes = enable_legacy_demo_routes
 
     def close(self) -> None:
         self.demonstrator.close()
         self.pipeline.close()
+        self.ingress.close()
         self.case_coordinator.close()
 
     def __call__(self, environ: dict[str, Any], start_response: Callable):
@@ -129,16 +176,61 @@ class KinSysPrototypeApplication:
                         "POST /demo/instructions",
                         "POST /protocol/instructions",
                         "GET /protocol/operations/{operation_id}",
+                        "POST /protocol/operations/{operation_id}/recover",
+                        "GET /protocol/operations/{operation_id}/recovery-events",
                         "POST /cee/cases",
                         "GET /cee/operations/{operation_id}",
                         "POST /cee/reconciliation",
                         "POST /cee/settlement-evidence",
                     ],
+                    "legacy_route_policy": {
+                        "enabled_by_default": False,
+                        "opt_in_flag": "enable_legacy_demo_routes=True",
+                        "routes": [
+                            "POST /demo/instructions",
+                            "POST /cee/cases",
+                            "POST /cee/reconciliation",
+                            "POST /cee/settlement-evidence",
+                            "legacy internal request shape on POST /protocol/instructions",
+                        ],
+                        "canonical_instruction_contract": "kin-sys-governed-contract-0.1",
+                        "legacy_routes_are_canonical_execution_path": False,
+                    },
                     "instruction_flow": [
-                        "POST /demo/instructions: legacy integrated synthetic demonstration",
-                        "POST /protocol/instructions: MINAH disposition -> IVM transition checks -> CEE lifecycle journal",
-                        "POST /cee/cases: CEE orchestration of MINAH, origin/destination decisions, IVM economic gate and simulated payment lifecycle",
+                        "POST /protocol/instructions with v0.1 envelope: MINAH review -> identity adapter -> action-authority adapter -> CEE admission/context -> IVM transition inside CEE -> final decision",
+                        "Legacy demo and CEE case routes are synthetic, opt-in compatibility paths and are not the canonical governed instruction route",
                     ],
+                    "legacy_demo_routes": {
+                        "enabled_in_this_instance": self.enable_legacy_demo_routes,
+                        "default_enabled": False,
+                        "classification": "SYNTHETIC_ONLY_NOT_THE_GOVERNED_V0_1_INSTRUCTION_PATH",
+                        "routes": [
+                            "POST /demo/instructions",
+                            "POST /cee/cases",
+                            "POST /cee/reconciliation",
+                            "POST /cee/settlement-evidence",
+                        ],
+                    },
+                    "ingress_adapter_contract": {
+                        "injection": "create_app(minah_adapter=..., identity_adapter=..., authority_adapter=..., minah_profile=...)",
+                        "durable_ingress_journal": "SQLITE_ENABLED_FOR_V0_1_INSTRUCTION_ENVELOPE",
+                        "completed_replay": "RETURN_STORED_RESULT_WITHOUT_PIPELINE_RESUBMISSION",
+                        "uncertain_inflight_replay": "UNKNOWN_UNTIL_EXPLICIT_RECOVERY_OR_RECONCILIATION",
+                        "recovery_endpoint": "POST /protocol/operations/{operation_id}/recover",
+                        "recovery_audit_endpoint": "GET /protocol/operations/{operation_id}/recovery-events",
+                        "legacy_internal_request_shape": "OPT_IN_ONLY_WITH_ENABLE_LEGACY_DEMO_ROUTES",
+                        "recovery_semantics": "RESUME_PINNED_CEE_PHASE_WITH_STABLE_IVM_EVENT_ID; NO_REPLACEMENT_REQUEST",
+                        "cross_store_reconciliation": "EXPLICIT_RECOVERY_FROM_DURABLE_MINAH_DISPOSITION; EARLY_AMBIGUOUS_PHASES_REMAIN_UNKNOWN; LOCAL_SQLITE_ONLY",
+                        "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
+                        "default_adapters": "SYNTHETIC_ONLY_NOT_REAL_AUTHENTICATION_OR_LEGAL_AUTHORITY",
+                        "adapter_timeout_enforcement": "NOT_ENFORCED_BY_REFERENCE_PIPELINE; INJECTED_ADAPTERS_MUST_BOUND_CALLS",
+                        "adapter_timeout_outcome": "EXCEPTIONS_OR_UNKNOWN_FAIL_CLOSED_BEFORE_PROTECTED_EXECUTION",
+                        "minah_profile": "VALIDATED_AND_PINNED_TO_OPERATION_FINGERPRINT_AND_MINAH_DISPOSITION",
+                        "profile_approval": "OPTIONAL_FAIL_CLOSED_PRE-MINAH_CHECK; REAL_TRUSTED_VERIFIERS_MUST_BE_INJECTED",
+                        "profile_owner_authentication": "NOT_IMPLEMENTED",
+                        "jurisdiction_profile_matching": "EXACT_STRING_MATCH_AGAINST_PINNED_PROFILE; NOT_AUTHENTICATED_JURISDICTION_ATTESTATION",
+                        "single_pipeline": True,
+                    },
                     "protocol_pipeline": {
                         "status": "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED",
                         "ivm": "LOCAL_SQLITE_REFERENCE_TRANSITION_RUNTIME",
@@ -169,6 +261,8 @@ class KinSysPrototypeApplication:
             return _response(start_response, 200, {"status": operation["phase"], "operation": operation, "production_ready": False}, request_id)
 
         if path == "/cee/settlement-evidence":
+            if self.enable_legacy_demo_routes is False:
+                return _response(start_response, 404, {"error": {"code": "ROUTE_NOT_AVAILABLE", "message": "Enable legacy demo routes explicitly to use synthetic settlement evidence."}}, request_id)
             if method != "POST":
                 return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit synthetic settlement evidence."}}, request_id)
             try:
@@ -208,6 +302,8 @@ class KinSysPrototypeApplication:
                 return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR", "message": "Settlement evidence could not be recorded."}}, request_id)
 
         if path == "/cee/reconciliation":
+            if self.enable_legacy_demo_routes is False:
+                return _response(start_response, 404, {"error": {"code": "ROUTE_NOT_AVAILABLE", "message": "Enable legacy demo routes explicitly to use synthetic reconciliation."}}, request_id)
             if method != "POST":
                 return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit synthetic reconciliation evidence."}}, request_id)
             try:
@@ -244,6 +340,8 @@ class KinSysPrototypeApplication:
                 return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR", "message": "The reconciliation could not be recorded."}}, request_id)
 
         if path == "/cee/cases":
+            if self.enable_legacy_demo_routes is False:
+                return _response(start_response, 404, {"error": {"code": "ROUTE_NOT_AVAILABLE", "message": "Enable legacy demo routes explicitly to use this synthetic case route."}}, request_id)
             if method != "POST":
                 return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit a CEE case."}}, request_id)
             try:
@@ -265,6 +363,8 @@ class KinSysPrototypeApplication:
                 }, request_id)
             except HttpServiceError as exc:
                 return _response(start_response, exc.status, {"error": {"code": exc.code, "message": exc.message}}, request_id)
+            except CaseRecoveryRequired as exc:
+                return _response(start_response, 409, {"error": {"code": "RECOVERY_REQUIRED", "message": str(exc)}}, request_id)
             except CaseConflict as exc:
                 return _response(start_response, 409, {"error": {"code": "IDEMPOTENCY_CONFLICT", "message": str(exc)}}, request_id)
             except (ValueError, TypeError) as exc:
@@ -274,29 +374,164 @@ class KinSysPrototypeApplication:
 
         operation_prefix = "/protocol/operations/"
         if path.startswith(operation_prefix):
-            if method != "GET":
-                return _response(
-                    start_response, 405,
-                    {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use GET to inspect a protocol operation."}},
-                    request_id,
-                )
-            operation_id = path[len(operation_prefix):]
+            recovery_suffix = "/recover"
+            recovery_events_suffix = "/recovery-events"
+            is_recovery_request = path.endswith(recovery_suffix)
+            is_recovery_events_request = path.endswith(recovery_events_suffix)
+            suffix = (
+                recovery_suffix if is_recovery_request
+                else recovery_events_suffix if is_recovery_events_request
+                else ""
+            )
+            operation_id = path[len(operation_prefix):-len(suffix)] if suffix else path[len(operation_prefix):]
             if not _ID_RE.fullmatch(operation_id):
                 return _response(
                     start_response, 400,
                     {"error": {"code": "INVALID_OPERATION_ID", "message": "Operation ID has an invalid format."}},
                     request_id,
                 )
-            operation = self.pipeline.inspect(operation_id)
-            if operation is None:
+            if is_recovery_events_request:
+                if method != "GET":
+                    return _response(
+                        start_response, 405,
+                        {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use GET to inspect recovery audit events."}},
+                        request_id,
+                    )
+                if self.ingress.inspect(operation_id) is None:
+                    return _response(
+                        start_response, 404,
+                        {"error": {"code": "OPERATION_NOT_FOUND", "message": "No ingress operation matches this ID."}},
+                        request_id,
+                    )
+                safe_events = []
+                for event in self.ingress.recovery_events(operation_id):
+                    evidence = event.get("evidence", {})
+                    safe_evidence = {
+                        key: evidence[key] for key in (
+                            "policy", "execution_request_fingerprint", "cee_phase_before",
+                            "pipeline_status", "protocol_decision", "exception_type",
+                            "reason_code",
+                        ) if key in evidence
+                    } if isinstance(evidence, dict) else {}
+                    safe_events.append({
+                        "action": event["action"],
+                        "phase_before": event["phase_before"],
+                        "phase_after": event["phase_after"],
+                        "created_at": event["created_at"],
+                        "evidence": safe_evidence,
+                    })
                 return _response(
-                    start_response, 404,
-                    {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol operation matches this ID."}},
+                    start_response, 200,
+                    {
+                        "operation_id": operation_id,
+                        "events": safe_events,
+                        "count": len(safe_events),
+                        "production_ready": False,
+                    },
+                    request_id,
+                )
+            if is_recovery_request:
+                if method != "POST":
+                    return _response(
+                        start_response, 405,
+                        {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to request explicit operation recovery."}},
+                        request_id,
+                    )
+                if environ.get("CONTENT_LENGTH", "0") not in {"", "0"}:
+                    return _response(
+                        start_response, 400,
+                        {"error": {"code": "RECOVERY_BODY_NOT_ALLOWED", "message": "Recovery uses the original pinned request and does not accept replacement content."}},
+                        request_id,
+                    )
+                recovered = self.ingress.recover(
+                    operation_id,
+                    pipeline_recovery=self.pipeline.recover,
+                    pipeline_inspector=self.pipeline.inspect,
+                )
+                if recovered is None:
+                    try:
+                        recovered = self.pipeline.recover(operation_id)
+                    except ExecutionConflict:
+                        return _response(
+                            start_response, 404,
+                            {"error": {"code": "OPERATION_NOT_FOUND_OR_NOT_RECOVERABLE", "message": "No recoverable CEE lifecycle was found for this operation ID."}},
+                            request_id,
+                        )
+                    if recovered.get("reason") == "OPERATION_NOT_FOUND":
+                        return _response(
+                            start_response, 404,
+                            {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol or ingress journal operation matches this ID."}},
+                            request_id,
+                        )
+                return _response(
+                    start_response, 200,
+                    {
+                        "status": recovered.get("protocol_decision", recovered.get("status", "UNKNOWN")),
+                        "result": recovered,
+                        "recovery_required": bool(
+                            recovered.get("recovery_required")
+                            or recovered.get("protocol_decision") == "UNKNOWN"
+                        ),
+                        "production_ready": False,
+                    },
+                    request_id,
+                )
+            if method != "GET":
+                return _response(
+                    start_response, 405,
+                    {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use GET to inspect a protocol operation."}},
+                    request_id,
+                )
+            if not _ID_RE.fullmatch(operation_id):
+                return _response(
+                    start_response, 400,
+                    {"error": {"code": "INVALID_OPERATION_ID", "message": "Operation ID has an invalid format."}},
+                    request_id,
+                )
+            ingress_operation = self.ingress.inspect(operation_id)
+            if ingress_operation is not None:
+                if ingress_operation["result"] is None:
+                    # Reconcile only from an already-finalized CEE record. This
+                    # endpoint never resumes or resubmits a non-final operation.
+                    self.ingress.reconcile(
+                        operation_id, self.pipeline.inspect(operation_id)
+                    )
+                    ingress_operation = self.ingress.inspect(operation_id)
+                if ingress_operation is not None and ingress_operation["result"] is not None:
+                    return _response(
+                        start_response, 200,
+                        {
+                            "status": ingress_operation["phase"],
+                            "operation": ingress_operation,
+                            "source": "MINAH_FIRST_INGRESS_JOURNAL",
+                            "reconciliation_required": bool(
+                                ingress_operation["phase"] == "UNKNOWN_REQUIRES_RECONCILIATION"
+                            ),
+                            "production_ready": False,
+                        },
+                        request_id,
+                    )
+                return _response(
+                    start_response, 200,
+                    {
+                        "status": "UNKNOWN",
+                        "operation": ingress_operation,
+                        "source": "MINAH_FIRST_INGRESS_JOURNAL",
+                        "reconciliation_required": True,
+                        "production_ready": False,
+                    },
+                    request_id,
+                )
+            operation = self.pipeline.inspect(operation_id)
+            if operation is not None:
+                return _response(
+                    start_response, 200,
+                    {"status": operation["phase"], "operation": operation, "source": "CEE_PIPELINE", "production_ready": False},
                     request_id,
                 )
             return _response(
-                start_response, 200,
-                {"status": operation["phase"], "operation": operation, "production_ready": False},
+                start_response, 404,
+                {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol or ingress journal operation matches this ID."}},
                 request_id,
             )
         if path == "/protocol/instructions":
@@ -308,15 +543,130 @@ class KinSysPrototypeApplication:
                 )
             try:
                 payload = self._read_json(environ, allowed_fields=_PROTOCOL_FIELDS)
-                result = self.pipeline.execute(payload)
+                if "contract_version" not in payload and not self.enable_legacy_demo_routes:
+                    return _response(
+                        start_response, 404,
+                        {"error": {
+                            "code": "LEGACY_REQUEST_SHAPE_DISABLED",
+                            "message": "Submit a governed v0.1 instruction envelope; the internal legacy request shape requires enable_legacy_demo_routes=True.",
+                        }},
+                        request_id,
+                    )
+                contract_instruction = None
+                decision_request_id = request_id
+                if "contract_version" in payload:
+                    contract_instruction = validate_instruction_envelope(payload)
+                    if not isinstance(payload.get("evidence"), dict):
+                        raise HttpServiceError(
+                            422, "CONTRACT_EXECUTION_EVIDENCE_REQUIRED",
+                            "This reference execution route requires an evidence object; evidence references alone are insufficient.",
+                        )
+                    rule_parts = contract_instruction["rule_pack_version"].rsplit(":", 1)
+                    if len(rule_parts) != 2 or not all(rule_parts):
+                        raise HttpServiceError(
+                            422, "UNSUPPORTED_RULE_PACK_VERSION",
+                            "The synthetic reference route expects rule_pack_version in RULE_SET:VERSION form.",
+                        )
+                    # The current reference runtime supports only its named synthetic
+                    # rule pack. Other packs must not be silently interpreted as it.
+                    internal_payload = {
+                        "operation_id": contract_instruction["operation_id"],
+                        "event_id": "EV-" + hashlib.sha256(
+                            contract_instruction["idempotency_key"].encode("utf-8")
+                        ).hexdigest()[:24],
+                        "process_id": contract_instruction["target_ref"],
+                        "actor_id": contract_instruction["principal_ref"],
+                        "event_type": contract_instruction["action"],
+                        "jurisdiction": contract_instruction["jurisdiction"],
+                        "rule_set": rule_parts[0],
+                        "rule_version": rule_parts[1],
+                        "evidence": payload["evidence"],
+                        "_contract_envelope": contract_instruction,
+                    }
+                    decision_request_id = contract_instruction["request_id"]
+                else:
+                    internal_payload = payload
+                ingress_result = None
+                if contract_instruction is not None:
+                    # Reject unsupported internal execution requests before creating
+                    # an ingress journal row. The ingress then journals and delegates
+                    # exactly once to this same pipeline.
+                    self.pipeline._validate(internal_payload)
+                    ingress_result = self.ingress.execute(
+                        contract_instruction, execution_request=internal_payload
+                    )
+                    if ingress_result.get("error_code") == "MINAH_PROFILE_APPROVAL_REJECTED":
+                        return _response(
+                            start_response, 422,
+                            {"error": {
+                                "code": ingress_result["error_code"],
+                                "message": ingress_result.get("error_detail", "MINAH profile approval rejected."),
+                            }},
+                            request_id,
+                        )
+                    result = ingress_result.get("pipeline_result")
+                    if not isinstance(result, dict):
+                        result = {
+                            "operation_id": internal_payload["operation_id"],
+                            "status": ingress_result["protocol_decision"],
+                            "reason": ingress_result["reason_code"],
+                            "funds_moved": False,
+                            "ivm_decision": None,
+                        }
+                    elif ingress_result.get("duplicate"):
+                        result = {**result, "duplicate": True}
+                    decision_envelope = validate_decision_envelope({
+                        "contract_version": ingress_result["contract_version"],
+                        "request_id": ingress_result["request_id"],
+                        "operation_id": ingress_result["operation_id"],
+                        "protocol_decision": ingress_result["protocol_decision"],
+                        "reason_code": ingress_result["reason_code"],
+                        "user_message": ingress_result["user_message"],
+                        "rule_pack_version": ingress_result["rule_pack_version"],
+                        "minah_disposition_ref": ingress_result["minah_disposition_ref"],
+                        "cee_execution_ref": ingress_result["cee_execution_ref"],
+                        "external_effect_status": ingress_result["external_effect_status"],
+                        "evidence_refs": ingress_result["evidence_refs"],
+                    })
+                    assert_instruction_binding(contract_instruction, decision_envelope)
+                else:
+                    result = self.pipeline.execute(internal_payload)
+                    decision_status = {
+                        "COMMITTED": "PASSED",
+                        "REJECTED": "REJECTED",
+                        "DEFERRED": "DEFERRED",
+                        "UNKNOWN": "UNKNOWN",
+                    }.get(result.get("status"), "UNKNOWN")
+                    decision_messages = {
+                        "PASSED": "The required synthetic protocol gates passed. No external effect is implied.",
+                        "REJECTED": "A required protocol gate rejected the instruction. No external effect was performed.",
+                        "DEFERRED": "The instruction needs additional information or review before it can proceed.",
+                        "UNKNOWN": "The outcome could not be established safely. Reconcile the operation before retrying.",
+                    }
+                    decision_envelope = validate_decision_envelope({
+                        "contract_version": CONTRACT_VERSION,
+                        "request_id": request_id,
+                        "operation_id": internal_payload["operation_id"],
+                        "protocol_decision": decision_status,
+                        "reason_code": str(result.get("reason") or "REQUIRED_GATES_PASSED"),
+                        "user_message": decision_messages[decision_status],
+                        "rule_pack_version": f"{internal_payload['rule_set']}:{internal_payload['rule_version']}",
+                        "minah_disposition_ref": f"minah-disposition:{internal_payload['operation_id']}",
+                        "cee_execution_ref": f"cee-operation:{internal_payload['operation_id']}",
+                        "external_effect_status": "NOT_ATTEMPTED",
+                        "evidence_refs": [],
+                    })
                 return _response(
                     start_response, 200,
                     {
                         "status": result["status"],
+                        "decision": decision_envelope,
                         "production_ready": False,
                         "result": result,
                         "protocol_boundary": {
-                            "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
+                            "minah": "INJECTED_ADAPTER_OR_DETERMINISTIC_MOCK_ADVISORY_ONLY",
+                            "identity": "INJECTED_ADAPTER_OR_SYNTHETIC_SCHEMA_CHECK",
+                            "authority": "INJECTED_ADAPTER_OR_SYNTHETIC_RULE_CHECK",
                             "ivm": "LOCAL_SQLITE_REFERENCE_RUNTIME",
                             "cee": "LOCAL_SQLITE_LIFECYCLE_JOURNAL",
                             "cross_store_atomicity": False,
@@ -332,7 +682,13 @@ class KinSysPrototypeApplication:
                     {"error": {"code": exc.code, "message": exc.message}},
                     request_id,
                 )
-            except (ExecutionConflict, EventIdConflict) as exc:
+            except MinahApprovalViolation as exc:
+                return _response(
+                    start_response, 422,
+                    {"error": {"code": "MINAH_PROFILE_APPROVAL_REJECTED", "message": str(exc)[:240]}},
+                    request_id,
+                )
+            except (IngressConflict, ExecutionConflict, EventIdConflict) as exc:
                 return _response(
                     start_response, 409,
                     {"error": {"code": "IDEMPOTENCY_OR_STATE_CONFLICT", "message": str(exc)[:240]}},
@@ -351,6 +707,8 @@ class KinSysPrototypeApplication:
                     request_id,
                 )
         if path == "/demo/instructions":
+            if self.enable_legacy_demo_routes is False:
+                return _response(start_response, 404, {"error": {"code": "ROUTE_NOT_AVAILABLE", "message": "Enable legacy demo routes explicitly to use this synthetic route."}}, request_id)
             if method != "POST":
                 return _response(
                     start_response, 405,
@@ -471,8 +829,31 @@ def create_app(
     demonstrator: IntegratedDemonstrator | None = None,
     pipeline: KinSysProtocolPipeline | None = None,
     case_coordinator: CEECaseCoordinator | None = None,
+    *,
+    enable_legacy_demo_routes: bool = False,
+    minah_adapter: Any | None = None,
+    identity_adapter: Any | None = None,
+    authority_adapter: Any | None = None,
+    minah_profile: dict[str, Any] | None = None,
+    minah_profile_approval: dict[str, Any] | None = None,
+    profile_signature_verifier: Any | None = None,
+    profile_revocation_checker: Any | None = None,
+    require_profile_approval: bool = False,
+    ingress_database: str = ":memory:",
 ) -> KinSysPrototypeApplication:
-    return KinSysPrototypeApplication(demonstrator, pipeline, case_coordinator)
+    return KinSysPrototypeApplication(
+        demonstrator, pipeline, case_coordinator,
+        enable_legacy_demo_routes=enable_legacy_demo_routes,
+        minah_adapter=minah_adapter,
+        identity_adapter=identity_adapter,
+        authority_adapter=authority_adapter,
+        minah_profile=minah_profile,
+        minah_profile_approval=minah_profile_approval,
+        profile_signature_verifier=profile_signature_verifier,
+        profile_revocation_checker=profile_revocation_checker,
+        require_profile_approval=require_profile_approval,
+        ingress_database=ingress_database,
+    )
 
 
 def main() -> None:
@@ -494,6 +875,9 @@ def main() -> None:
         cee_database=cee_database,
         ivm_database=ivm_database,
     )
+    ingress_db = os.environ.get("KIN_SYS_INGRESS_DB", str(data_dir / "ingress.sqlite3"))
+    if ingress_db != ":memory:":
+        Path(ingress_db).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     case_db = os.environ.get("KIN_SYS_CASE_CEE_DB", str(data_dir / "case-cee.sqlite3"))
     case_ivm_db = os.environ.get("KIN_SYS_CASE_IVM_DB", str(data_dir / "case-ivm.sqlite3"))
     case_workflow_db = os.environ.get("KIN_SYS_CASE_WORKFLOW_DB", str(data_dir / "case-workflow.sqlite3"))
@@ -506,15 +890,20 @@ def main() -> None:
         cee_database=case_db, ivm_database=case_ivm_db,
         workflow_database=case_workflow_db, payment_database=case_payment_db,
     )
-    app = create_app(pipeline=pipeline, case_coordinator=case_coordinator)
-    for database in (cee_database, ivm_database, *case_databases):
+    legacy_demo_enabled = os.environ.get("KIN_SYS_ENABLE_LEGACY_DEMO_ROUTES", "").lower() in {"1", "true", "yes"}
+    app = create_app(
+        pipeline=pipeline, case_coordinator=case_coordinator,
+        enable_legacy_demo_routes=legacy_demo_enabled,
+        ingress_database=ingress_db,
+    )
+    for database in (cee_database, ivm_database, ingress_db, *case_databases):
         if database != ":memory:" and Path(database).exists():
             try:
                 os.chmod(database, 0o600)
             except OSError:
                 pass
     print(f"KIN-SYS local synthetic prototype listening on http://{host}:{port}")
-    print(f"CEE journal: {cee_database}; IVM store: {ivm_database}")
+    print(f"CEE journal: {cee_database}; IVM store: {ivm_database}; ingress journal: {ingress_db}")
     print(f"CEE case journal: {case_db}; case IVM: {case_ivm_db}; workflow: {case_workflow_db}; payments: {case_payment_db}")
     print("WARNING: this is not a production API; do not expose it to the public internet.")
     try:

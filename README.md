@@ -8,6 +8,16 @@ KIN-SYS is a protocol architecture for coordinating computation, identity, autho
 
 The objective is to specify a system in which independently operated components coordinate under explicit rules, with verifiable state transitions and defined behaviour during disconnection, failure, dispute, and recovery. KIN-SYS research treats the protocol, CEE/IVM execution layers, AI assistance, economic mechanisms such as the proposed $KIN, Nexus Pods/edge infrastructure, institutional authority, governance, identity, and privacy as complementary parts of one system. Component-level work is essential, but system-level claims require integrated evidence.
 
+## Architecture and reference contracts
+
+- [Provider-neutral execution architecture](docs/PROVIDER_NEUTRAL_EXECUTION_ARCHITECTURE.md)
+- [MINAH deployment profiles and institutional ownership](docs/MINAH_DEPLOYMENT_PROFILES.md)
+- [MINAH-first ingress gate](docs/MINAH_FIRST_INGRESS_GATE.md)
+- [Governed instruction/decision contract v0.1](docs/GOVERNED_INSTRUCTION_DECISION_CONTRACT_V0_1.md)
+- [CEE–IVM crash recovery contract and failure-point matrix](docs/CEE_IVM_RECOVERY_CONTRACT.md)
+
+MINAH is an institution-owned gatekeeper deployment, not a single global service. The reference pipeline supports a versioned deployment profile and pins it to each operation's durable request fingerprint and MINAH disposition trace. This remains a research reference implementation, not production deployment or legal assurance.
+
 ## Status
 
 **Stage:** Protocol foundation / research specification  
@@ -52,6 +62,9 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 0. [CEE-controlled integrated execution plan: institutional, payment, edge, recovery and acceptance gates](docs/CEE_INTEGRATION_PLAN.md)
 0. [Draft production integration API contract (OpenAPI 3.1 JSON; not yet routed)](api/openapi.json)
 0. [API implementation matrix: owner, dependencies and acceptance gate for every route](api/implementation-matrix.json)
+0. [Provider-neutral instruction and decision contract v0.1](docs/GOVERNED_INSTRUCTION_DECISION_CONTRACT_V0_1.md) — draft envelope validation and digest verification integrated into the existing synthetic HTTP pipeline; not a production wire standard.
+0. [Provider-neutral execution architecture and human usability](docs/PROVIDER_NEUTRAL_EXECUTION_ARCHITECTURE.md) — deployment profiles, adapter boundaries and conformance requirements.
+0. [MINAH-first ingress gate](docs/MINAH_FIRST_INGRESS_GATE.md) — reference orchestration boundary and fail-closed tests; not yet wired into HTTP ingress.
 
 - [Local HTTP prototype adapter](protocol-reference/http_service.py) — runnable synthetic vertical slice, not the production API. It exposes health/readiness/capabilities and `POST /demo/instructions`; IVM and CEE are explicitly marked as not yet wired as separate runtime components.
 
