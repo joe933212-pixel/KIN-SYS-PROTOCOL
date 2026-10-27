@@ -16,6 +16,7 @@ from typing import Any
 
 from minah_deployment_profile import PROFILE_VERSION, validate_minah_profile
 from minah_profile_governance import MinahApprovalViolation, verify_minah_profile_approval
+from governed_contracts import validate_instruction_envelope
 
 from integrated_demo import DeterministicMinahAdapter
 from transition import EventIdConflict, ProtocolStore
@@ -800,9 +801,14 @@ class KinSysProtocolPipeline:
         if not isinstance(request, dict) or required - set(request):
             missing = sorted(required - set(request)) if isinstance(request, dict) else sorted(required)
             raise ValueError("MISSING_REQUIRED_FIELDS:" + ",".join(missing))
-        unknown = sorted(set(request) - required)
+        allowed_extensions = {"_contract_envelope"}
+        unknown = sorted(set(request) - required - allowed_extensions)
         if unknown:
             raise ValueError("UNKNOWN_FIELDS:" + ",".join(unknown))
+        if "_contract_envelope" in request:
+            # Preserve the complete validated client envelope inside the durable
+            # operation fingerprint so retries cannot alter omitted contract fields.
+            validate_instruction_envelope(request["_contract_envelope"])
         for key in (
             "operation_id", "event_id", "process_id", "actor_id", "event_type",
             "jurisdiction", "rule_set", "rule_version",
