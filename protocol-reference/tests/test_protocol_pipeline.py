@@ -213,6 +213,27 @@ class ProtocolPipelineTests(unittest.TestCase):
         finally:
             pipeline.close()
 
+    def test_minah_verification_api_outage_returns_unknown_and_stops(self):
+        class UnavailableInstitutionAgent:
+            def review(self, evidence):
+                return {"status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [], "uncertainty": "LOW", "may_authorise": False, "model_version": "institution-agent-v1"}
+            def verify_principal(self, payload):
+                raise TimeoutError("identity API unavailable")
+            def verify_action(self, payload):
+                raise AssertionError("authority check must not run after identity uncertainty")
+
+        pipeline = KinSysProtocolPipeline(minah_adapter=UnavailableInstitutionAgent())
+        try:
+            result = pipeline.execute(request(operation_id="MINAH-IDENTITY-OUTAGE"))
+            self.assertEqual(result["status"], "UNKNOWN")
+            self.assertEqual(result["reason"], "IDENTITY_VERIFICATION_UNAVAILABLE")
+            self.assertIsNone(result["ivm_decision"])
+            phases = [event["phase"] for event in result["cee_events"]]
+            self.assertNotIn("AUTHORITY_VERIFIED", phases)
+            self.assertNotIn("ADMITTED", phases)
+        finally:
+            pipeline.close()
+
     def test_complete_path_runs_minah_ivm_and_cee_in_order(self):
         result = self.pipeline.execute(request())
         self.assertEqual(result["status"], "COMMITTED")
