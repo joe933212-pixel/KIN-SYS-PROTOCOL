@@ -516,7 +516,7 @@ class HttpServiceTests(unittest.TestCase):
                     "POST",
                 )
                 self.assertEqual(recovery_response["status"], 200)
-                self.assertEqual(recovery_body["status"], "PASSED")
+                self.assertEqual(recovery_body["status"], "PASSED", recovery_body)
                 self.assertFalse(recovery_body["recovery_required"])
                 self.assertTrue(recovery_body["result"]["recovery"]["recovered"])
                 self.assertEqual(
@@ -643,7 +643,7 @@ class HttpServiceTests(unittest.TestCase):
             app, "/protocol/operations/HTTP-RECONCILE-1/recover", "POST"
         )
         self.assertEqual(recovery_response["status"], 200)
-        self.assertEqual(recovery_body["status"], "PASSED")
+        self.assertEqual(recovery_body["status"], "PASSED", recovery_body)
         self.assertFalse(recovery_body["recovery_required"])
         self.assertTrue(recovery_body["result"]["reconciled"])
         self.assertEqual(
