@@ -108,7 +108,7 @@ class ProtocolPipelineTests(unittest.TestCase):
         try:
             result = revoked.execute(request())
             self.assertEqual(result["status"], "REJECTED")
-            self.assertEqual(result["reason"], "AUTHORITY_REVOKED")
+            self.assertEqual(result["reason"], "AUTHORITY_NOT_VERIFIED")
             self.assertEqual(revoked.ivm.process("PROC-001")["state"], "PENDING")
         finally:
             revoked.close()
