@@ -1,17 +1,20 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """MINAH-first ingress gate for the KIN-SYS research prototype.
 
-This is a reference orchestration boundary, not yet wired into the HTTP service or
-CEECaseCoordinator. Adapters are injected so no AI, identity, authority, cloud,
-hardware, or payment vendor is mandatory. An uncertain in-flight operation is
-never automatically resubmitted to CEE; it must be reconciled against CEE state.
+This module provides a durable ingress journal. In HTTP integration mode it wraps
+the canonical KinSysProtocolPipeline rather than implementing a second execution
+engine; the pipeline remains responsible for MINAH, identity, authority, CEE/IVM,
+and final decision ordering. Its standalone adapter mode remains a conformance
+harness. An uncertain in-flight operation is never automatically resubmitted.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import sqlite3
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
+
+from minah_profile_governance import MinahApprovalViolation
 
 
 def _canonical(value: Any) -> str:
@@ -54,9 +57,18 @@ class MinahFirstIngress:
     """
 
     def __init__(
-        self, database: str, *, minah: MinahAdapter, identity: IdentityAdapter,
-        authority: AuthorityAdapter, cee: CEEAdapter,
+        self, database: str, *, minah: MinahAdapter | None = None,
+        identity: IdentityAdapter | None = None,
+        authority: AuthorityAdapter | None = None,
+        cee: CEEAdapter | None = None,
+        pipeline_executor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ):
+        adapters = (minah, identity, authority, cee)
+        if pipeline_executor is None and any(adapter is None for adapter in adapters):
+            raise ValueError("MINAH_IDENTITY_AUTHORITY_AND_CEE_ADAPTERS_REQUIRED")
+        if pipeline_executor is not None and any(adapter is not None for adapter in adapters):
+            raise ValueError("PIPELINE_EXECUTOR_CANNOT_BE_COMBINED_WITH_GATE_ADAPTERS")
+        self.pipeline_executor = pipeline_executor
         self.db = sqlite3.connect(database, timeout=10.0)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA busy_timeout=10000")
@@ -107,6 +119,11 @@ class MinahFirstIngress:
             if self.db.in_transaction:
                 self.db.rollback()
             raise
+
+        if self.pipeline_executor is not None:
+            return self._execute_with_pipeline(
+                operation_id, instruction, execution_request or instruction
+            )
 
         try:
             # MINAH is the first adapter to receive the instruction.
@@ -170,6 +187,69 @@ class MinahFirstIngress:
         except Exception:
             # Do not persist a false rejection or retry a potentially executed
             # CEE call. The durable non-final row makes subsequent calls UNKNOWN.
+            self._set_phase(operation_id, "UNKNOWN_REQUIRES_RECONCILIATION")
+            raise
+
+    def _execute_with_pipeline(
+        self, operation_id: str, instruction: dict[str, Any],
+        execution_request: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Journal a contract instruction while delegating all gates to the canonical pipeline."""
+        try:
+            pipeline_result = self.pipeline_executor(dict(execution_request))
+            status_map = {
+                "COMMITTED": "PASSED",
+                "PASSED": "PASSED",
+                "REJECTED": "REJECTED",
+                "DEFERRED": "DEFERRED",
+                "UNKNOWN": "UNKNOWN",
+            }
+            status = status_map.get(
+                pipeline_result.get("status") if isinstance(pipeline_result, dict) else None,
+                "UNKNOWN",
+            )
+            messages = {
+                "PASSED": "The required synthetic protocol gates passed. No external effect is implied.",
+                "REJECTED": "A required protocol gate rejected the instruction. No external effect was performed.",
+                "DEFERRED": "The instruction needs additional information or review before it can proceed.",
+                "UNKNOWN": "The outcome could not be established safely. Reconcile the operation before retrying.",
+            }
+            result = self._decision(
+                operation_id, status,
+                str(pipeline_result.get("reason") or "REQUIRED_GATES_PASSED")
+                if isinstance(pipeline_result, dict) else "INVALID_PIPELINE_RESPONSE",
+                messages[status],
+                minah_ref=f"minah-disposition:{operation_id}",
+                cee_ref=f"cee-operation:{operation_id}",
+                external_effect_status="NOT_ATTEMPTED",
+                evidence_refs=instruction.get("evidence_refs", []),
+            )
+            result.update({
+                "contract_version": instruction["contract_version"],
+                "request_id": instruction["request_id"],
+                "rule_pack_version": instruction["rule_pack_version"],
+                "pipeline_result": pipeline_result,
+            })
+            return self._finish(operation_id, result)
+        except MinahApprovalViolation as exc:
+            # Profile approval is checked before MINAH and before CEE execution.
+            # Record a definitive rejection, not an ambiguous in-flight operation.
+            result = self._decision(
+                operation_id, "REJECTED", "MINAH_PROFILE_APPROVAL_REJECTED",
+                "The configured MINAH profile approval could not be verified. No execution was started.",
+                minah_ref=f"minah-disposition:{operation_id}",
+            )
+            result.update({
+                "contract_version": instruction["contract_version"],
+                "request_id": instruction["request_id"],
+                "rule_pack_version": instruction["rule_pack_version"],
+                "error_code": "MINAH_PROFILE_APPROVAL_REJECTED",
+                "error_detail": str(exc)[:240],
+            })
+            return self._finish(operation_id, result)
+        except Exception:
+            # The pipeline may have reached a durable transition before failing.
+            # Do not blindly invoke it again; reconciliation is required.
             self._set_phase(operation_id, "UNKNOWN_REQUIRES_RECONCILIATION")
             raise
 
