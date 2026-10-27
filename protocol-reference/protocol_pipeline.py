@@ -706,16 +706,6 @@ class KinSysProtocolPipeline:
             }
 
         pinned_request = operation["request_json"]
-        pinned_profile = pinned_request.get("_minah_deployment_profile")
-        if _canonical(pinned_profile) != _canonical(self.minah_profile):
-            raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
-        if self.require_profile_approval:
-            if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
-                raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
-            pinned_approval_metadata = pinned_request.get("_minah_profile_approval_verification")
-            if not isinstance(pinned_approval_metadata, dict) or pinned_approval_metadata.get("status") != "APPROVED":
-                raise ExecutionConflict("PINNED_PROFILE_APPROVAL_EVIDENCE_MISSING")
-
         request_without_pins = {
             key: value for key, value in pinned_request.items()
             if not key.startswith("_minah_")
@@ -724,6 +714,9 @@ class KinSysProtocolPipeline:
             if _canonical(request_without_pins) != _canonical(expected_request):
                 raise ExecutionConflict("RECOVERY_REQUEST_DIFFERS_FROM_DURABLE_INGRESS_REQUEST")
 
+        # A final CEE record is immutable evidence. It can be returned for ingress
+        # reconciliation even if the currently configured profile has since changed;
+        # no execution is resumed in this branch.
         if operation["phase"] == "FINALIZED":
             result = operation["result_json"]
             if isinstance(result, dict):
@@ -734,6 +727,16 @@ class KinSysProtocolPipeline:
                 "reason": "FINALIZED_CEE_RESULT_MISSING",
                 "recovery_required": True,
             }
+
+        pinned_profile = pinned_request.get("_minah_deployment_profile")
+        if _canonical(pinned_profile) != _canonical(self.minah_profile):
+            raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
+        if self.require_profile_approval:
+            if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
+                raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
+            pinned_approval_metadata = pinned_request.get("_minah_profile_approval_verification")
+            if not isinstance(pinned_approval_metadata, dict) or pinned_approval_metadata.get("status") != "APPROVED":
+                raise ExecutionConflict("PINNED_PROFILE_APPROVAL_EVIDENCE_MISSING")
         if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
             raise ExecutionConflict(
                 "MINAH_DISPOSITION_NOT_DURABLE_REQUIRES_MANUAL_RECONCILIATION"
