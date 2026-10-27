@@ -355,18 +355,45 @@ class KinSysPrototypeApplication:
                     {"error": {"code": "INVALID_OPERATION_ID", "message": "Operation ID has an invalid format."}},
                     request_id,
                 )
+            ingress_operation = self.ingress.inspect(operation_id)
+            if ingress_operation is not None:
+                if ingress_operation["result"] is None:
+                    # Reconcile only from an already-finalized CEE record. This
+                    # endpoint never resumes or resubmits a non-final operation.
+                    self.ingress.reconcile(
+                        operation_id, self.pipeline.inspect(operation_id)
+                    )
+                    ingress_operation = self.ingress.inspect(operation_id)
+                if ingress_operation is not None and ingress_operation["result"] is not None:
+                    return _response(
+                        start_response, 200,
+                        {
+                            "status": ingress_operation["phase"],
+                            "operation": ingress_operation,
+                            "source": "MINAH_FIRST_INGRESS_JOURNAL",
+                            "reconciliation_required": bool(
+                                ingress_operation["phase"] == "UNKNOWN_REQUIRES_RECONCILIATION"
+                            ),
+                            "production_ready": False,
+                        },
+                        request_id,
+                    )
+                return _response(
+                    start_response, 200,
+                    {
+                        "status": "UNKNOWN",
+                        "operation": ingress_operation,
+                        "source": "MINAH_FIRST_INGRESS_JOURNAL",
+                        "reconciliation_required": True,
+                        "production_ready": False,
+                    },
+                    request_id,
+                )
             operation = self.pipeline.inspect(operation_id)
             if operation is not None:
                 return _response(
                     start_response, 200,
                     {"status": operation["phase"], "operation": operation, "source": "CEE_PIPELINE", "production_ready": False},
-                    request_id,
-                )
-            ingress_operation = self.ingress.inspect(operation_id)
-            if ingress_operation is not None:
-                return _response(
-                    start_response, 200,
-                    {"status": ingress_operation["phase"], "operation": ingress_operation, "source": "MINAH_FIRST_INGRESS_JOURNAL", "production_ready": False},
                     request_id,
                 )
             return _response(
