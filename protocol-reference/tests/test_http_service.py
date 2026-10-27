@@ -269,6 +269,101 @@ class HttpServiceTests(unittest.TestCase):
 
 
 
+
+    def test_v01_instruction_envelope_executes_through_existing_pipeline_and_binds_decision(self):
+        class VerifiedIdentity:
+            def verify_principal(self, request):
+                self.asserted = request.get("_contract_envelope", {}).get("principal_ref")
+                return {"verified": True, "mode": "CONTRACT_TEST_IDENTITY"}
+
+        class VerifiedAuthority:
+            def verify_action(self, request):
+                envelope = request.get("_contract_envelope", {})
+                if envelope.get("authority_ref") != "authority-check:contract-test":
+                    return {"verified": False, "mode": "CONTRACT_TEST_AUTHORITY"}
+                return {"verified": True, "mode": "CONTRACT_TEST_AUTHORITY"}
+
+        identity = VerifiedIdentity()
+        app = create_app(identity_adapter=identity, authority_adapter=VerifiedAuthority())
+        self.addCleanup(app.close)
+        payload = {
+            "contract_version": "kin-sys-governed-contract-0.1",
+            "request_id": "client-request-contract-001",
+            "operation_id": "HTTP-CONTRACT-EXEC-1",
+            "idempotency_key": "idempotency-contract-001",
+            "principal_ref": "AUTHORITY-001",
+            "authority_ref": "authority-check:contract-test",
+            "action": "ACTIVATE",
+            "target_ref": "HTTP-CONTRACT-PROCESS-1",
+            "purpose": "synthetic conformance test",
+            "jurisdiction": "UG-DEMO",
+            "submitted_at": "2026-10-27T10:00:00+03:00",
+            "payload_digest": "sha256:" + ("a" * 64),
+            "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "evidence_refs": ["evidence:contract-test-1"],
+            "evidence": {
+                "consignment_id": "HTTP-CONTRACT-PROCESS-1",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(body["status"], "COMMITTED")
+        self.assertEqual(body["decision"]["request_id"], payload["request_id"])
+        self.assertEqual(body["decision"]["operation_id"], payload["operation_id"])
+        self.assertEqual(body["decision"]["rule_pack_version"], payload["rule_pack_version"])
+        self.assertEqual(body["decision"]["protocol_decision"], "PASSED")
+        self.assertEqual(body["decision"]["evidence_refs"], payload["evidence_refs"])
+        self.assertEqual(body["decision"]["external_effect_status"], "NOT_ATTEMPTED")
+        self.assertEqual(identity.asserted, payload["principal_ref"])
+        phases = [event["phase"] for event in body["result"]["cee_events"]]
+        self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
+        self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
+        self.assertLess(phases.index("AUTHORITY_VERIFIED"), phases.index("ADMITTED"))
+
+    def test_v01_envelope_metadata_is_pinned_and_cannot_change_on_retry(self):
+        app = create_app(
+            identity_adapter=type("Identity", (), {
+                "verify_principal": lambda self, request: {"verified": True, "mode": "TEST"}
+            })(),
+            authority_adapter=type("Authority", (), {
+                "verify_action": lambda self, request: {"verified": True, "mode": "TEST"}
+            })(),
+        )
+        self.addCleanup(app.close)
+        payload = {
+            "contract_version": "kin-sys-governed-contract-0.1",
+            "request_id": "client-request-contract-retry",
+            "operation_id": "HTTP-CONTRACT-RETRY-1",
+            "idempotency_key": "idempotency-contract-retry",
+            "principal_ref": "AUTHORITY-001",
+            "authority_ref": "authority-check:original",
+            "action": "ACTIVATE",
+            "target_ref": "HTTP-CONTRACT-RETRY-PROCESS",
+            "purpose": "synthetic retry conformance test",
+            "jurisdiction": "UG-DEMO",
+            "submitted_at": "2026-10-27T10:00:00+03:00",
+            "payload_digest": "sha256:" + ("b" * 64),
+            "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "evidence": {
+                "consignment_id": "HTTP-CONTRACT-RETRY-PROCESS",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        first_response, first_body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        self.assertEqual(first_response["status"], 200)
+        self.assertEqual(first_body["status"], "COMMITTED")
+        changed = {**payload, "authority_ref": "authority-check:substituted"}
+        second_response, second_body = self.request_with_app(app, "/protocol/instructions", "POST", changed)
+        self.assertEqual(second_response["status"], 409)
+        self.assertEqual(second_body["error"]["code"], "IDEMPOTENCY_OR_STATE_CONFLICT")
+
     def test_http_verification_outages_return_unknown_without_cee_admission(self):
         class IdentityUnavailable:
             def verify_principal(self, request):
