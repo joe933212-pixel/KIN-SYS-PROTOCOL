@@ -170,6 +170,8 @@ class KinSysPrototypeApplication:
             return _response(start_response, 200, {"status": operation["phase"], "operation": operation, "production_ready": False}, request_id)
 
         if path == "/cee/settlement-evidence":
+            if self.enable_legacy_demo_routes is False:
+                return _response(start_response, 404, {"error": {"code": "ROUTE_NOT_AVAILABLE", "message": "Enable legacy demo routes explicitly to use synthetic settlement evidence."}}, request_id)
             if method != "POST":
                 return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit synthetic settlement evidence."}}, request_id)
             try:
@@ -209,6 +211,8 @@ class KinSysPrototypeApplication:
                 return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR", "message": "Settlement evidence could not be recorded."}}, request_id)
 
         if path == "/cee/reconciliation":
+            if self.enable_legacy_demo_routes is False:
+                return _response(start_response, 404, {"error": {"code": "ROUTE_NOT_AVAILABLE", "message": "Enable legacy demo routes explicitly to use synthetic reconciliation."}}, request_id)
             if method != "POST":
                 return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit synthetic reconciliation evidence."}}, request_id)
             try:
@@ -245,6 +249,8 @@ class KinSysPrototypeApplication:
                 return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR", "message": "The reconciliation could not be recorded."}}, request_id)
 
         if path == "/cee/cases":
+            if self.enable_legacy_demo_routes is False:
+                return _response(start_response, 404, {"error": {"code": "ROUTE_NOT_AVAILABLE", "message": "Enable legacy demo routes explicitly to use this synthetic case route."}}, request_id)
             if method != "POST":
                 return _response(start_response, 405, {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to submit a CEE case."}}, request_id)
             try:
