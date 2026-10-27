@@ -645,7 +645,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(recovery_response["status"], 200)
         self.assertEqual(recovery_body["status"], "PASSED", recovery_body)
         self.assertFalse(recovery_body["recovery_required"])
-        self.assertTrue(recovery_body["result"]["reconciled"])
+        self.assertTrue(recovery_body["result"]["recovery"]["recovered"])
         self.assertEqual(
             recovery_body["result"]["pipeline_result"]["status"], "COMMITTED"
         )
