@@ -190,7 +190,7 @@ class KinSysPrototypeApplication:
                         "durable_ingress_journal": "SQLITE_ENABLED_FOR_V0_1_INSTRUCTION_ENVELOPE",
                         "completed_replay": "RETURN_STORED_RESULT_WITHOUT_PIPELINE_RESUBMISSION",
                         "uncertain_inflight_replay": "UNKNOWN_REQUIRES_RECONCILIATION",
-                        "cross_store_reconciliation": "NOT_IMPLEMENTED",
+                        "cross_store_reconciliation": "FINALIZED_CEE_RESULT_ONLY; NON_FINAL_CEE_IVM_RECOVERY_NOT_IMPLEMENTED",
                         "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
                         "default_adapters": "SYNTHETIC_ONLY_NOT_REAL_AUTHENTICATION_OR_LEGAL_AUTHORITY",
                         "minah_profile": "VALIDATED_AND_PINNED_TO_OPERATION_FINGERPRINT_AND_MINAH_DISPOSITION",
