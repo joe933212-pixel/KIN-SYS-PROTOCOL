@@ -95,17 +95,19 @@ class KinSysPrototypeApplication:
         minah_adapter: Any | None = None,
         identity_adapter: Any | None = None,
         authority_adapter: Any | None = None,
+        minah_profile: dict[str, Any] | None = None,
     ):
         if pipeline is not None and any(
             adapter is not None
-            for adapter in (minah_adapter, identity_adapter, authority_adapter)
+            for adapter in (minah_adapter, identity_adapter, authority_adapter, minah_profile)
         ):
-            raise ValueError("Pass either a configured pipeline or ingress adapters, not both.")
+            raise ValueError("Pass either a configured pipeline or ingress adapters/profile, not both.")
         self.demonstrator = demonstrator or IntegratedDemonstrator()
         self.pipeline = pipeline or KinSysProtocolPipeline(
             minah_adapter=minah_adapter,
             identity_adapter=identity_adapter,
             authority_adapter=authority_adapter,
+            minah_profile=minah_profile,
         )
         self.case_coordinator = case_coordinator or CEECaseCoordinator()
         self.enable_legacy_demo_routes = enable_legacy_demo_routes
@@ -157,7 +159,7 @@ class KinSysPrototypeApplication:
                         "Legacy demo and CEE case routes are synthetic and disabled by default",
                     ],
                     "ingress_adapter_contract": {
-                        "injection": "create_app(minah_adapter=..., identity_adapter=..., authority_adapter=...)",
+                        "injection": "create_app(minah_adapter=..., identity_adapter=..., authority_adapter=..., minah_profile=...)",
                         "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
                         "default_adapters": "SYNTHETIC_ONLY_NOT_REAL_AUTHENTICATION_OR_LEGAL_AUTHORITY",
                         "single_pipeline": True,
@@ -511,6 +513,7 @@ def create_app(
     minah_adapter: Any | None = None,
     identity_adapter: Any | None = None,
     authority_adapter: Any | None = None,
+    minah_profile: dict[str, Any] | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -518,6 +521,7 @@ def create_app(
         minah_adapter=minah_adapter,
         identity_adapter=identity_adapter,
         authority_adapter=authority_adapter,
+        minah_profile=minah_profile,
     )
 
 
