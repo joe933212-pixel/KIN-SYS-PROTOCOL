@@ -13,7 +13,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 ## Invariants
 
 - **Operation identity is stable.** Recovery uses the existing operation ID and the original request; a caller cannot submit replacement content through the recovery endpoint.
-- **Ingress content is pinned.** The v0.1 instruction and mapped execution request are durably stored with fingerprints. Reusing an operation ID with changed instruction or mapped execution content is a conflict.
+- **Ingress content is pinned.** The v0.1 instruction and mapped execution request are durably stored with fingerprints. Before journaling, the digest is verified, the mapped request's operation ID must match the instruction, and its `_contract_envelope` must equal the validated instruction. Reusing an operation ID with changed instruction or mapped execution content is a conflict.
 - **CEE is the lifecycle authority.** Recovery reads the CEE journal and resumes only from a recognised durable phase. Passive reconciliation additionally requires the CEE request fingerprint, with MINAH-specific pins removed, to match the mapped execution-request fingerprint stored at ingress.
 - **MINAH disposition must be durable.** A CEE operation still in `REQUESTED` without a persisted MINAH disposition is ambiguous. Recovery stops rather than automatically asking MINAH again.
 - **Profile and approval are pinned.** A changed MINAH profile or approval cannot be substituted during recovery.
