@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from minah_first_ingress import IngressConflict, MinahFirstIngress
+from governed_contracts import compute_payload_digest
 
 
 class FakeMinah:
@@ -197,6 +198,45 @@ class MinahFirstIngressTests(unittest.TestCase):
             self.assertEqual(reopened.inspect("op-1")["phase"], "UNKNOWN_REQUIRES_RECONCILIATION")
         finally:
             reopened.close()
+
+
+    def test_uncertain_ingress_reconciles_only_from_finalized_cee_result(self):
+        instruction = self.instruction(
+            contract_version="kin-sys-governed-contract-0.1",
+            rule_pack_version="KIN-SYS-DEMO-RULES:1.0",
+            submitted_at="2026-10-27T10:00:00+03:00",
+            payload_digest="sha256:" + ("e" * 64),
+            evidence={"commodity": "SYNTHETIC_MAIZE"},
+        )
+        instruction["payload_digest"] = compute_payload_digest(instruction)
+
+        def interrupted(request):
+            raise RuntimeError("simulated lost acknowledgement")
+
+        self.ingress.close()
+        ingress = MinahFirstIngress(self.db_path, pipeline_executor=interrupted)
+        with self.assertRaisesRegex(RuntimeError, "lost acknowledgement"):
+            ingress.execute(instruction, execution_request={"operation_id": "op-1"})
+
+        unresolved = ingress.reconcile("op-1", {
+            "phase": "EXECUTING",
+            "result": None,
+        })
+        self.assertIsNone(unresolved["result"])
+        self.assertEqual(unresolved["phase"], "UNKNOWN_REQUIRES_RECONCILIATION")
+
+        recovered = ingress.reconcile("op-1", {
+            "phase": "FINALIZED",
+            "result": {"operation_id": "op-1", "status": "COMMITTED", "reason": None},
+            "cee_events": [{"phase": "FINALIZED", "status": "COMMITTED"}],
+            "component_trace": [{"component": "CEE", "detail": {"phase": "FINALIZED"}}],
+        })
+        self.assertEqual(recovered["protocol_decision"], "PASSED")
+        self.assertTrue(recovered["reconciled"])
+        self.assertEqual(recovered["pipeline_result"]["status"], "COMMITTED")
+        self.assertEqual(recovered["pipeline_result"]["cee_events"][0]["phase"], "FINALIZED")
+        self.assertEqual(ingress.inspect("op-1")["phase"], "PASSED")
+        ingress.close()
 
     def test_unknown_ceeresponse_is_not_reported_as_passed(self):
         class InvalidCEE(FakeCEE):
