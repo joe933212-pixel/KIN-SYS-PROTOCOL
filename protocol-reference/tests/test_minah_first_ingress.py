@@ -122,6 +122,48 @@ class MinahFirstIngressTests(unittest.TestCase):
 
 
 
+
+    def test_unresolved_recovery_does_not_finalize_unknown_ingress_result(self):
+        instruction = self.instruction(
+            contract_version="kin-sys-governed-contract-0.1",
+            submitted_at="2026-10-27T10:00:00+03:00",
+            payload_digest="sha256:" + ("b" * 64),
+            evidence_refs=[],
+        )
+        instruction["payload_digest"] = compute_payload_digest(instruction)
+
+        def pipeline_crash(request):
+            raise RuntimeError("simulated interrupted pipeline")
+
+        self.ingress.close()
+        ingress = MinahFirstIngress(
+            self.db_path, pipeline_executor=pipeline_crash
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated interrupted"):
+                ingress.execute(
+                    instruction,
+                    execution_request={"operation_id": "op-1", "event_id": "event-1"},
+                )
+            unresolved = ingress.recover(
+                "op-1",
+                pipeline_recovery=lambda operation_id, request: {
+                    "operation_id": operation_id,
+                    "status": "UNKNOWN",
+                    "reason": "RECOVERY_REQUIRES_MANUAL_RECONCILIATION",
+                    "recovery_required": True,
+                },
+                pipeline_inspector=lambda operation_id: {"phase": "REQUESTED"},
+            )
+            self.assertEqual(unresolved["protocol_decision"], "UNKNOWN")
+            self.assertTrue(unresolved["recovery_required"])
+            self.assertIsNone(ingress.inspect("op-1")["result"])
+            self.assertEqual(
+                ingress.inspect("op-1")["phase"], "UNKNOWN_REQUIRES_RECONCILIATION"
+            )
+        finally:
+            ingress.close()
+
     def test_operation_id_cannot_be_rebound_to_different_execution_request(self):
         instruction = self.instruction()
         self.ingress.execute(
