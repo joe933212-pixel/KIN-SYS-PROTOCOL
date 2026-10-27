@@ -104,7 +104,7 @@ class KinSysPrototypeApplication:
     ):
         if pipeline is not None and any(
             adapter is not None
-            for adapter in (minah_adapter, identity_adapter, authority_adapter, minah_profile)
+            for adapter in (minah_adapter, identity_adapter, authority_adapter, minah_profile, minah_profile_approval, profile_signature_verifier, profile_revocation_checker)
         ):
             raise ValueError("Pass either a configured pipeline or ingress adapters/profile, not both.")
         self.demonstrator = demonstrator or IntegratedDemonstrator()
