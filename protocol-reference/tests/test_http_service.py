@@ -540,6 +540,19 @@ class HttpServiceTests(unittest.TestCase):
                     [event["action"] for event in audit],
                     ["RECOVERY_STARTED", "RECOVERY_COMPLETED"],
                 )
+                replacement_response, replacement_body = self.request_with_app(
+                    app2,
+                    "/protocol/operations/HTTP-RECOVER-COMMIT-1/recover",
+                    "POST",
+                    {"operation_id": "DIFFERENT-OPERATION", "action": "REPLACE"},
+                )
+                self.assertEqual(replacement_response["status"], 400)
+                self.assertEqual(
+                    replacement_body["error"]["code"], "RECOVERY_BODY_NOT_ALLOWED"
+                )
+                self.assertEqual(
+                    len(app2.pipeline.ivm.history(payload["target_ref"])), 1
+                )
                 audit_response, audit_body = self.request_with_app(
                     app2,
                     "/protocol/operations/HTTP-RECOVER-COMMIT-1/recovery-events",
