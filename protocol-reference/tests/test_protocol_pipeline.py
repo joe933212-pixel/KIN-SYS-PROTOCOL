@@ -56,7 +56,7 @@ class ProtocolPipelineTests(unittest.TestCase):
         }
         pipeline = KinSysProtocolPipeline(minah_profile=profile)
         self.addCleanup(pipeline.close)
-        result = pipeline.execute(request(operation_id="PROFILE-PIN-01"))
+        result = pipeline.execute(request(operation_id="PROFILE-PIN-01", jurisdiction="UG"))
         recorded = result["minah_disposition"]["deployment_profile"]
         self.assertEqual(recorded["deployment_id"], "enterprise-finance-minah-02")
         self.assertEqual(recorded["owner_scope"], "ENTERPRISE")
@@ -64,6 +64,41 @@ class ProtocolPipelineTests(unittest.TestCase):
         reviewed = next(event for event in result["cee_events"] if event["phase"] == "MINAH_REVIEWED")
         self.assertEqual(reviewed["detail"]["minah_deployment_id"], "enterprise-finance-minah-02")
         self.assertEqual(reviewed["detail"]["minah_profile_version"], "kin-sys-minah-profile-0.1")
+
+    def test_profile_jurisdiction_mismatch_stops_before_minah_and_ivm(self):
+        class MustNotRunMinah:
+            called = False
+            def review(self, evidence):
+                self.called = True
+                raise AssertionError('MINAH must not run outside its configured jurisdiction')
+
+        profile = {
+            'profile_version': 'kin-sys-minah-profile-0.1',
+            'deployment_id': 'uganda-enterprise-minah',
+            'owner_scope': 'ENTERPRISE',
+            'owner_ref': 'ENTERPRISE-UG-01',
+            'use_case': 'CROSS_BORDER_OPERATIONS',
+            'jurisdictions': ['UG'],
+            'policy_pack_version': 'POLICY-1',
+            'source_pack_version': 'SOURCES-1',
+            'model_ref': 'institution-agent-v1',
+            'deployment_mode': 'ON_PREMISES',
+            'may_authorise': False,
+        }
+        agent = MustNotRunMinah()
+        pipeline = KinSysProtocolPipeline(minah_profile=profile, minah_adapter=agent)
+        try:
+            result = pipeline.execute(request(operation_id='SCOPE-MISMATCH-01', jurisdiction='KE'))
+            self.assertEqual(result['status'], 'REJECTED')
+            self.assertFalse(agent.called)
+            self.assertIsNone(result['ivm_decision'])
+            phases = [event['phase'] for event in result['cee_events']]
+            self.assertIn('MINAH_REVIEWED', phases)
+            self.assertNotIn('IDENTITY_VERIFIED', phases)
+            self.assertNotIn('ADMITTED', phases)
+            self.assertEqual(result['minah_disposition']['reason'], 'MINAH_PROFILE_JURISDICTION_MISMATCH')
+        finally:
+            pipeline.close()
 
     def test_retry_cannot_switch_minah_deployment_profile(self):
         with tempfile.TemporaryDirectory() as directory:
