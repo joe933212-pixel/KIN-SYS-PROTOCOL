@@ -26,7 +26,7 @@ No vendor, cloud, AI model, operating system, GPU or hardware is mandated. Adapt
 
 The SQLite ingress journal binds an operation ID to a canonical request fingerprint. Reusing an operation ID with different content raises a conflict. For a completed v0.1 HTTP operation, replay returns the stored decision and pipeline result without invoking the pipeline again. The local server persists this journal at `KIN_SYS_INGRESS_DB`, defaulting to `.kin-sys-prototype/ingress.sqlite3`; tests may use an in-memory or temporary database.
 
-An operation left non-final after a process interruption returns UNKNOWN and is never automatically sent to CEE a second time. `GET /protocol/operations/{operation_id}` may reconcile an uncertain ingress record only when the CEE journal already contains a `FINALIZED` result; it copies that established result into the ingress journal. If CEE is absent or non-final, the operation remains UNKNOWN and requires further reconciliation. Recovery across non-final CEE and IVM states remains an open acceptance gate.
+An operation left non-final after a process interruption returns UNKNOWN and is never automatically sent to CEE a second time. `GET /protocol/operations/{operation_id}` reads the ingress journal first. If the ingress record is uncertain, it inspects CEE and may reconcile only when CEE already contains a `FINALIZED` result; it then copies that established result into the ingress journal. If CEE is absent or non-final, the operation remains UNKNOWN and requires further reconciliation. If there is no ingress record, the endpoint falls back to the CEE pipeline journal. Recovery across non-final CEE and IVM states remains an open acceptance gate.
 
 ## What tests prove
 
