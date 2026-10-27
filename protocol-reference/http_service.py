@@ -410,6 +410,7 @@ class KinSysPrototypeApplication:
                         key: evidence[key] for key in (
                             "policy", "execution_request_fingerprint", "cee_phase_before",
                             "pipeline_status", "protocol_decision", "exception_type",
+                            "reason_code",
                         ) if key in evidence
                     } if isinstance(evidence, dict) else {}
                     safe_events.append({
