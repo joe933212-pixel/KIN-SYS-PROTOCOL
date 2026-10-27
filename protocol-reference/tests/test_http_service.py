@@ -85,6 +85,8 @@ class HttpServiceTests(unittest.TestCase):
         response, body = self.request("/system/capabilities")
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["protocol_pipeline"]["status"], "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED")
+        self.assertFalse(body["legacy_route_policy"]["enabled_by_default"])
+        self.assertFalse(body["legacy_route_policy"]["legacy_routes_are_canonical_execution_path"])
         self.assertFalse(body["protocol_pipeline"]["cross_store_atomicity"])
         self.assertEqual(
             body["ingress_adapter_contract"]["durable_ingress_journal"],
@@ -124,7 +126,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["protocol_boundary"]["cee"], "NOT_WIRED_AS_SEPARATE_LIFECYCLE_ENGINE")
 
 
-    def test_internal_legacy_protocol_request_shape_is_disabled_by_default(self):
+    def test_legacy_execution_routes_are_disabled_by_default(self):
         app = create_app()
         try:
             response, body = self.request_with_app(
@@ -133,6 +135,15 @@ class HttpServiceTests(unittest.TestCase):
             )
             self.assertEqual(response["status"], 404)
             self.assertEqual(body["error"]["code"], "LEGACY_REQUEST_SHAPE_DISABLED")
+            for path in (
+                "/demo/instructions",
+                "/cee/cases",
+                "/cee/reconciliation",
+                "/cee/settlement-evidence",
+            ):
+                response, body = self.request_with_app(app, path, "POST", {})
+                self.assertEqual(response["status"], 404, path)
+                self.assertEqual(body["error"]["code"], "ROUTE_NOT_AVAILABLE", path)
         finally:
             app.close()
 
