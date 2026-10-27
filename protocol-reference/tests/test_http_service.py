@@ -551,6 +551,18 @@ class HttpServiceTests(unittest.TestCase):
                     [event["action"] for event in audit_body["events"]],
                     ["RECOVERY_STARTED", "RECOVERY_COMPLETED"],
                 )
+                self.assertNotIn("exception_message", audit_body["events"][-1]["evidence"])
+                audit_response, audit_body = self.request_with_app(
+                    app2,
+                    "/protocol/operations/HTTP-RECOVER-COMMIT-1/recovery-events",
+                    "GET",
+                )
+                self.assertEqual(audit_response["status"], 200)
+                self.assertEqual(audit_body["count"], 2)
+                self.assertEqual(
+                    [event["action"] for event in audit_body["events"]],
+                    ["RECOVERY_STARTED", "RECOVERY_COMPLETED"],
+                )
                 # The public audit projection omits raw exception messages.
                 self.assertNotIn("reason", audit_body["events"][0]["evidence"])
             finally:
