@@ -237,6 +237,40 @@ class MinahFirstIngress:
                 pipeline_result.get("status") if isinstance(pipeline_result, dict) else None,
                 "UNKNOWN",
             )
+            if (
+                status == "UNKNOWN"
+                and isinstance(pipeline_result, dict)
+                and (
+                    pipeline_result.get("recovery_required") is True
+                    or pipeline_result.get("reason") in {
+                        "RECOVERY_REQUIRES_MANUAL_RECONCILIATION",
+                        "FINALIZED_CEE_RESULT_MISSING",
+                        "OPERATION_NOT_FOUND",
+                    }
+                )
+            ):
+                # UNKNOWN with recovery_required is a non-final operational state,
+                # not a terminal protocol decision. Keep result_json empty so a
+                # later recovery attempt can proceed when durable evidence returns.
+                self._set_phase(operation_id, "UNKNOWN_REQUIRES_RECONCILIATION")
+                self._record_recovery_event(
+                    operation_id, "RECOVERY_BLOCKED", phase_before,
+                    "UNKNOWN_REQUIRES_RECONCILIATION",
+                    {
+                        "reason": str(pipeline_result.get("reason")),
+                        "cee_phase": pipeline_result.get("cee_phase"),
+                    },
+                )
+                unresolved = self._unknown(
+                    operation_id, str(pipeline_result.get("reason") or "RECOVERY_REQUIRES_RECONCILIATION")
+                )
+                unresolved.update({
+                    "recovery_required": True,
+                    "contract_version": instruction.get("contract_version"),
+                    "request_id": instruction.get("request_id"),
+                    "rule_pack_version": instruction.get("rule_pack_version"),
+                })
+                return unresolved
             messages = {
                 "PASSED": "The durable protocol lifecycle was recovered. No external effect is implied.",
                 "REJECTED": "The recovered protocol lifecycle rejected the instruction.",
