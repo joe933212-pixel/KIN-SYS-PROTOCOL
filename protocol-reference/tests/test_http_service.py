@@ -99,7 +99,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["result"]["ivm_decision"]["to_state"], "ACTIVE")
         self.assertEqual(
             [event["phase"] for event in body["result"]["cee_events"]],
-            ["REQUESTED", "MINAH_REVIEWED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+            ["REQUESTED", "MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED", "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
              "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED", "FINALIZED"],
         )
         trace = body["result"]["component_trace"]
