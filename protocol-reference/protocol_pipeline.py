@@ -59,8 +59,7 @@ class SyntheticAuthorityAdapter:
         actor = request.get("actor_id")
         action = request.get("event_type")
         return {
-            "verified": self.authority_active and isinstance(actor, str) and bool(actor.strip())
-                and action == "ACTIVATE",
+            "verified": self.authority_active and actor == AUTHORITY_ID and action == "ACTIVATE",
             "mode": "SYNTHETIC_RULE_CHECK",
         }
 
