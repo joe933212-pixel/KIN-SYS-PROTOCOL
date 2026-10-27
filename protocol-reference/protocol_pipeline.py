@@ -196,7 +196,7 @@ class CEEJournal:
             terminal_branch = (
                 next_phase == "FINALIZED"
                 and (
-                    (current in {"MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED", "AUTHORITY_EVALUATED"} and outcome in {"DEFERRED", "REJECTED"})
+                    (current in {"MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED", "AUTHORITY_EVALUATED"} and outcome in {"DEFERRED", "REJECTED", "UNKNOWN"})
                     or (current == "COMMITTING" and outcome == "REJECTED")
                 )
             )
