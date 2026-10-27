@@ -33,12 +33,12 @@ The v0.1 reference implementation requires the following fields:
 | action, target_ref | Requested operation and target resource. |
 | purpose, jurisdiction | Why the request is made and which institutional/legal domain applies. |
 | submitted_at | Timestamp including an explicit timezone. |
-| payload_digest | Algorithm-labelled digest of the canonical request payload. The reference validator checks the sha256 label and length; it does not calculate or verify the digest. |
+| payload_digest | Algorithm-labelled SHA-256 digest of the canonical instruction envelope, excluding this field and including all other fields/extensions. The governed HTTP path recomputes and verifies it before execution. |
 | rule_pack_version | Exact policy/rule-pack version expected to govern the request. |
 | evidence_refs (optional) | References to evidence records, not necessarily raw documents. |
 | provider_profile (optional) | Informational deployment profile; it must not alter protocol meaning or be hardcoded to a vendor. |
 
-Unknown versions must not be silently interpreted as current. A production wire standard still needs canonicalisation, digest verification, schema evolution policy, authenticated transport, replay protection, key management and privacy review.
+Unknown versions must not be silently interpreted as current. The reference canonicalisation is UTF-8 JSON with sorted object keys, compact separators, non-ASCII characters preserved, and NaN/Infinity disallowed. A production wire standard still needs schema evolution policy, authenticated transport, replay protection, key management and privacy review.
 
 ## Decision envelope
 
@@ -76,12 +76,12 @@ The existing `POST /protocol/instructions` route accepts the v0.1 instruction en
 
 This is a constrained integration slice, not a general production wire implementation. The current pipeline only accepts the synthetic `ACTIVATE` action and rule pack `KIN-SYS-DEMO-RULES:1.0`. For this reference route, the envelope must include an `evidence` object extension; evidence references alone are not treated as proof or evidence content. The reference validator checks the declared SHA-256 digest's shape but does not recompute it against a canonical payload. The response reports `NOT_ATTEMPTED` for external effects because this route does not move funds or call a real external-effect provider. Default identity and authority adapters remain synthetic unless trusted adapters are injected.
 
-These changes do not prove real identity or authority, legal correctness, production security, distributed finality, digest authenticity or external-effect truth.
+These changes do not prove real identity or authority, legal correctness, production security, distributed finality or external-effect truth. Digest verification proves only that the received envelope matches its declared digest; it does not authenticate the sender or prove that its claims are true.
 
 Next acceptance gates:
-1. Define and implement canonical payload-digest computation and verification without weakening evidence requirements.
-2. Extend the internal execution contract beyond the single synthetic action/rule pack, with explicit compatibility and fail-closed handling.
-3. Add end-to-end tests proving rejection/deferral prevents every protected side effect and exercise restart/reconciliation behaviour through the HTTP boundary.
+1. Extend the internal execution contract beyond the single synthetic action/rule pack, with explicit compatibility and fail-closed handling.
+2. Add end-to-end tests proving rejection/deferral prevents every protected side effect and exercise restart/reconciliation behaviour through the HTTP boundary.
+3. Complete authenticated identity/authority source contracts, trusted MINAH profile ownership and recovery/reconciliation across CEE and IVM state.
 3. Test duplicate and conflicting idempotency keys, restart recovery, timeouts and unknown provider outcomes.
 4. Add authenticated identity/authority and institutional-action adapter contracts.
 5. Validate machine-readable schemas against the Python validators and run the same suite across provider-neutral deployment profiles.
