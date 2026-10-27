@@ -342,13 +342,57 @@ class KinSysPrototypeApplication:
 
         operation_prefix = "/protocol/operations/"
         if path.startswith(operation_prefix):
+            recovery_suffix = "/recover"
+            is_recovery_request = path.endswith(recovery_suffix)
+            operation_id = (
+                path[len(operation_prefix):-len(recovery_suffix)]
+                if is_recovery_request else path[len(operation_prefix):]
+            )
+            if not _ID_RE.fullmatch(operation_id):
+                return _response(
+                    start_response, 400,
+                    {"error": {"code": "INVALID_OPERATION_ID", "message": "Operation ID has an invalid format."}},
+                    request_id,
+                )
+            if is_recovery_request:
+                if method != "POST":
+                    return _response(
+                        start_response, 405,
+                        {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use POST to request explicit operation recovery."}},
+                        request_id,
+                    )
+                recovered = self.ingress.recover(
+                    operation_id,
+                    pipeline_recovery=self.pipeline.recover,
+                    pipeline_inspector=self.pipeline.inspect,
+                )
+                if recovered is None:
+                    recovered = self.pipeline.recover(operation_id)
+                    if recovered.get("reason") == "OPERATION_NOT_FOUND":
+                        return _response(
+                            start_response, 404,
+                            {"error": {"code": "OPERATION_NOT_FOUND", "message": "No protocol or ingress journal operation matches this ID."}},
+                            request_id,
+                        )
+                return _response(
+                    start_response, 200,
+                    {
+                        "status": recovered.get("protocol_decision", recovered.get("status", "UNKNOWN")),
+                        "result": recovered,
+                        "recovery_required": bool(
+                            recovered.get("recovery_required")
+                            or recovered.get("protocol_decision") == "UNKNOWN"
+                        ),
+                        "production_ready": False,
+                    },
+                    request_id,
+                )
             if method != "GET":
                 return _response(
                     start_response, 405,
                     {"error": {"code": "METHOD_NOT_ALLOWED", "message": "Use GET to inspect a protocol operation."}},
                     request_id,
                 )
-            operation_id = path[len(operation_prefix):]
             if not _ID_RE.fullmatch(operation_id):
                 return _response(
                     start_response, 400,
