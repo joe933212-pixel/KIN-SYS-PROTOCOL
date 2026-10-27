@@ -75,6 +75,12 @@ class MinahFirstIngressTests(unittest.TestCase):
             "jurisdiction": "UG", "rule_pack_version": "ug-rules-1",
         }
         value.update(changes)
+        if value.get("contract_version") == "kin-sys-governed-contract-0.1":
+            value.setdefault("submitted_at", "2026-10-27T10:00:00+03:00")
+            value.setdefault("payload_digest", "sha256:" + ("0" * 64))
+            value.setdefault("evidence_refs", [])
+            value.setdefault("constraints", {})
+            value["payload_digest"] = compute_payload_digest(value)
         return value
 
     def test_order_is_minah_then_identity_then_authority_then_cee(self):
@@ -191,7 +197,7 @@ class MinahFirstIngressTests(unittest.TestCase):
 
         self.ingress.close()
         first = MinahFirstIngress(self.db_path, pipeline_executor=execute_once)
-        result = first.execute(instruction, execution_request={"operation_id": "op-1"})
+        result = first.execute(instruction, execution_request={"operation_id": "op-1", "_contract_envelope": instruction})
         first.close()
         self.assertEqual(result["protocol_decision"], "PASSED")
         self.assertEqual(execution_calls, ["op-1"])
@@ -298,7 +304,7 @@ class MinahFirstIngressTests(unittest.TestCase):
             "op-1",
             {
                 **finalized_snapshot,
-                "request_fingerprint": _fingerprint({"operation_id": "op-1"}),
+                "request_fingerprint": _fingerprint({"operation_id": "op-1", "_contract_envelope": instruction}),
             },
         )
         self.assertEqual(recovered["protocol_decision"], "PASSED")
