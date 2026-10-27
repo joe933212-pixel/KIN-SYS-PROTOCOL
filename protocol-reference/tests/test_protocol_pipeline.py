@@ -234,6 +234,36 @@ class ProtocolPipelineTests(unittest.TestCase):
         finally:
             pipeline.close()
 
+    def test_authority_verification_api_outage_returns_unknown_and_stops(self):
+        class AuthorityUnavailableAgent:
+            def review(self, evidence):
+                return {
+                    "status": "ADVISORY_ONLY",
+                    "missing_fields": [],
+                    "source_refs": ["OWNER-POLICY-1"],
+                    "uncertainty": "LOW",
+                    "may_authorise": False,
+                    "model_version": "institution-agent-v1",
+                }
+
+            def verify_action(self, payload):
+                raise TimeoutError("authority API unavailable")
+
+        pipeline = KinSysProtocolPipeline(minah_adapter=AuthorityUnavailableAgent())
+        try:
+            result = pipeline.execute(request(operation_id="MINAH-AUTHORITY-OUTAGE"))
+            self.assertEqual(result["status"], "UNKNOWN")
+            self.assertEqual(result["reason"], "AUTHORITY_VERIFICATION_UNAVAILABLE")
+            self.assertIsNone(result["ivm_decision"])
+            self.assertFalse(result["funds_moved"])
+            phases = [event["phase"] for event in result["cee_events"]]
+            self.assertIn("IDENTITY_VERIFIED", phases)
+            self.assertNotIn("AUTHORITY_VERIFIED", phases)
+            self.assertNotIn("ADMITTED", phases)
+            self.assertNotIn("EXECUTING", phases)
+        finally:
+            pipeline.close()
+
     def test_complete_path_runs_minah_ivm_and_cee_in_order(self):
         result = self.pipeline.execute(request())
         self.assertEqual(result["status"], "COMMITTED")
