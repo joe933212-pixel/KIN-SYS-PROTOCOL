@@ -99,6 +99,10 @@ class HttpServiceTests(unittest.TestCase):
             "POST /protocol/operations/{operation_id}/recover",
         )
         self.assertEqual(
+            body["ingress_adapter_contract"]["legacy_internal_request_shape"],
+            "OPT_IN_ONLY_WITH_ENABLE_LEGACY_DEMO_ROUTES",
+        )
+        self.assertEqual(
             body["ingress_adapter_contract"]["recovery_audit_endpoint"],
             "GET /protocol/operations/{operation_id}/recovery-events",
         )
@@ -118,6 +122,19 @@ class HttpServiceTests(unittest.TestCase):
         self.assertFalse(result["payment_lifecycle"]["funds_moved"])
         self.assertEqual(body["protocol_boundary"]["ivm"], "NOT_WIRED_AS_SEPARATE_RUNTIME")
         self.assertEqual(body["protocol_boundary"]["cee"], "NOT_WIRED_AS_SEPARATE_LIFECYCLE_ENGINE")
+
+
+    def test_internal_legacy_protocol_request_shape_is_disabled_by_default(self):
+        app = create_app()
+        try:
+            response, body = self.request_with_app(
+                app, "/protocol/instructions", "POST",
+                {"operation_id": "LEGACY-REQUEST-DISABLED"},
+            )
+            self.assertEqual(response["status"], 404)
+            self.assertEqual(body["error"]["code"], "LEGACY_REQUEST_SHAPE_DISABLED")
+        finally:
+            app.close()
 
     def test_protocol_route_returns_full_minah_ivm_cee_trace(self):
         payload = {
