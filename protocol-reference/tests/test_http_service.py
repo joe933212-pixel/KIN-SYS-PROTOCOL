@@ -14,8 +14,16 @@ from http_service import create_app
 
 class HttpServiceTests(unittest.TestCase):
     def setUp(self):
-        self.app = create_app()
+        self.app = create_app(enable_legacy_demo_routes=True)
         self.addCleanup(self.app.close)
+
+    def request_with_app(self, app, path, method="GET", body=None, content_type="application/json", headers=None):
+        original = self.app
+        self.app = app
+        try:
+            return self.request(path, method, body, content_type, headers)
+        finally:
+            self.app = original
 
     def request(self, path, method="GET", body=None, content_type="application/json", headers=None):
         raw = b"" if body is None else json.dumps(body).encode("utf-8")
@@ -37,6 +45,14 @@ class HttpServiceTests(unittest.TestCase):
         chunks = self.app(environ, start_response)
         payload = json.loads(b"".join(chunks).decode("utf-8"))
         return captured, payload
+
+    def test_legacy_synthetic_routes_are_disabled_by_default(self):
+        app = create_app()
+        self.addCleanup(app.close)
+        for path in ("/demo/instructions", "/cee/cases", "/cee/reconciliation", "/cee/settlement-evidence"):
+            response, body = self.request_with_app(app, path, "POST", {})
+            self.assertEqual(response["status"], 404)
+            self.assertEqual(body["error"]["code"], "ROUTE_NOT_AVAILABLE")
 
     def test_health_is_live_and_carries_request_id(self):
         response, body = self.request("/system/health", headers={"HTTP_X_REQUEST_ID": "test-request-1"})
