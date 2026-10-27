@@ -354,6 +354,8 @@ class KinSysPrototypeApplication:
                     request_id,
                 )
         if path == "/demo/instructions":
+            if self.enable_legacy_demo_routes is False:
+                return _response(start_response, 404, {"error": {"code": "ROUTE_NOT_AVAILABLE", "message": "Enable legacy demo routes explicitly to use this synthetic route."}}, request_id)
             if method != "POST":
                 return _response(
                     start_response, 405,
