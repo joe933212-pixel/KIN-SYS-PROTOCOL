@@ -278,6 +278,37 @@ class KinSysProtocolPipeline:
         self.cee.close()
         self.ivm.close()
 
+    def _assert_ivm_event_consistent(self, request: dict[str, Any]) -> None:
+        """Reject contradictory IVM event/history evidence before recovery or execution."""
+        event_request = {
+            key: request[key] for key in (
+                "event_id", "process_id", "actor_id", "event_type",
+                "rule_set", "rule_version",
+            )
+        }
+        event_id = event_request["event_id"]
+        stored_event = self.ivm.event(event_id)
+        matching_history = [
+            item for item in self.ivm.history(event_request["process_id"])
+            if item.get("event_id") == event_id
+        ]
+        if stored_event is None:
+            if matching_history:
+                raise ExecutionConflict(
+                    "IVM_HISTORY_WITHOUT_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+                )
+            return
+        if stored_event.get("request_digest") != _digest(event_request):
+            raise ExecutionConflict("IVM_EVENT_DIGEST_MISMATCH_REQUIRES_MANUAL_RECONCILIATION")
+        if stored_event.get("process_id") != event_request["process_id"]:
+            raise ExecutionConflict("IVM_EVENT_PROCESS_BINDING_MISMATCH")
+        if len(matching_history) > 1:
+            raise ExecutionConflict("DUPLICATE_IVM_HISTORY_REQUIRES_MANUAL_RECONCILIATION")
+        if stored_event.get("outcome") == "ACCEPTED" and len(matching_history) != 1:
+            raise ExecutionConflict("IVM_COMMIT_HISTORY_MISSING_REQUIRES_MANUAL_RECONCILIATION")
+        if stored_event.get("outcome") != "ACCEPTED" and matching_history:
+            raise ExecutionConflict("REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY")
+
     def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
         self._validate(request)
         operation_id = request["operation_id"]
@@ -619,6 +650,10 @@ class KinSysProtocolPipeline:
 
         ivm_result: dict[str, Any]
         if operation["phase"] == "COMMITTING":
+            # A retry may safely reuse an event ID only if the IVM event and
+            # transition history agree with the pinned request. Corrupt or
+            # contradictory store evidence must remain unresolved.
+            self._assert_ivm_event_consistent(request)
             decision = self.ivm.execute({
                 "event_id": request["event_id"],
                 "process_id": request["process_id"],
