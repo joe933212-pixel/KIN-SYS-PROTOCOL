@@ -162,6 +162,9 @@ class KinSysPrototypeApplication:
                         "injection": "create_app(minah_adapter=..., identity_adapter=..., authority_adapter=..., minah_profile=...)",
                         "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
                         "default_adapters": "SYNTHETIC_ONLY_NOT_REAL_AUTHENTICATION_OR_LEGAL_AUTHORITY",
+                        "minah_profile": "VALIDATED_AND_PINNED_TO_OPERATION_FINGERPRINT_AND_MINAH_DISPOSITION",
+                        "profile_owner_authentication": "NOT_IMPLEMENTED",
+                        "jurisdiction_profile_matching": "NOT_IMPLEMENTED",
                         "single_pipeline": True,
                     },
                     "protocol_pipeline": {
