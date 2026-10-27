@@ -85,11 +85,28 @@ def _response(start_response: Callable, status: int, body: dict[str, Any], reque
 class KinSysPrototypeApplication:
     """Small WSGI application exposing only the local synthetic vertical slice."""
 
-    def __init__(self, demonstrator: IntegratedDemonstrator | None = None,
-                 pipeline: KinSysProtocolPipeline | None = None,
-                 case_coordinator: CEECaseCoordinator | None = None, enable_legacy_demo_routes: bool = False):
+    def __init__(
+        self,
+        demonstrator: IntegratedDemonstrator | None = None,
+        pipeline: KinSysProtocolPipeline | None = None,
+        case_coordinator: CEECaseCoordinator | None = None,
+        enable_legacy_demo_routes: bool = False,
+        *,
+        minah_adapter: Any | None = None,
+        identity_adapter: Any | None = None,
+        authority_adapter: Any | None = None,
+    ):
+        if pipeline is not None and any(
+            adapter is not None
+            for adapter in (minah_adapter, identity_adapter, authority_adapter)
+        ):
+            raise ValueError("Pass either a configured pipeline or ingress adapters, not both.")
         self.demonstrator = demonstrator or IntegratedDemonstrator()
-        self.pipeline = pipeline or KinSysProtocolPipeline()
+        self.pipeline = pipeline or KinSysProtocolPipeline(
+            minah_adapter=minah_adapter,
+            identity_adapter=identity_adapter,
+            authority_adapter=authority_adapter,
+        )
         self.case_coordinator = case_coordinator or CEECaseCoordinator()
         self.enable_legacy_demo_routes = enable_legacy_demo_routes
 
@@ -136,10 +153,15 @@ class KinSysPrototypeApplication:
                         "POST /cee/settlement-evidence",
                     ],
                     "instruction_flow": [
-                        "POST /demo/instructions: legacy integrated synthetic demonstration",
-                        "POST /protocol/instructions: MINAH disposition -> IVM transition checks -> CEE lifecycle journal",
-                        "POST /cee/cases: CEE orchestration of MINAH, origin/destination decisions, IVM economic gate and simulated payment lifecycle",
+                        "POST /protocol/instructions: MINAH review -> identity adapter -> action-authority adapter -> CEE admission/context -> IVM transition inside the synthetic execution slice -> final decision",
+                        "Legacy demo and CEE case routes are synthetic and disabled by default",
                     ],
+                    "ingress_adapter_contract": {
+                        "injection": "create_app(minah_adapter=..., identity_adapter=..., authority_adapter=...)",
+                        "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
+                        "default_adapters": "SYNTHETIC_ONLY_NOT_REAL_AUTHENTICATION_OR_LEGAL_AUTHORITY",
+                        "single_pipeline": True,
+                    },
                     "protocol_pipeline": {
                         "status": "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED",
                         "ivm": "LOCAL_SQLITE_REFERENCE_TRANSITION_RUNTIME",
@@ -325,7 +347,9 @@ class KinSysPrototypeApplication:
                         "production_ready": False,
                         "result": result,
                         "protocol_boundary": {
-                            "minah": "DETERMINISTIC_MOCK_ADVISORY_ONLY",
+                            "minah": "INJECTED_ADAPTER_OR_DETERMINISTIC_MOCK_ADVISORY_ONLY",
+                            "identity": "INJECTED_ADAPTER_OR_SYNTHETIC_SCHEMA_CHECK",
+                            "authority": "INJECTED_ADAPTER_OR_SYNTHETIC_RULE_CHECK",
                             "ivm": "LOCAL_SQLITE_REFERENCE_RUNTIME",
                             "cee": "LOCAL_SQLITE_LIFECYCLE_JOURNAL",
                             "cross_store_atomicity": False,
@@ -484,10 +508,16 @@ def create_app(
     case_coordinator: CEECaseCoordinator | None = None,
     *,
     enable_legacy_demo_routes: bool = False,
+    minah_adapter: Any | None = None,
+    identity_adapter: Any | None = None,
+    authority_adapter: Any | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
         enable_legacy_demo_routes=enable_legacy_demo_routes,
+        minah_adapter=minah_adapter,
+        identity_adapter=identity_adapter,
+        authority_adapter=authority_adapter,
     )
 
 
