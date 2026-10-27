@@ -76,6 +76,13 @@ class MinahDeploymentProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(MinahProfileViolation, "INVALID_DEPLOYMENT_MODE"):
             validate_minah_profile(profile(deployment_mode="MAGIC"))
 
+
+    def test_non_string_scope_and_mode_fail_as_profile_errors(self):
+        with self.assertRaisesRegex(MinahProfileViolation, "INVALID_OWNER_SCOPE"):
+            validate_minah_profile(profile(owner_scope=["NATIONAL_SOVEREIGN"]))
+        with self.assertRaisesRegex(MinahProfileViolation, "INVALID_DEPLOYMENT_MODE"):
+            validate_minah_profile(profile(deployment_mode={"mode": "ON_PREMISES"}))
+
     def test_returns_copy_without_mutating_input(self):
         original = profile()
         result = validate_minah_profile(original)
