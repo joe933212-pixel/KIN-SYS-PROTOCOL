@@ -161,6 +161,14 @@ class ProtocolPipelineTests(unittest.TestCase):
         with self.assertRaises(LifecycleViolation):
             self.pipeline.cee.advance("OP-X", "COMMITTED")
 
+    def test_legacy_unfinished_operation_without_minah_disposition_fails_closed(self):
+        payload = request(operation_id="LEGACY-OP", event_id="LEGACY-EV", process_id="LEGACY-PROC")
+        self.pipeline.cee.start("LEGACY-OP", payload)
+        self.pipeline.cee.advance("LEGACY-OP", "ADMITTED", detail={"legacy": True})
+        self.pipeline.cee.advance("LEGACY-OP", "CONTEXT_ESTABLISHED", detail={"legacy": True})
+        with self.assertRaisesRegex(ExecutionConflict, "LEGACY_OPERATION_REQUIRES_RECONCILIATION"):
+            self.pipeline.execute(payload)
+
 
 if __name__ == "__main__":
     unittest.main()
