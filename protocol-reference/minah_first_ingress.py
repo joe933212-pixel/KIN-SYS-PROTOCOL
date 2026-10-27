@@ -15,6 +15,7 @@ import sqlite3
 from typing import Any, Callable, Protocol
 
 from minah_profile_governance import MinahApprovalViolation
+from governed_contracts import assert_instruction_binding, verify_instruction_payload_digest, validate_decision_envelope
 
 
 def _canonical(value: Any) -> str:
@@ -100,6 +101,72 @@ class MinahFirstIngress:
             "phase": row["phase"],
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
         }
+
+    def reconcile(
+        self, operation_id: str, pipeline_snapshot: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Finalize an uncertain ingress record only when CEE already has a final result.
+
+        This method never resumes execution. Non-final or absent CEE state remains
+        unresolved and must not be resubmitted automatically.
+        """
+        row = self.db.execute(
+            "SELECT operation_id, phase, instruction_json, result_json FROM minah_first_ingress WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["result_json"]:
+            return self.inspect(operation_id)
+        if not isinstance(pipeline_snapshot, dict) or pipeline_snapshot.get("phase") != "FINALIZED":
+            return self.inspect(operation_id)
+        raw_result = pipeline_snapshot.get("result")
+        if not isinstance(raw_result, dict):
+            return self.inspect(operation_id)
+
+        instruction = verify_instruction_payload_digest(json.loads(row["instruction_json"]))
+        status = {
+            "COMMITTED": "PASSED",
+            "PASSED": "PASSED",
+            "REJECTED": "REJECTED",
+            "DEFERRED": "DEFERRED",
+            "UNKNOWN": "UNKNOWN",
+        }.get(raw_result.get("status"), "UNKNOWN")
+        messages = {
+            "PASSED": "The required synthetic protocol gates passed. No external effect is implied.",
+            "REJECTED": "A required protocol gate rejected the instruction. No external effect was performed.",
+            "DEFERRED": "The instruction needs additional information or review before it can proceed.",
+            "UNKNOWN": "The outcome could not be established safely. Reconcile the operation before retrying.",
+        }
+        recovered_pipeline_result = dict(raw_result)
+        recovered_pipeline_result["cee_events"] = pipeline_snapshot.get("cee_events", [])
+        recovered_pipeline_result["component_trace"] = pipeline_snapshot.get("component_trace", [])
+        recovered_pipeline_result["reconciled_from_cee"] = True
+        decision = self._decision(
+            operation_id, status,
+            str(raw_result.get("reason") or "REQUIRED_GATES_PASSED"),
+            messages[status],
+            minah_ref=f"minah-disposition:{operation_id}",
+            cee_ref=f"cee-operation:{operation_id}",
+            external_effect_status="NOT_ATTEMPTED",
+            evidence_refs=instruction.get("evidence_refs", []),
+        )
+        decision.update({
+            "contract_version": instruction["contract_version"],
+            "request_id": instruction["request_id"],
+            "rule_pack_version": instruction["rule_pack_version"],
+            "pipeline_result": recovered_pipeline_result,
+            "reconciled": True,
+        })
+        checked = validate_decision_envelope({
+            key: decision[key] for key in (
+                "contract_version", "request_id", "operation_id", "protocol_decision",
+                "reason_code", "user_message", "rule_pack_version", "minah_disposition_ref",
+                "cee_execution_ref", "external_effect_status", "evidence_refs",
+            )
+        })
+        assert_instruction_binding(instruction, checked)
+        return self._finish(operation_id, decision)
 
     def execute(
         self, instruction: dict[str, Any], *,
@@ -223,6 +290,7 @@ class MinahFirstIngress:
     ) -> dict[str, Any]:
         """Journal a contract instruction while delegating all gates to the canonical pipeline."""
         try:
+            self._set_phase(operation_id, "PIPELINE_PENDING")
             pipeline_result = self.pipeline_executor(dict(execution_request))
             status_map = {
                 "COMMITTED": "PASSED",
