@@ -231,6 +231,12 @@ class KinSysProtocolPipeline:
         operation = self.cee.get(operation_id)
         assert operation is not None
 
+        # A database created by the earlier lifecycle ordering may contain an
+        # unfinished CEE-admitted operation without a pinned MINAH disposition.
+        # Do not guess or resume it under the new ordering; require reconciliation.
+        if operation["phase"] in {"ADMITTED", "CONTEXT_ESTABLISHED"} and operation["minah_json"] is None:
+            raise ExecutionConflict("LEGACY_OPERATION_REQUIRES_RECONCILIATION")
+
         # REQUESTED is an idempotency/receipt record only. MINAH receives the
         # instruction before CEE admission or context establishment.
         if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
