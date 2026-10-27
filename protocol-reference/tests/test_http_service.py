@@ -539,17 +539,17 @@ class HttpServiceTests(unittest.TestCase):
                          "UNKNOWN_REQUIRES_RECONCILIATION")
 
         app.ingress._finish = original_finish
-        inspect_response, inspect_body = self.request_with_app(
-            app, "/protocol/operations/HTTP-RECONCILE-1", "GET"
+        recovery_response, recovery_body = self.request_with_app(
+            app, "/protocol/operations/HTTP-RECONCILE-1/recover", "POST"
         )
-        self.assertEqual(inspect_response["status"], 200)
-        self.assertEqual(inspect_body["source"], "MINAH_FIRST_INGRESS_JOURNAL")
-        self.assertEqual(inspect_body["status"], "PASSED")
-        self.assertFalse(inspect_body["reconciliation_required"])
-        self.assertTrue(inspect_body["operation"]["result"]["reconciled"])
+        self.assertEqual(recovery_response["status"], 200)
+        self.assertEqual(recovery_body["status"], "PASSED")
+        self.assertFalse(recovery_body["recovery_required"])
+        self.assertTrue(recovery_body["result"]["reconciled"])
         self.assertEqual(
-            inspect_body["operation"]["result"]["pipeline_result"]["status"], "COMMITTED"
+            recovery_body["result"]["pipeline_result"]["status"], "COMMITTED"
         )
+        # Recovery reads the durable CEE result; MINAH is not invoked again.
         self.assertEqual(calls, ["MINAH"])
 
     def test_http_verification_outages_return_unknown_without_cee_admission(self):
