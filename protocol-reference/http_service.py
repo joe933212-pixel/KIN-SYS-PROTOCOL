@@ -205,6 +205,7 @@ class KinSysPrototypeApplication:
                         "uncertain_inflight_replay": "UNKNOWN_UNTIL_EXPLICIT_RECOVERY_OR_RECONCILIATION",
                         "recovery_endpoint": "POST /protocol/operations/{operation_id}/recover",
                         "recovery_audit_endpoint": "GET /protocol/operations/{operation_id}/recovery-events",
+                        "legacy_internal_request_shape": "OPT_IN_ONLY_WITH_ENABLE_LEGACY_DEMO_ROUTES",
                         "recovery_semantics": "RESUME_PINNED_CEE_PHASE_WITH_STABLE_IVM_EVENT_ID; NO_REPLACEMENT_REQUEST",
                         "cross_store_reconciliation": "EXPLICIT_RECOVERY_FROM_DURABLE_MINAH_DISPOSITION; EARLY_AMBIGUOUS_PHASES_REMAIN_UNKNOWN; LOCAL_SQLITE_ONLY",
                         "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
@@ -520,6 +521,15 @@ class KinSysPrototypeApplication:
                 )
             try:
                 payload = self._read_json(environ, allowed_fields=_PROTOCOL_FIELDS)
+                if "contract_version" not in payload and not self.enable_legacy_demo_routes:
+                    return _response(
+                        start_response, 404,
+                        {"error": {
+                            "code": "LEGACY_REQUEST_SHAPE_DISABLED",
+                            "message": "Submit a governed v0.1 instruction envelope; the internal legacy request shape requires enable_legacy_demo_routes=True.",
+                        }},
+                        request_id,
+                    )
                 contract_instruction = None
                 decision_request_id = request_id
                 if "contract_version" in payload:
