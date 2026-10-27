@@ -939,7 +939,27 @@ class KinSysProtocolPipeline:
         if "_contract_envelope" in request:
             # Preserve the complete validated client envelope inside the durable
             # operation fingerprint so retries cannot alter omitted contract fields.
-            verify_instruction_payload_digest(request["_contract_envelope"])
+            envelope = verify_instruction_payload_digest(request["_contract_envelope"])
+            bindings = (
+                ("operation_id", request["operation_id"], envelope["operation_id"]),
+                ("target_ref", request["process_id"], envelope["target_ref"]),
+                ("principal_ref", request["actor_id"], envelope["principal_ref"]),
+                ("action", request["event_type"], envelope["action"]),
+                ("jurisdiction", request["jurisdiction"], envelope["jurisdiction"]),
+                (
+                    "rule_pack_version",
+                    f"{request['rule_set']}:{request['rule_version']}",
+                    envelope["rule_pack_version"],
+                ),
+            )
+            for field, internal_value, envelope_value in bindings:
+                if internal_value != envelope_value:
+                    raise ValueError("CONTRACT_BINDING_MISMATCH:" + field)
+            expected_event_id = "EV-" + hashlib.sha256(
+                envelope["idempotency_key"].encode("utf-8")
+            ).hexdigest()[:24]
+            if request["event_id"] != expected_event_id:
+                raise ValueError("CONTRACT_BINDING_MISMATCH:idempotency_key")
         for key in (
             "operation_id", "event_id", "process_id", "actor_id", "event_type",
             "jurisdiction", "rule_set", "rule_version",
