@@ -419,11 +419,8 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.pipeline.cee.start("EARLY-RECOVERY", {
             **payload, "_minah_deployment_profile": self.pipeline.minah_profile,
         })
-        result = self.pipeline.recover("EARLY-RECOVERY")
-        self.assertEqual(result["status"], "UNKNOWN")
-        self.assertEqual(result["reason"], "RECOVERY_REQUIRES_MANUAL_RECONCILIATION")
-        self.assertEqual(result["cee_phase"], "REQUESTED")
-        self.assertTrue(result["recovery_required"])
+        with self.assertRaisesRegex(ExecutionConflict, "MINAH_DISPOSITION_NOT_DURABLE"):
+            self.pipeline.recover("EARLY-RECOVERY")
         self.assertEqual(self.pipeline.ivm.history("PROC-EARLY"), [])
 
     def test_legacy_unfinished_operation_without_minah_disposition_fails_closed(self):
