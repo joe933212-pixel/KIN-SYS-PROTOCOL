@@ -1,11 +1,11 @@
 # MINAH-First Ingress Gate — Reference Implementation
 
-**Status:** Experimental reference module and unit tests. The existing synthetic `/protocol/instructions` and `/cee/cases` paths have been reordered so MINAH review precedes CEE admission/context. The standalone `MinahFirstIngress` adapter gate is still not wired into HTTP.  
+**Status:** Experimental reference module plus HTTP integration of provider-neutral adapter injection on `/protocol/instructions`. The HTTP route uses the existing pipeline; the standalone `MinahFirstIngress` journal is still not wired into HTTP, and the legacy `/cee/cases` flow is a separate opt-in synthetic demo.  
 **Copyright:** Joel Kagoro © 2026. See repository licensing and notice files.
 
 ## Why this slice exists
 
-The current CEE case coordinator records a CEE request/admission/context phase before it calls its MINAH adapter. Although the existing coordinator consults MINAH before institutional decisions, the order does not yet satisfy the stronger architectural requirement that MINAH is the first protocol-facing recipient of every protected instruction.
+The earlier CEE case coordinator recorded admission/context before its MINAH adapter, which did not satisfy the stronger MINAH-first requirement. The `/protocol/instructions` pipeline has since been reordered, and the HTTP app now accepts injected MINAH, identity and action-authority adapters and passes them into that same pipeline. The legacy `/cee/cases` route remains disabled by default because it is not yet unified with this ingress.
 
 The standalone module makes the intended ingress order executable and testable at a boundary:
 
@@ -38,4 +38,4 @@ They do **not** prove:
 - that the CEE coordinator is bypass-resistant;
 - distributed atomicity, payment finality, legal correctness or production security.
 
-The current HTTP integration is an incremental ordering correction, not a complete implementation of the standalone gate. It does not yet wire real identity/authority adapters or inject their verified results into the CEE coordinator. The legacy `/demo/instructions` route remains a synthetic demonstration and must not be treated as a production protected ingress. Next: add explicit provider-neutral identity and action-specific authority adapter contracts to the real HTTP ingress, ensure every protected route uses one governed path, and test the complete MINAH → identity → authority → CEE → final-decision sequence against the running service.
+The HTTP application now accepts `minah_adapter`, `identity_adapter` and `authority_adapter` through `create_app(...)`; those adapters are passed into the existing `KinSysProtocolPipeline` used by `/protocol/instructions`. The default adapters remain synthetic. HTTP-level tests now exercise injected adapters and verify order and early rejection before CEE admission/IVM. This does not make the standalone `MinahFirstIngress` journal part of HTTP, does not integrate the opt-in legacy `/cee/cases` path, and does not provide production identity or legal-authority verification. The legacy `/demo/instructions` route is also disabled by default. Next: test this ingress against a running server, define production adapter trust/error/timeout contracts, and decide how to deprecate or unify legacy paths without creating an alternate execution route.
