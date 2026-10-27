@@ -76,6 +76,14 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["protocol_pipeline"]["status"], "SYNTHETIC_VERTICAL_SLICE_IMPLEMENTED")
         self.assertFalse(body["protocol_pipeline"]["cross_store_atomicity"])
+        self.assertEqual(
+            body["ingress_adapter_contract"]["durable_ingress_journal"],
+            "SQLITE_ENABLED_FOR_V0_1_INSTRUCTION_ENVELOPE",
+        )
+        self.assertEqual(
+            body["ingress_adapter_contract"]["cross_store_reconciliation"],
+            "NOT_IMPLEMENTED",
+        )
         self.assertIn(
             "production identity and cryptographic authentication",
             body["not_yet_wired_as_production_components"],
