@@ -297,7 +297,7 @@ class KinSysProtocolPipeline:
                 )
             else:
                 pinned_request = prior_operation["request_json"]
-                if pinned_request.get("_minah_deployment_profile") != self.minah_profile:
+                if _canonical(pinned_request.get("_minah_deployment_profile")) != _canonical(self.minah_profile):
                     raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
                 if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
                     raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
@@ -707,7 +707,7 @@ class KinSysProtocolPipeline:
 
         pinned_request = operation["request_json"]
         pinned_profile = pinned_request.get("_minah_deployment_profile")
-        if pinned_profile != self.minah_profile:
+        if _canonical(pinned_profile) != _canonical(self.minah_profile):
             raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
         if self.require_profile_approval:
             if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
