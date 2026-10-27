@@ -415,7 +415,9 @@ class KinSysProtocolPipeline:
         # These are explicit adapter boundaries. Defaults are synthetic schema/rule
         # checks only; they are not real identity authentication or legal authority.
         if operation["phase"] == "MINAH_REVIEWED":
-            identity = self.identity_adapter.verify_principal(request)
+            # Institution-owned MINAH agents may invoke their approved identity API.
+            minah_identity_check = getattr(self.minah, "verify_principal", None)
+            identity = minah_identity_check(request) if callable(minah_identity_check) else self.identity_adapter.verify_principal(request)
             if not isinstance(identity, dict) or identity.get("verified") is not True:
                 result = {
                     "operation_id": operation_id, "status": "REJECTED",
@@ -435,7 +437,9 @@ class KinSysProtocolPipeline:
         operation = self.cee.get(operation_id)
         assert operation is not None
         if operation["phase"] == "IDENTITY_VERIFIED":
-            authority = self.authority_adapter.verify_action(request)
+            # MINAH may coordinate action-specific authority checks through approved APIs.
+            minah_authority_check = getattr(self.minah, "verify_action", None)
+            authority = minah_authority_check(request) if callable(minah_authority_check) else self.authority_adapter.verify_action(request)
             if not isinstance(authority, dict) or authority.get("verified") is not True:
                 result = {
                     "operation_id": operation_id, "status": "REJECTED",
