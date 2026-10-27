@@ -371,7 +371,7 @@ class ProtocolPipelineTests(unittest.TestCase):
                 pipeline.close()
             resumed = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
             try:
-                result = resumed.execute(request())
+                result = resumed.recover("OP-001")
                 self.assertEqual(result["status"], "COMMITTED")
                 self.assertTrue(result["duplicate"])
                 self.assertEqual(resumed.ivm.process("PROC-001")["state"], "ACTIVE")
@@ -379,6 +379,27 @@ class ProtocolPipelineTests(unittest.TestCase):
                 self.assertEqual([e["phase"] for e in resumed.cee.events("OP-001")][-2:], ["COMMITTED", "FINALIZED"])
             finally:
                 resumed.close()
+
+
+    def test_recovery_refuses_to_repeat_minah_when_disposition_was_not_persisted(self):
+        payload = request(operation_id="RECOVERY-AMBIGUOUS", event_id="RECOVERY-EVENT", process_id="RECOVERY-PROC")
+        self.pipeline.cee.start("RECOVERY-AMBIGUOUS", {
+            **payload,
+            "_minah_deployment_profile": self.pipeline.minah_profile,
+        })
+        with self.assertRaisesRegex(ExecutionConflict, "MINAH_DISPOSITION_NOT_DURABLE"):
+            self.pipeline.recover("RECOVERY-AMBIGUOUS")
+        self.assertEqual(self.pipeline.cee.get("RECOVERY-AMBIGUOUS")["phase"], "REQUESTED")
+        self.assertIsNone(self.pipeline.ivm.event("RECOVERY-EVENT"))
+
+    def test_recovery_refuses_changed_minah_profile(self):
+        payload = request(operation_id="RECOVERY-PROFILE", event_id="RECOVERY-PROFILE-EVENT", process_id="RECOVERY-PROFILE-PROC")
+        self.pipeline.execute(payload)
+        changed_profile = dict(self.pipeline.minah_profile)
+        changed_profile["deployment_id"] = "different-institution-profile"
+        self.pipeline.minah_profile = changed_profile
+        with self.assertRaisesRegex(ExecutionConflict, "RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE"):
+            self.pipeline.recover("RECOVERY-PROFILE")
 
     def test_finalized_operation_is_idempotent(self):
         first = self.pipeline.execute(request())
