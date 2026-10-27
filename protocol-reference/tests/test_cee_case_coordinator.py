@@ -1,5 +1,7 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Tests for the CEE-owned synthetic case coordinator; no real funds or services."""
+import hashlib
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -7,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cee_case_coordinator import CEECaseCoordinator, CaseConflict
+from cee_case_coordinator import CEECaseCoordinator, CaseConflict, CaseRecoveryRequired
 
 
 def request(operation_id="CASE-001", **overrides):
@@ -80,6 +82,18 @@ class CEECaseCoordinatorTests(unittest.TestCase):
         self.assertIsNone(result["institutional_decisions"])
         self.assertIsNone(result["payment_lifecycle"])
         self.assertFalse(result["funds_moved"])
+
+    def test_legacy_case_without_pinned_minah_result_requires_reconciliation(self):
+        payload = request("CASE-LEGACY-ORDER")
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        self.coordinator.cee_db.execute(
+            "INSERT INTO cee_cases(operation_id,request_digest,request_json,phase) VALUES(?,?,?,'CONTEXT_PINNED')",
+            (payload["operation_id"], digest, canonical),
+        )
+        self.coordinator.cee_db.commit()
+        with self.assertRaisesRegex(CaseRecoveryRequired, "LEGACY_CASE_REQUIRES_RECONCILIATION"):
+            self.coordinator.execute(payload)
 
     def test_identical_replay_returns_same_result_and_conflicting_reuse_fails(self):
         payload = request("CASE-REPLAY")
