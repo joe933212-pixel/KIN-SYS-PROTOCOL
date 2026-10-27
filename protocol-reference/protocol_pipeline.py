@@ -15,6 +15,7 @@ import sqlite3
 from typing import Any
 
 from minah_deployment_profile import PROFILE_VERSION, validate_minah_profile
+from minah_profile_governance import MinahApprovalViolation, verify_minah_profile_approval
 
 from integrated_demo import DeterministicMinahAdapter
 from transition import EventIdConflict, ProtocolStore
@@ -239,6 +240,10 @@ class KinSysProtocolPipeline:
         authority_adapter: Any | None = None,
         authority_active: bool = True,
         minah_profile: dict[str, Any] | None = None,
+        minah_profile_approval: dict[str, Any] | None = None,
+        profile_signature_verifier: Any | None = None,
+        profile_revocation_checker: Any | None = None,
+        require_profile_approval: bool = False,
     ):
         self.cee = CEEJournal(cee_database)
         self.ivm = ProtocolStore(ivm_database)
@@ -259,6 +264,14 @@ class KinSysProtocolPipeline:
             "deployment_mode": "SELF_HOSTED",
             "may_authorise": False,
         })
+        self.minah_profile_approval = minah_profile_approval
+        self.profile_signature_verifier = profile_signature_verifier
+        self.profile_revocation_checker = profile_revocation_checker
+        self.require_profile_approval = require_profile_approval
+        if require_profile_approval and (
+            not callable(profile_signature_verifier) or not callable(profile_revocation_checker)
+        ):
+            raise MinahApprovalViolation("TRUSTED_SIGNATURE_AND_REVOCATION_CHECKERS_REQUIRED")
 
     def close(self) -> None:
         self.cee.close()
@@ -267,10 +280,26 @@ class KinSysProtocolPipeline:
     def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
         self._validate(request)
         operation_id = request["operation_id"]
+        # Governed mode verifies the approval before the operation can invoke MINAH.
+        # The default synthetic reference mode remains explicitly opt-in to this
+        # additional policy so existing local demonstrations remain reproducible.
+        approval_metadata = None
+        if self.require_profile_approval:
+            approval_metadata = verify_minah_profile_approval(
+                self.minah_profile,
+                self.minah_profile_approval,
+                signature_verifier=self.profile_signature_verifier,
+                revocation_checker=self.profile_revocation_checker,
+            )
         # Pin the deployment profile into the durable operation fingerprint before
         # MINAH is invoked. Replays cannot silently switch to another profile.
         journal_request = dict(request)
         journal_request["_minah_deployment_profile"] = self.minah_profile
+        if self.require_profile_approval:
+            # Pin both the signed envelope and successful verification metadata;
+            # a retry cannot substitute a different approval for this operation.
+            journal_request["_minah_profile_approval"] = self.minah_profile_approval
+            journal_request["_minah_profile_approval_verification"] = approval_metadata
         prior_operation = self.cee.get(operation_id)
         if (
             prior_operation is not None
