@@ -50,8 +50,11 @@ class ProtocolPipelineTests(unittest.TestCase):
         self.assertEqual([event["phase"] for event in result["cee_events"]], list(LIFECYCLE))
         self.assertEqual(result["cee_events"][0]["phase"], "REQUESTED")
         self.assertEqual(result["cee_events"][1]["phase"], "MINAH_REVIEWED")
+        self.assertEqual([event["phase"] for event in result["cee_events"][:5]], ["REQUESTED", "MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED", "ADMITTED"])
         components = [event["component"] for event in result["component_trace"]]
-        self.assertLess(components.index("MINAH"), components.index("IVM"))
+        self.assertLess(components.index("MINAH"), components.index("IDENTITY"))
+        self.assertLess(components.index("IDENTITY"), components.index("AUTHORITY"))
+        self.assertLess(components.index("AUTHORITY"), components.index("IVM"))
         self.assertEqual(components[-1], "CEE")
         self.assertEqual(result["component_trace"][-1]["detail"]["phase"], "FINALIZED")
         self.assertEqual(result["commit_scope"], "LOCAL_IVM_SQLITE_ONLY_NOT_DISTRIBUTED_FINALITY")
@@ -91,11 +94,13 @@ class ProtocolPipelineTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.pipeline.ivm.process("PROC-001")
 
-    def test_wrong_actor_is_rejected_by_ivm_and_not_committed(self):
+    def test_wrong_actor_is_rejected_before_cee_admission_and_ivm(self):
         result = self.pipeline.execute(request(actor_id="UNAUTHORISED-ACTOR"))
         self.assertEqual(result["status"], "REJECTED")
-        self.assertEqual(result["reason"], "AUTHORITY_MISMATCH")
-        self.assertIsNone(result["ivm_decision"]["to_state"])
+        self.assertEqual(result["reason"], "AUTHORITY_NOT_VERIFIED")
+        self.assertIsNone(result["ivm_decision"])
+        phases = [event["phase"] for event in result["cee_events"]]
+        self.assertNotIn("ADMITTED", phases)
         self.assertEqual(self.pipeline.ivm.process("PROC-001")["state"], "PENDING")
 
     def test_revoked_authority_is_rejected(self):
