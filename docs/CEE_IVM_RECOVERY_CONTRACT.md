@@ -19,7 +19,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 - **Profile and approval are pinned.** A changed MINAH profile or approval cannot be substituted during recovery.
 - **IVM event identity is stable.** The same IVM event ID and request digest are used on retry. The local IVM store returns the recorded outcome for an identical event and rejects the same ID with different content.
 - **Unknown stays unknown.** Missing or inconsistent evidence, an unsupported phase, or a failed recovery does not become a successful decision.
-- **Recovery is auditable.** Ingress records recovery start, completion, or blocked attempts, including the phase and bounded diagnostic evidence.
+- **Recovery is auditable without storing raw errors.** Ingress records recovery start, completion, or blocked attempts, including the phase, stable reason codes and exception type. Raw exception messages and provider response bodies are not stored in the recovery audit trail.
 
 ## Failure-point matrix
 
