@@ -8,6 +8,15 @@ KIN-SYS is a protocol architecture for coordinating computation, identity, autho
 
 The objective is to specify a system in which independently operated components coordinate under explicit rules, with verifiable state transitions and defined behaviour during disconnection, failure, dispute, and recovery. KIN-SYS research treats the protocol, CEE/IVM execution layers, AI assistance, economic mechanisms such as the proposed $KIN, Nexus Pods/edge infrastructure, institutional authority, governance, identity, and privacy as complementary parts of one system. Component-level work is essential, but system-level claims require integrated evidence.
 
+## Architecture and reference contracts
+
+- [Provider-neutral execution architecture](docs/PROVIDER_NEUTRAL_EXECUTION_ARCHITECTURE.md)
+- [MINAH deployment profiles and institutional ownership](docs/MINAH_DEPLOYMENT_PROFILES.md)
+- [MINAH-first ingress gate](docs/MINAH_FIRST_INGRESS_GATE.md)
+- [Governed instruction/decision contract v0.1](docs/GOVERNED_INSTRUCTION_DECISION_CONTRACT_V0_1.md)
+
+MINAH is an institution-owned gatekeeper deployment, not a single global service. The reference pipeline supports a versioned deployment profile and pins it to each operation's durable request fingerprint and MINAH disposition trace. This remains a research reference implementation, not production deployment or legal assurance.
+
 ## Status
 
 **Stage:** Protocol foundation / research specification  
