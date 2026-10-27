@@ -177,6 +177,7 @@ class KinSysPrototypeApplication:
                         "POST /protocol/instructions",
                         "GET /protocol/operations/{operation_id}",
                         "POST /protocol/operations/{operation_id}/recover",
+                        "GET /protocol/operations/{operation_id}/recovery-events",
                         "POST /cee/cases",
                         "GET /cee/operations/{operation_id}",
                         "POST /cee/reconciliation",
@@ -186,6 +187,17 @@ class KinSysPrototypeApplication:
                         "POST /protocol/instructions: MINAH review -> identity adapter -> action-authority adapter -> CEE admission/context -> IVM transition inside the synthetic execution slice -> final decision",
                         "Legacy demo and CEE case routes are synthetic and disabled by default",
                     ],
+                    "legacy_demo_routes": {
+                        "enabled_in_this_instance": self.enable_legacy_demo_routes,
+                        "default_enabled": False,
+                        "classification": "SYNTHETIC_ONLY_NOT_THE_GOVERNED_V0_1_INSTRUCTION_PATH",
+                        "routes": [
+                            "POST /demo/instructions",
+                            "POST /cee/cases",
+                            "POST /cee/reconciliation",
+                            "POST /cee/settlement-evidence",
+                        ],
+                    },
                     "ingress_adapter_contract": {
                         "injection": "create_app(minah_adapter=..., identity_adapter=..., authority_adapter=..., minah_profile=...)",
                         "durable_ingress_journal": "SQLITE_ENABLED_FOR_V0_1_INSTRUCTION_ENVELOPE",
