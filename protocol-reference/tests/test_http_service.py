@@ -368,6 +368,51 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(second_response["status"], 409)
         self.assertEqual(second_body["error"]["code"], "IDEMPOTENCY_OR_STATE_CONFLICT")
 
+
+    def test_v01_digest_tampering_is_rejected_before_minah_or_journal_admission(self):
+        calls = []
+
+        class RecordingMinah:
+            def review(self, evidence):
+                calls.append("MINAH")
+                return DeterministicMinahAdapter().review(evidence)
+
+        app = create_app(minah_adapter=RecordingMinah())
+        self.addCleanup(app.close)
+        payload = {
+            "contract_version": "kin-sys-governed-contract-0.1",
+            "request_id": "client-request-contract-tamper",
+            "operation_id": "HTTP-CONTRACT-TAMPER-1",
+            "idempotency_key": "idempotency-contract-tamper",
+            "principal_ref": "AUTHORITY-001",
+            "authority_ref": "authority-check:original",
+            "action": "ACTIVATE",
+            "target_ref": "HTTP-CONTRACT-TAMPER-PROCESS",
+            "purpose": "digest tamper conformance test",
+            "jurisdiction": "UG-DEMO",
+            "submitted_at": "2026-10-27T10:00:00+03:00",
+            "payload_digest": "sha256:" + ("c" * 64),
+            "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "evidence": {
+                "consignment_id": "HTTP-CONTRACT-TAMPER-PROCESS",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        payload["payload_digest"] = compute_payload_digest(payload)
+        payload["authority_ref"] = "authority-check:tampered-without-rehash"
+        response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
+        self.assertEqual(response["status"], 422)
+        self.assertEqual(body["error"]["code"], "INVALID_PROTOCOL_INSTRUCTION")
+        self.assertEqual(calls, [])
+        operation_response, operation_body = self.request_with_app(
+            app, "/protocol/operations/HTTP-CONTRACT-TAMPER-1", "GET"
+        )
+        self.assertEqual(operation_response["status"], 404)
+        self.assertEqual(operation_body["error"]["code"], "OPERATION_NOT_FOUND")
+
     def test_http_verification_outages_return_unknown_without_cee_admission(self):
         class IdentityUnavailable:
             def verify_principal(self, request):
