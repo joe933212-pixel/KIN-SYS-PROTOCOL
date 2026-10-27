@@ -72,13 +72,16 @@ The contract contains no mandatory vendor, model, cloud, GPU, operating system, 
 
 ## Verification status and next gates
 
-The reference validator and unit tests exercise envelope shape and consistency only. The existing `POST /protocol/instructions` route now emits a validated v0.1 **decision envelope** alongside its detailed synthetic pipeline trace. The envelope uses the HTTP request ID for transport correlation, a local CEE operation reference, and `NOT_ATTEMPTED` for external effects because this route does not move funds or call a real external-effect provider. The route still accepts the earlier internal protocol-request shape; it does **not yet** accept and execute the full v0.1 instruction envelope as its canonical request body.
+The existing `POST /protocol/instructions` route accepts the v0.1 instruction envelope and maps it into the **same** `KinSysProtocolPipeline` used by the earlier internal request shape; it does not create a second execution engine. The complete validated client envelope is retained inside the durable operation fingerprint, so a retry cannot silently change contract fields while reusing an operation ID. The route returns a validated v0.1 decision envelope bound to the client `request_id`, `operation_id`, and `rule_pack_version`, alongside the detailed synthetic pipeline trace.
 
-These changes do not prove the full sequence, real identity or authority, legal correctness, production security, distributed finality or external-effect truth.
+This is a constrained integration slice, not a general production wire implementation. The current pipeline only accepts the synthetic `ACTIVATE` action and rule pack `KIN-SYS-DEMO-RULES:1.0`. For this reference route, the envelope must include an `evidence` object extension; evidence references alone are not treated as proof or evidence content. The reference validator checks the declared SHA-256 digest's shape but does not recompute it against a canonical payload. The response reports `NOT_ATTEMPTED` for external effects because this route does not move funds or call a real external-effect provider. Default identity and authority adapters remain synthetic unless trusted adapters are injected.
+
+These changes do not prove real identity or authority, legal correctness, production security, distributed finality, digest authenticity or external-effect truth.
 
 Next acceptance gates:
-1. Wire validation of the v0.1 instruction envelope into the existing governed instruction route, mapping it into the internal pipeline without creating a parallel execution path or weakening evidence requirements.
-2. Add end-to-end tests proving MINAH-first ordering and that rejection/deferral prevents all protected side effects.
+1. Define and implement canonical payload-digest computation and verification without weakening evidence requirements.
+2. Extend the internal execution contract beyond the single synthetic action/rule pack, with explicit compatibility and fail-closed handling.
+3. Add end-to-end tests proving rejection/deferral prevents every protected side effect and exercise restart/reconciliation behaviour through the HTTP boundary.
 3. Test duplicate and conflicting idempotency keys, restart recovery, timeouts and unknown provider outcomes.
 4. Add authenticated identity/authority and institutional-action adapter contracts.
 5. Validate machine-readable schemas against the Python validators and run the same suite across provider-neutral deployment profiles.
