@@ -15,7 +15,7 @@ CEE remains responsible for the governed execution path, including institutional
 
 ## Adapter contracts
 
-- **MINAH:** first adapter to receive the instruction; returns explicit PASS, REJECTED, DEFERRED or UNKNOWN and a disposition reference. A PASS is preliminary and advisory, never institutional authorisation.
+- **MINAH:** first adapter to receive the instruction; the current pipeline accepts `ADVISORY_ONLY` (preliminary review allows progression to the next required gate), `NEEDS_INFORMATION` (defer), `REJECTED` (stop), or `UNKNOWN` (stop and require resolution). These are gate dispositions, not institutional authorisation. MINAH cannot authorise the action by herself.
 - **Identity:** verifies the principal using the institution's chosen identity adapter. Missing or non-true `verified` fails closed.
 - **Authority:** verifies permission for this specific action, target, jurisdiction and context. Authentication is not authorisation. Missing or non-true `verified` fails closed.
 - **CEE:** receives the instruction plus the recorded MINAH, identity and authority results. It must enforce applicable rule versions, institutional decisions, CISA/IVM semantics and effect controls.
@@ -30,7 +30,7 @@ An operation left non-final after a process interruption returns UNKNOWN and req
 
 ## What tests prove
 
-The unit tests use fake adapters to verify call order, fail-closed MINAH/identity/authority outcomes, conflict detection, replay behaviour, and no automatic CEE resubmission for an interrupted operation.
+The tests use fake adapters to verify call order, fail-closed MINAH/identity/authority outcomes, including explicit MINAH rejection and unknown dispositions stopping before identity/CEE, conflict detection, replay behaviour, and no automatic CEE resubmission for an interrupted operation.
 
 They do **not** prove:
 - that the current HTTP routes use this gate;
