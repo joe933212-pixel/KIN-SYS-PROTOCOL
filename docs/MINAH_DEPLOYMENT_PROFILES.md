@@ -57,12 +57,12 @@ A profile update is versioned. New operations may use the newly approved profile
 
 Separate institutions should not be able to inspect one another's prompts, source packs, cases, or sensitive evidence merely because they use the same protocol. Shared infrastructure, if chosen, must enforce tenant and jurisdiction isolation. Dedicated deployments are allowed but not mandated by the protocol.
 
-## 6. Reference validator
+## 7. Reference validator
 
 `protocol-reference/minah_deployment_profile.py` validates the shape of a draft profile and enforces the non-authorisation invariant. Its tests show that national and enterprise profiles can differ while satisfying the same structural contract.
 
 This validator does not deploy an AI agent, authenticate an owner, verify the truth or legal validity of sources, or establish that the institution has legitimately delegated the claimed mandate. Those are separate implementation and assurance tasks. The runtime now checks that the request's jurisdiction exactly matches one of the configured profile jurisdictions before invoking the agent; a mismatch is rejected and does not reach identity verification or IVM. This is a scope check, not proof that the profile owner or jurisdiction claim is trustworthy.
 
-## 7. Current implementation boundary
+## 8. Current implementation boundary
 
 The HTTP pipeline now accepts a validated MINAH deployment profile through `create_app(minah_profile=...)`. The profile is bound into the durable operation fingerprint before MINAH is invoked, recorded with the MINAH disposition, and included in the MINAH-reviewed event. A retry using the same operation ID with a different profile conflicts rather than silently switching deployments. The default profile is explicitly synthetic and local, scoped to `UG-DEMO`. Jurisdiction mismatch is now rejected before the configured agent is invoked. Trusted profile-owner authentication, mandate/delegation verification, a production cryptographic verifier and key store, authoritative persistent revocation, authenticated multi-institution routing, and cross-border policy negotiation are still unimplemented. The profile approval check is available only when explicitly enabled and supplied with trusted verifier callbacks; default local synthetic mode remains ungoverned. The pipeline now supports an institution-owned MINAH adapter implementing `review`, `verify_principal`, and `verify_action`; this is an adapter seam, not a live national identity or authority API integration.
