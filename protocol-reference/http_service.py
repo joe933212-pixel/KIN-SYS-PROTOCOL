@@ -223,6 +223,8 @@ class KinSysPrototypeApplication:
                         "cross_store_reconciliation": "EXPLICIT_RECOVERY_FROM_DURABLE_MINAH_DISPOSITION; EARLY_AMBIGUOUS_PHASES_REMAIN_UNKNOWN; LOCAL_SQLITE_ONLY",
                         "order": ["MINAH", "IDENTITY", "AUTHORITY", "CEE_ADMISSION", "IVM", "FINAL_DECISION"],
                         "default_adapters": "SYNTHETIC_ONLY_NOT_REAL_AUTHENTICATION_OR_LEGAL_AUTHORITY",
+                        "adapter_timeout_enforcement": "NOT_ENFORCED_BY_REFERENCE_PIPELINE; INJECTED_ADAPTERS_MUST_BOUND_CALLS",
+                        "adapter_timeout_outcome": "EXCEPTIONS_OR_UNKNOWN_FAIL_CLOSED_BEFORE_PROTECTED_EXECUTION",
                         "minah_profile": "VALIDATED_AND_PINNED_TO_OPERATION_FINGERPRINT_AND_MINAH_DISPOSITION",
                         "profile_approval": "OPTIONAL_FAIL_CLOSED_PRE-MINAH_CHECK; REAL_TRUSTED_VERIFIERS_MUST_BE_INJECTED",
                         "profile_owner_authentication": "NOT_IMPLEMENTED",
