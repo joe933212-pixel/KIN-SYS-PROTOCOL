@@ -84,7 +84,11 @@ class HttpServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             body["ingress_adapter_contract"]["cross_store_reconciliation"],
-            "FINALIZED_CEE_RESULT_ONLY; NON_FINAL_CEE_IVM_RECOVERY_NOT_IMPLEMENTED",
+            "EXPLICIT_RECOVERY_FROM_DURABLE_MINAH_DISPOSITION; EARLY_AMBIGUOUS_PHASES_REMAIN_UNKNOWN; LOCAL_SQLITE_ONLY",
+        )
+        self.assertEqual(
+            body["ingress_adapter_contract"]["recovery_endpoint"],
+            "POST /protocol/operations/{operation_id}/recover",
         )
         self.assertIn(
             "production identity and cryptographic authentication",
