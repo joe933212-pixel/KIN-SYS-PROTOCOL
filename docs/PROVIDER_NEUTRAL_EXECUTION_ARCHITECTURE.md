@@ -148,6 +148,8 @@ The reference pipeline stores CEE lifecycle state and IVM transition evidence in
 
 These are local consistency checks, not a distributed transaction or a complete storage-integrity system. They do not prove that SQLite files have not been maliciously rewritten, that backups are mutually consistent, or that writes survive every filesystem/power-loss failure. Operator reconciliation needs a separately specified, authenticated, append-only procedure with evidence preservation and explicit approval; it is not implemented by this reference pipeline.
 
+Before replay or recovery, the reference pipeline also runs SQLite `PRAGMA integrity_check` against both local stores and fails closed when SQLite reports a structural error or the check cannot be completed. This is a structural database check only: it does not detect a malicious but structurally valid rewrite, establish backup provenance, prove that CEE and IVM backups represent the same logical point in time, or guarantee power-loss durability. File-backed tests use SQLite's backup API to create deliberately mismatched CEE/IVM snapshots and verify that cross-store contradictions stop recovery rather than being silently repaired. These tests exercise restore-skew states; they are not a full backup/restore operational drill.
+
 
 ## 6. Human usability requirements
 
