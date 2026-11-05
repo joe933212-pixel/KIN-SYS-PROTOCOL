@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
 from minah_deployment_profile import PROFILE_VERSION, validate_minah_profile
@@ -118,6 +119,15 @@ class CEEJournal:
                 UNIQUE(operation_id, phase),
                 FOREIGN KEY(operation_id) REFERENCES cee_operations(operation_id)
             );
+            CREATE TABLE IF NOT EXISTS cee_observations (
+                observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(operation_id) REFERENCES cee_operations(operation_id)
+            );
             """
         )
         self.db.commit()
@@ -144,6 +154,40 @@ class CEEJournal:
         ).fetchall()
         return [
             {"phase": row["phase"], "status": row["status"], "detail": json.loads(row["detail_json"])}
+            for row in rows
+        ]
+
+    def record_observation(
+        self, operation_id: str, kind: str, status: str, detail: dict[str, Any],
+    ) -> None:
+        """Append non-lifecycle verification evidence without rewriting phase history."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute(
+                "SELECT phase FROM cee_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if row is None:
+                raise LifecycleViolation("OPERATION_NOT_FOUND")
+            self.db.execute(
+                """INSERT INTO cee_observations
+                   (operation_id,kind,status,detail_json,created_at)
+                   VALUES(?,?,?,?,?)""",
+                (operation_id, kind, status, _canonical(detail), datetime.now(timezone.utc).isoformat()),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def observations(self, operation_id: str) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            """SELECT kind,status,detail_json,created_at FROM cee_observations
+               WHERE operation_id=? ORDER BY observation_id""",
+            (operation_id,),
+        ).fetchall()
+        return [
+            {"kind": row["kind"], "status": row["status"],
+             "detail": json.loads(row["detail_json"]), "created_at": row["created_at"]}
             for row in rows
         ]
 
@@ -723,7 +767,33 @@ class KinSysProtocolPipeline:
                     )
                 except Exception:
                     authority = {"verified": False, "status": "UNKNOWN", "mode": "REVALIDATION_UNAVAILABLE"}
-                if not isinstance(authority, dict) or authority.get("verified") is not True:
+                revalidation_metadata = _safe_verification_metadata(
+                    authority if isinstance(authority, dict) else {},
+                    ("evidence_ref", "verification_ref", "verification_id", "mandate_ref",
+                     "authority_ref", "policy_version", "mandate_version", "scope_ref",
+                     "issuer_ref", "verified_at", "valid_until"),
+                )
+                revalidation_verified = isinstance(authority, dict) and authority.get("verified") is True
+                revalidation_unknown = isinstance(authority, dict) and authority.get("status") == "UNKNOWN"
+                self.cee.record_observation(
+                    operation_id, "AUTHORITY_REVALIDATION",
+                    "VERIFIED" if revalidation_verified else "UNKNOWN" if revalidation_unknown else "REJECTED",
+                    {
+                        "principal_ref": request["actor_id"],
+                        "action": request["event_type"],
+                        "target_ref": request["process_id"],
+                        "jurisdiction": request["jurisdiction"],
+                        "rule_set": request["rule_set"],
+                        "rule_version": request["rule_version"],
+                        "mode": authority.get("mode", "ADAPTER") if isinstance(authority, dict) else "INVALID_ADAPTER_RESPONSE",
+                        "metadata": revalidation_metadata,
+                        "evidence_reference_supplied": bool(
+                            revalidation_metadata.get("evidence_ref") or revalidation_metadata.get("verification_ref")
+                            or revalidation_metadata.get("mandate_ref")
+                        ),
+                    },
+                )
+                if not revalidation_verified:
                     authority_unknown = isinstance(authority, dict) and authority.get("status") == "UNKNOWN"
                     terminal_status = "UNKNOWN" if authority_unknown else "REJECTED"
                     result = {
@@ -919,6 +989,7 @@ class KinSysProtocolPipeline:
                 "resumable": False,
                 "result": result,
                 "cee_events": events,
+                "cee_observations": self.cee.observations(operation_id),
                 "component_trace": response["component_trace"],
                 "ivm_event": ivm_event,
             }
@@ -931,6 +1002,7 @@ class KinSysProtocolPipeline:
             "ivm_decision": operation["ivm_json"],
             "ivm_event": ivm_event,
             "cee_events": events,
+            "cee_observations": self.cee.observations(operation_id),
             "component_trace": [],
         }
 
@@ -990,6 +1062,7 @@ class KinSysProtocolPipeline:
             **result,
             "duplicate": duplicate,
             "cee_events": events,
+            "cee_observations": self.cee.observations(operation_id),
             "component_trace": trace,
         }
 
