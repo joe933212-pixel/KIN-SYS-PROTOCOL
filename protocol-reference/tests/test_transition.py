@@ -124,6 +124,43 @@ class TransitionContractTests(unittest.TestCase):
             finally:
                 reopened.close()
 
+    def test_concurrent_event_id_collision_across_processes_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "protocol.sqlite")
+            setup = ProtocolStore(database=database)
+            setup.create_process(process_id="P-001")
+            setup.create_process(process_id="P-002")
+            setup.close()
+            barrier = threading.Barrier(2)
+
+            def submit(process_id):
+                store = ProtocolStore(database=database)
+                try:
+                    barrier.wait(timeout=5)
+                    try:
+                        result = store.execute(self.event(event_id="E-SHARED", process_id=process_id))
+                        return ("RESULT", result.status, result.duplicate)
+                    except EventIdConflict:
+                        return ("CONFLICT", None, False)
+                finally:
+                    store.close()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(submit, ["P-001", "P-002"]))
+            self.assertEqual(sum(item[0] == "RESULT" for item in outcomes), 1)
+            self.assertEqual(sum(item[0] == "CONFLICT" for item in outcomes), 1)
+
+            verify = ProtocolStore(database=database)
+            try:
+                event = verify.event("E-SHARED")
+                self.assertIsNotNone(event)
+                self.assertIn(event["process_id"], {"P-001", "P-002"})
+                self.assertEqual(len(verify.history(event["process_id"])), 1)
+                other = "P-002" if event["process_id"] == "P-001" else "P-001"
+                self.assertEqual(verify.history(other), [])
+            finally:
+                verify.close()
+
     def test_precommit_rollback_remains_absent_after_reopen(self):
         with tempfile.TemporaryDirectory() as directory:
             database = os.path.join(directory, "protocol.sqlite")
