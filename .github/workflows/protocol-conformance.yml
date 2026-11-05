@@ -7,11 +7,13 @@ on:
     branches: [main]
     paths:
       - "protocol-reference/**"
+      - "scripts/prototype_smoke_test.py"
       - "docs/TRANSITION_CONTRACT.md"
       - ".github/workflows/protocol-conformance.yml"
   pull_request:
     paths:
       - "protocol-reference/**"
+      - "scripts/prototype_smoke_test.py"
       - "docs/TRANSITION_CONTRACT.md"
       - ".github/workflows/protocol-conformance.yml"
 
@@ -29,6 +31,8 @@ jobs:
           python-version: "3.12"
       - name: Run transition contract tests
         run: python -m unittest discover -s protocol-reference/tests -v
+      - name: Smoke-test the runnable local HTTP prototype
+        run: python scripts/prototype_smoke_test.py
       - name: Generate paired comparison report
         run: PYTHONPATH=protocol-reference python -m comparators.paired_harness > comparison-results.json
       - name: Verify paired comparison report

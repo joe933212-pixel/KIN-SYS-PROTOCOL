@@ -31,6 +31,10 @@ class CaseConflict(ValueError):
     """Operation ID was reused with different case content."""
 
 
+class CaseRecoveryRequired(RuntimeError):
+    """An operation created under an earlier lifecycle ordering needs reconciliation."""
+
+
 class CEECaseCoordinator:
     """Orchestrate one synthetic case through CEE, MINAH, institutions, IVM and payment."""
 
@@ -143,15 +147,14 @@ class CEECaseCoordinator:
 
         case_id = request["case_id"]
         evidence = request["evidence"]
-        self._set_phase(operation_id, "ADMITTED", "ACCEPTED", {"schema_validated": True})
-        self._set_phase(operation_id, "CONTEXT_PINNED", "ACCEPTED", {
-            "jurisdiction": request["jurisdiction"],
-            "rule_version": DEMO_RULE_VERSION,
-            "evidence_digest": _digest(evidence),
-        })
 
+        # The REQUESTED row is only the durable idempotency/receipt record.
+        # MINAH reviews the instruction before CEE admission/context and before
+        # any institutional workflow, IVM gate, obligation, or payment work.
         state = self._case_row(operation_id)
         minah = state.get("minah")
+        if state["phase"] in {"ADMITTED", "CONTEXT_PINNED"} and minah is None:
+            raise CaseRecoveryRequired("LEGACY_CASE_REQUIRES_RECONCILIATION")
         if minah is None:
             raw = self.minah.review(evidence)
             if not isinstance(raw, dict) or raw.get("may_authorise") is not False or raw.get("status") not in {"ADVISORY_ONLY", "NEEDS_INFORMATION"}:
@@ -169,6 +172,15 @@ class CEECaseCoordinator:
                 "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE", "minah_disposition": minah, "institutional_decisions": None,
                 "payment_lifecycle": None, "funds_moved": False,
             })
+
+        self._set_phase(operation_id, "ADMITTED", "ACCEPTED", {
+            "schema_validated": True, "minah_gate_passed": True,
+        })
+        self._set_phase(operation_id, "CONTEXT_PINNED", "ACCEPTED", {
+            "jurisdiction": request["jurisdiction"],
+            "rule_version": DEMO_RULE_VERSION,
+            "evidence_digest": _digest(evidence),
+        })
 
         self.workflow.create_case(
             case_id, origin_authority="ORIGIN-A", destination_authority="DESTINATION-B",

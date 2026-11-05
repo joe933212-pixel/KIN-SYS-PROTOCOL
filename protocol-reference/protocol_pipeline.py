@@ -12,7 +12,12 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
+
+from minah_deployment_profile import PROFILE_VERSION, validate_minah_profile
+from minah_profile_governance import MinahApprovalViolation, profile_digest, verify_minah_profile_approval
+from governed_contracts import verify_instruction_payload_digest
 
 from integrated_demo import DeterministicMinahAdapter
 from transition import EventIdConflict, ProtocolStore
@@ -23,6 +28,9 @@ RULE_VERSION = "1.0"
 AUTHORITY_ID = "AUTHORITY-001"
 LIFECYCLE = (
     "REQUESTED",
+    "MINAH_REVIEWED",
+    "IDENTITY_VERIFIED",
+    "AUTHORITY_VERIFIED",
     "ADMITTED",
     "CONTEXT_ESTABLISHED",
     "AUTHORITY_EVALUATED",
@@ -38,6 +46,29 @@ class ExecutionConflict(ValueError):
     """An operation ID was reused with different instruction content."""
 
 
+class SyntheticIdentityAdapter:
+    """Local demonstration stub; this is not authentication of a real person."""
+
+    def verify_principal(self, request: dict[str, Any]) -> dict[str, Any]:
+        actor = request.get("actor_id")
+        return {"verified": isinstance(actor, str) and bool(actor.strip()), "mode": "SYNTHETIC_SCHEMA_CHECK"}
+
+
+class SyntheticAuthorityAdapter:
+    """Local demonstration stub; this does not establish legal authority."""
+
+    def __init__(self, *, authority_active: bool = True):
+        self.authority_active = authority_active
+
+    def verify_action(self, request: dict[str, Any]) -> dict[str, Any]:
+        actor = request.get("actor_id")
+        action = request.get("event_type")
+        return {
+            "verified": self.authority_active and actor == AUTHORITY_ID and action == "ACTIVATE",
+            "mode": "SYNTHETIC_RULE_CHECK",
+        }
+
+
 class LifecycleViolation(RuntimeError):
     """An illegal CEE lifecycle transition was requested."""
 
@@ -48,6 +79,73 @@ def _canonical(value: Any) -> str:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+def _safe_verification_metadata(result: dict[str, Any], allowed_fields: tuple[str, ...]) -> dict[str, str]:
+    """Keep stable evidence references and version metadata, never raw identity data."""
+    metadata: dict[str, str] = {}
+    for field in allowed_fields:
+        value = result.get(field)
+        if isinstance(value, str) and value.strip() and len(value.strip()) <= 256:
+            metadata[field] = value.strip()
+    return metadata
+
+_VERIFICATION_POSITIVE = {"VERIFIED", "APPROVED", "ACTIVE", "VALID", "PASSED"}
+_VERIFICATION_NEGATIVE = {"REJECTED", "DENIED", "REVOKED", "EXPIRED", "INVALID", "NOT_AUTHORISED", "NOT_AUTHORIZED"}
+_VERIFICATION_UNKNOWN = {"UNKNOWN", "UNAVAILABLE", "TIMEOUT", "PENDING", "ERROR", "INDETERMINATE", "VERIFICATION_UNAVAILABLE", "REVOCATION_UNKNOWN"}
+
+
+def _verification_status(result: Any) -> str:
+    """Interpret adapter output conservatively; contradictory or malformed output never passes."""
+    if not isinstance(result, dict):
+        return "UNKNOWN"
+    verified = result.get("verified")
+    status = result.get("status")
+    if isinstance(status, str):
+        status = status.strip().upper()
+    elif status is not None:
+        return "UNKNOWN"
+
+    if verified is True:
+        if status is None or status in _VERIFICATION_POSITIVE:
+            return "VERIFIED"
+        if status in _VERIFICATION_NEGATIVE:
+            return "REJECTED"
+        return "UNKNOWN"
+    if verified is False:
+        if status in _VERIFICATION_UNKNOWN:
+            return "UNKNOWN"
+        if status in _VERIFICATION_POSITIVE:
+            return "UNKNOWN"
+        if status is None or status in _VERIFICATION_NEGATIVE:
+            return "REJECTED"
+        return "UNKNOWN"
+    return "UNKNOWN"
+
+
+def _safe_verification_result(result: Any) -> dict[str, Any]:
+    """Return a bounded decision summary, never echo arbitrary adapter payloads."""
+    status = _verification_status(result)
+    safe: dict[str, Any] = {"verified": status == "VERIFIED", "status": status}
+    if not isinstance(result, dict):
+        safe["mode"] = "INVALID_ADAPTER_RESPONSE"
+        return safe
+    mode = result.get("mode")
+    if isinstance(mode, str) and mode.strip() and len(mode.strip()) <= 128:
+        safe["mode"] = mode.strip()
+    else:
+        safe["mode"] = "ADAPTER"
+    reason_code = result.get("reason_code")
+    if isinstance(reason_code, str) and reason_code.strip() and len(reason_code.strip()) <= 128:
+        safe["reason_code"] = reason_code.strip()
+    safe.update(_safe_verification_metadata(
+        result,
+        ("evidence_ref", "verification_ref", "verification_id", "identity_provider_ref",
+         "subject_ref", "principal_ref", "mandate_ref", "authority_ref", "policy_version",
+         "mandate_version", "scope_ref", "issuer_ref", "verified_at", "valid_until",
+         "assurance_level"),
+    ))
+    return safe
 
 
 class CEEJournal:
@@ -78,6 +176,15 @@ class CEEJournal:
                 UNIQUE(operation_id, phase),
                 FOREIGN KEY(operation_id) REFERENCES cee_operations(operation_id)
             );
+            CREATE TABLE IF NOT EXISTS cee_observations (
+                observation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(operation_id) REFERENCES cee_operations(operation_id)
+            );
             """
         )
         self.db.commit()
@@ -104,6 +211,40 @@ class CEEJournal:
         ).fetchall()
         return [
             {"phase": row["phase"], "status": row["status"], "detail": json.loads(row["detail_json"])}
+            for row in rows
+        ]
+
+    def record_observation(
+        self, operation_id: str, kind: str, status: str, detail: dict[str, Any],
+    ) -> None:
+        """Append non-lifecycle verification evidence without rewriting phase history."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute(
+                "SELECT phase FROM cee_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if row is None:
+                raise LifecycleViolation("OPERATION_NOT_FOUND")
+            self.db.execute(
+                """INSERT INTO cee_observations
+                   (operation_id,kind,status,detail_json,created_at)
+                   VALUES(?,?,?,?,?)""",
+                (operation_id, kind, status, _canonical(detail), datetime.now(timezone.utc).isoformat()),
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def observations(self, operation_id: str) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            """SELECT kind,status,detail_json,created_at FROM cee_observations
+               WHERE operation_id=? ORDER BY observation_id""",
+            (operation_id,),
+        ).fetchall()
+        return [
+            {"kind": row["kind"], "status": row["status"],
+             "detail": json.loads(row["detail_json"]), "created_at": row["created_at"]}
             for row in rows
         ]
 
@@ -168,8 +309,8 @@ class CEEJournal:
             terminal_branch = (
                 next_phase == "FINALIZED"
                 and (
-                    (current == "AUTHORITY_EVALUATED" and outcome in {"DEFERRED", "REJECTED"})
-                    or (current == "COMMITTING" and outcome == "REJECTED")
+                    (current in {"MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED", "AUTHORITY_EVALUATED"} and outcome in {"DEFERRED", "REJECTED", "UNKNOWN"})
+                    or (current == "COMMITTING" and outcome in {"REJECTED", "UNKNOWN"})
                 )
             )
             if not allowed and not terminal_branch:
@@ -207,21 +348,266 @@ class KinSysProtocolPipeline:
         cee_database: str = ":memory:",
         ivm_database: str = ":memory:",
         minah_adapter: Any | None = None,
+        identity_adapter: Any | None = None,
+        authority_adapter: Any | None = None,
         authority_active: bool = True,
+        minah_profile: dict[str, Any] | None = None,
+        minah_profile_approval: dict[str, Any] | None = None,
+        profile_signature_verifier: Any | None = None,
+        profile_revocation_checker: Any | None = None,
+        require_profile_approval: bool = False,
     ):
         self.cee = CEEJournal(cee_database)
         self.ivm = ProtocolStore(ivm_database)
         self.minah = minah_adapter or DeterministicMinahAdapter()
+        self.identity_adapter = identity_adapter or SyntheticIdentityAdapter()
+        self.authority_adapter = authority_adapter or SyntheticAuthorityAdapter(authority_active=authority_active)
         self.authority_active = authority_active
+        self.minah_profile = validate_minah_profile(minah_profile or {
+            "profile_version": PROFILE_VERSION,
+            "deployment_id": "synthetic-local-default",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "LOCAL-DEMONSTRATOR",
+            "use_case": "PROTOCOL_REFERENCE_TEST",
+            "jurisdictions": ["UG-DEMO"],
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            "model_ref": "deterministic-minah-mock",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": False,
+        })
+        self.minah_profile_approval = minah_profile_approval
+        self.profile_signature_verifier = profile_signature_verifier
+        self.profile_revocation_checker = profile_revocation_checker
+        self.require_profile_approval = require_profile_approval
+        if require_profile_approval and (
+            not callable(profile_signature_verifier) or not callable(profile_revocation_checker)
+        ):
+            raise MinahApprovalViolation("TRUSTED_SIGNATURE_AND_REVOCATION_CHECKERS_REQUIRED")
 
     def close(self) -> None:
         self.cee.close()
         self.ivm.close()
 
+    def _assert_ivm_event_consistent(self, request: dict[str, Any]) -> None:
+        """Reject contradictory IVM event/history evidence before recovery or execution."""
+        event_request = {
+            key: request[key] for key in (
+                "event_id", "process_id", "actor_id", "event_type",
+                "rule_set", "rule_version",
+            )
+        }
+        event_id = event_request["event_id"]
+        stored_event = self.ivm.event(event_id)
+        matching_history = [
+            item for item in self.ivm.history(event_request["process_id"])
+            if item.get("event_id") == event_id
+        ]
+        if stored_event is None:
+            if matching_history:
+                raise ExecutionConflict(
+                    "IVM_HISTORY_WITHOUT_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+                )
+            return
+        if stored_event.get("request_digest") != _digest(event_request):
+            raise ExecutionConflict("IVM_EVENT_DIGEST_MISMATCH_REQUIRES_MANUAL_RECONCILIATION")
+        if stored_event.get("process_id") != event_request["process_id"]:
+            raise ExecutionConflict("IVM_EVENT_PROCESS_BINDING_MISMATCH")
+        if len(matching_history) > 1:
+            raise ExecutionConflict("DUPLICATE_IVM_HISTORY_REQUIRES_MANUAL_RECONCILIATION")
+        if stored_event.get("outcome") == "ACCEPTED" and len(matching_history) != 1:
+            raise ExecutionConflict("IVM_COMMIT_HISTORY_MISSING_REQUIRES_MANUAL_RECONCILIATION")
+        if stored_event.get("outcome") != "ACCEPTED" and matching_history:
+            raise ExecutionConflict("REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY")
+
+    def _assert_store_integrity(self) -> None:
+        """Fail closed on SQLite structural errors; this is not a tamper-evidence check."""
+        for label, connection in (("CEE", self.cee.db), ("IVM", self.ivm.db)):
+            try:
+                rows = connection.execute("PRAGMA integrity_check").fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise ExecutionConflict(
+                    f"{label}_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                ) from exc
+            if len(rows) != 1 or rows[0][0] != "ok":
+                raise ExecutionConflict(
+                    f"{label}_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                )
+
+    def _assert_cross_store_consistent(self, operation: dict[str, Any]) -> None:
+        """Require CEE lifecycle claims and durable IVM evidence to agree.
+
+        COMMITTING plus a consistent durable IVM event is the one expected
+        crash window: recovery may reconcile it. Every other phase/event
+        combination must be internally consistent or stop for manual review.
+        """
+        pinned_request = operation.get("request_json")
+        if not isinstance(pinned_request, dict):
+            raise ExecutionConflict("CEE_REQUEST_MISSING_REQUIRES_MANUAL_RECONCILIATION")
+        request = {
+            key: value for key, value in pinned_request.items()
+            if not key.startswith("_minah_")
+        }
+        self._assert_ivm_event_consistent(request)
+
+        phase = operation.get("phase")
+        event = self.ivm.event(request["event_id"])
+        ivm_decision = operation.get("ivm_json")
+        if phase not in LIFECYCLE:
+            raise ExecutionConflict("CEE_PHASE_INVALID_REQUIRES_MANUAL_RECONCILIATION")
+
+        if event is not None and phase not in {"COMMITTING", "COMMITTED", "FINALIZED"}:
+            raise ExecutionConflict(
+                "IVM_EVENT_EXISTS_BEFORE_CEE_COMMIT_BOUNDARY_REQUIRES_MANUAL_RECONCILIATION"
+            )
+
+        committed_claim = (
+            phase == "COMMITTED"
+            or (phase == "FINALIZED" and operation.get("outcome") == "COMMITTED")
+        )
+        if committed_claim and event is None:
+            raise ExecutionConflict(
+                "CEE_COMMIT_CLAIM_WITHOUT_DURABLE_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+            )
+        if phase == "COMMITTED" and not isinstance(ivm_decision, dict):
+            raise ExecutionConflict(
+                "CEE_COMMITTED_PHASE_WITHOUT_IVM_DECISION_REQUIRES_MANUAL_RECONCILIATION"
+            )
+
+        if event is None:
+            if ivm_decision is not None:
+                raise ExecutionConflict(
+                    "CEE_IVM_DECISION_WITHOUT_DURABLE_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+                )
+            return
+
+        # An event found after CEE has already finalized is only reconcilable
+        # when CEE durably recorded the matching IVM decision as well.
+        if phase == "FINALIZED" and not isinstance(ivm_decision, dict):
+            raise ExecutionConflict(
+                "FINALIZED_CEE_WITH_UNRECORDED_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+            )
+        if phase == "FINALIZED":
+            expected_final_outcome = (
+                "COMMITTED" if event.get("outcome") == "ACCEPTED" else "REJECTED"
+            )
+            if operation.get("outcome") != expected_final_outcome:
+                raise ExecutionConflict(
+                    "CEE_FINAL_OUTCOME_DIFFERS_FROM_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+                )
+        if ivm_decision is not None:
+            expected_status = "ACCEPTED" if event.get("outcome") == "ACCEPTED" else "REJECTED"
+            if (
+                ivm_decision.get("event_id") != event.get("event_id")
+                or ivm_decision.get("process_id") != event.get("process_id")
+                or ivm_decision.get("status") != expected_status
+            ):
+                raise ExecutionConflict(
+                    "CEE_IVM_DECISION_DIFFERS_FROM_DURABLE_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+                )
+            history = [
+                item for item in self.ivm.history(event["process_id"])
+                if item.get("event_id") == event["event_id"]
+            ]
+            if expected_status == "ACCEPTED":
+                if len(history) != 1 or (
+                    ivm_decision.get("history_id") != history[0].get("history_id")
+                    or ivm_decision.get("from_state") != history[0].get("from_state")
+                    or ivm_decision.get("to_state") != history[0].get("to_state")
+                ):
+                    raise ExecutionConflict(
+                        "CEE_IVM_HISTORY_BINDING_MISMATCH_REQUIRES_MANUAL_RECONCILIATION"
+                    )
+            elif history:
+                raise ExecutionConflict(
+                    "REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY"
+                )
+
     def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
         self._validate(request)
         operation_id = request["operation_id"]
-        operation = self.cee.start(operation_id, request)
+        # Existing operations may need recovery after the approval expires. For a
+        # genuinely new operation, verify approval before MINAH or CEE admission.
+        # Recovery of an existing operation may rely only on the approval metadata
+        # already pinned in that operation's durable CEE request record.
+        self._assert_store_integrity()
+        prior_operation = self.cee.get(operation_id)
+        if prior_operation is not None:
+            self._assert_cross_store_consistent(prior_operation)
+        approval_metadata = None
+        if self.require_profile_approval:
+            if prior_operation is None:
+                approval_metadata = verify_minah_profile_approval(
+                    self.minah_profile,
+                    self.minah_profile_approval,
+                    signature_verifier=self.profile_signature_verifier,
+                    revocation_checker=self.profile_revocation_checker,
+                )
+            else:
+                pinned_request = prior_operation["request_json"]
+                if _canonical(pinned_request.get("_minah_deployment_profile")) != _canonical(self.minah_profile):
+                    raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
+                if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
+                    raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
+                approval_metadata = pinned_request.get("_minah_profile_approval_verification")
+                if not isinstance(approval_metadata, dict) or approval_metadata.get("status") != "APPROVED":
+                    raise ExecutionConflict("PINNED_PROFILE_APPROVAL_EVIDENCE_MISSING")
+                # A pinned approval proves what was accepted at initial ingress;
+                # it does not prove that the approval remains current after a crash.
+                # Recheck expiry, trusted signature and revocation before resuming
+                # any operation that has not durably committed its IVM event.
+                durable_ivm_event = self.ivm.event(request["event_id"])
+                protected_transition_already_durable = (
+                    prior_operation["phase"] in {"COMMITTED", "FINALIZED"}
+                    or (prior_operation["phase"] == "COMMITTING" and durable_ivm_event is not None)
+                )
+                if not protected_transition_already_durable:
+                    try:
+                        approval_metadata = verify_minah_profile_approval(
+                            self.minah_profile,
+                            self.minah_profile_approval,
+                            signature_verifier=self.profile_signature_verifier,
+                            revocation_checker=self.profile_revocation_checker,
+                        )
+                    except MinahApprovalViolation as exc:
+                        self.cee.record_observation(
+                            operation_id, "MINAH_PROFILE_APPROVAL_REVALIDATION",
+                            "REJECTED",
+                            {
+                                "approval_id": self.minah_profile_approval.get("approval_id")
+                                if isinstance(self.minah_profile_approval, dict) else None,
+                                "profile_digest": profile_digest(self.minah_profile),
+                                "reason": str(exc),
+                                "protected_transition_already_durable": False,
+                            },
+                        )
+                        raise
+                    self.cee.record_observation(
+                        operation_id, "MINAH_PROFILE_APPROVAL_REVALIDATION",
+                        "VERIFIED",
+                        {
+                            "approval_id": approval_metadata["approval_id"],
+                            "signer_ref": approval_metadata["signer_ref"],
+                            "profile_digest": approval_metadata["profile_digest"],
+                            "expires_at": approval_metadata["expires_at"],
+                            "protected_transition_already_durable": False,
+                        },
+                    )
+        # Pin the deployment profile into the durable operation fingerprint before
+        # MINAH is invoked. Replays cannot silently switch to another profile.
+        journal_request = dict(request)
+        journal_request["_minah_deployment_profile"] = self.minah_profile
+        if self.require_profile_approval:
+            journal_request["_minah_profile_approval"] = self.minah_profile_approval
+            journal_request["_minah_profile_approval_verification"] = approval_metadata
+        if (
+            prior_operation is not None
+            and prior_operation["phase"] in {"ADMITTED", "CONTEXT_ESTABLISHED"}
+            and prior_operation["minah_json"] is None
+            and "_minah_deployment_profile" not in prior_operation["request_json"]
+        ):
+            raise ExecutionConflict("LEGACY_OPERATION_REQUIRES_RECONCILIATION")
+        operation = self.cee.start(operation_id, journal_request)
         if operation["phase"] == "FINALIZED":
             result = operation["result_json"]
             return self._response_result(operation_id, result, duplicate=True)
@@ -230,35 +616,36 @@ class KinSysProtocolPipeline:
         operation = self.cee.get(operation_id)
         assert operation is not None
 
-        # CEE admits the instruction and pins its context before invoking MINAH.
-        # The MINAH disposition is then stored with AUTHORITY_EVALUATED, so retries
-        # after that boundary reuse the same decision rather than re-querying a model.
-        if operation["phase"] == "REQUESTED":
-            self.cee.advance(
-                operation_id, "ADMITTED",
-                detail={"admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED"},
-            )
-        operation = self.cee.get(operation_id)
-        assert operation is not None
-        if operation["phase"] == "ADMITTED":
-            self.cee.advance(
-                operation_id, "CONTEXT_ESTABLISHED",
-                detail={
-                    "jurisdiction": request["jurisdiction"],
-                    "rule_set": request["rule_set"],
-                    "rule_version": request["rule_version"],
-                    "evidence_digest": _digest(evidence),
-                },
-            )
-        operation = self.cee.get(operation_id)
-        assert operation is not None
+        # A database created by the earlier lifecycle ordering may contain an
+        # unfinished CEE-admitted operation without a pinned MINAH disposition.
+        # Do not guess or resume it under the new ordering; require reconciliation.
+        if operation["phase"] in {"ADMITTED", "CONTEXT_ESTABLISHED"} and operation["minah_json"] is None:
+            raise ExecutionConflict("LEGACY_OPERATION_REQUIRES_RECONCILIATION")
 
-        if operation["phase"] == "CONTEXT_ESTABLISHED" and operation["minah_json"] is None:
-            disposition = self.minah.review(evidence)
+        # REQUESTED is an idempotency/receipt record only. MINAH receives the
+        # instruction before CEE admission or context establishment.
+        if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
+            # A profile is scoped to an explicit jurisdiction set; it must not
+            # silently act as a universal agent or fall back across jurisdictions.
+            requested_jurisdiction = request["jurisdiction"]
+            if requested_jurisdiction not in self.minah_profile["jurisdictions"]:
+                disposition = {
+                    "status": "REJECTED",
+                    "missing_fields": [],
+                    "source_refs": [],
+                    "uncertainty": "HIGH",
+                    "may_authorise": False,
+                    "model_version": self.minah_profile["model_ref"],
+                    "deployment_profile": self.minah_profile,
+                    "reason": "MINAH_PROFILE_JURISDICTION_MISMATCH",
+                }
+            else:
+                disposition = self.minah.review(evidence)
+            if isinstance(disposition, dict):
+                disposition = dict(disposition)
+                disposition["deployment_profile"] = self.minah_profile
             contract_error = self._minah_contract_error(disposition)
             if contract_error:
-                # A malformed or self-authorising MINAH output is recorded as a
-                # rejected advisory result; it never reaches the IVM transition.
                 safe_disposition = {
                     "status": "INVALID_DISPOSITION",
                     "missing_fields": [],
@@ -266,11 +653,17 @@ class KinSysProtocolPipeline:
                     "uncertainty": "HIGH",
                     "may_authorise": False,
                     "model_version": "UNTRUSTED_OUTPUT",
+                    "deployment_profile": self.minah_profile,
                     "contract_error": contract_error,
                 }
                 self.cee.advance(
-                    operation_id, "AUTHORITY_EVALUATED", status="REJECTED",
-                    detail={"minah_contract_error": contract_error, "ivm_not_invoked": True},
+                    operation_id, "MINAH_REVIEWED", status="REJECTED",
+                    detail={
+                        "minah_contract_error": contract_error,
+                        "minah_deployment_id": self.minah_profile["deployment_id"],
+                        "minah_profile_version": self.minah_profile["profile_version"],
+                        "ivm_not_invoked": True,
+                    },
                     minah=safe_disposition,
                 )
                 result = {
@@ -288,8 +681,201 @@ class KinSysProtocolPipeline:
                 )
                 return self._response_result(operation_id, result, duplicate=False)
             self.cee.advance(
-                operation_id, "AUTHORITY_EVALUATED",
+                operation_id, "MINAH_REVIEWED",
                 status="DEFERRED" if disposition["status"] == "NEEDS_INFORMATION" else "EVALUATED",
+                detail={
+                    "minah_is_advisory": True,
+                    "may_authorise": False,
+                    "minah_deployment_id": self.minah_profile["deployment_id"],
+                    "minah_profile_version": self.minah_profile["profile_version"],
+                },
+                minah=disposition,
+            )
+
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        disposition = operation["minah_json"]
+
+        if disposition is not None and disposition["status"] in {"REJECTED", "UNKNOWN"}:
+            result_status = disposition["status"]
+            result = {
+                "operation_id": operation_id,
+                "status": result_status,
+                "reason": (
+                    "MINAH_REJECTED_INSTRUCTION"
+                    if result_status == "REJECTED"
+                    else "MINAH_DISPOSITION_UNKNOWN"
+                ),
+                "minah_disposition": disposition,
+                "ivm_decision": None,
+                "funds_moved": False,
+            }
+            if operation["phase"] == "MINAH_REVIEWED":
+                self.cee.advance(
+                    operation_id, "FINALIZED", status=result_status,
+                    outcome=result_status, result=result,
+                    detail={
+                        "reason": result["reason"],
+                        "minah_deployment_id": self.minah_profile["deployment_id"],
+                        "minah_profile_version": self.minah_profile["profile_version"],
+                        "ivm_not_invoked": True,
+                    },
+                )
+            return self._response_result(operation_id, result, duplicate=False)
+
+        if disposition is not None and disposition["status"] == "NEEDS_INFORMATION":
+            result = {
+                "operation_id": operation_id,
+                "status": "DEFERRED",
+                "reason": "MINAH_REQUIRES_ADDITIONAL_EVIDENCE",
+                "minah_disposition": disposition,
+                "ivm_decision": None,
+                "funds_moved": False,
+            }
+            if operation["phase"] == "MINAH_REVIEWED":
+                self.cee.advance(
+                    operation_id, "FINALIZED", status="DEFERRED",
+                    outcome="DEFERRED", result=result,
+                    detail={"reason": result["reason"], "ivm_not_invoked": True},
+                )
+            return self._response_result(operation_id, result, duplicate=False)
+
+        # These are explicit adapter boundaries. Defaults are synthetic schema/rule
+        # checks only; they are not real identity authentication or legal authority.
+        if operation["phase"] == "MINAH_REVIEWED":
+            # Institution-owned MINAH agents may invoke their approved identity API.
+            minah_identity_check = getattr(self.minah, "verify_principal", None)
+            try:
+                identity = minah_identity_check(request) if callable(minah_identity_check) else self.identity_adapter.verify_principal(request)
+            except Exception:
+                identity = {"verified": False, "status": "UNKNOWN", "mode": "VERIFICATION_UNAVAILABLE"}
+            identity_status = _verification_status(identity)
+            if identity_status != "VERIFIED":
+                identity_unknown = identity_status == "UNKNOWN"
+                result = {
+                    "operation_id": operation_id,
+                    "status": identity_status,
+                    "reason": "IDENTITY_VERIFICATION_UNAVAILABLE" if identity_unknown else "IDENTITY_NOT_VERIFIED",
+                    "minah_disposition": disposition,
+                    "identity_result": _safe_verification_result(identity),
+                    "ivm_decision": None, "funds_moved": False,
+                }
+                terminal_status = result["status"]
+                self.cee.advance(
+                    operation_id, "FINALIZED", status=terminal_status, outcome=terminal_status,
+                    result=result, detail={"reason": result["reason"], "ivm_not_invoked": True},
+                )
+                return self._response_result(operation_id, result, duplicate=False)
+            identity_metadata = _safe_verification_metadata(
+                identity,
+                ("evidence_ref", "verification_ref", "verification_id", "identity_provider_ref",
+                 "subject_ref", "principal_ref", "policy_version", "verified_at",
+                 "valid_until", "assurance_level"),
+            )
+            self.cee.advance(
+                operation_id, "IDENTITY_VERIFIED", status="EVALUATED",
+                detail={
+                    "identity_mode": _safe_verification_result(identity)["mode"],
+                    "verified": True,
+                    "identity_evidence": {
+                        "principal_ref": request["actor_id"],
+                        "jurisdiction": request["jurisdiction"],
+                        "metadata": identity_metadata,
+                        "evidence_reference_supplied": bool(
+                            identity_metadata.get("evidence_ref") or identity_metadata.get("verification_ref")
+                        ),
+                    },
+                },
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "IDENTITY_VERIFIED":
+            # MINAH may coordinate action-specific authority checks through approved APIs.
+            minah_authority_check = getattr(self.minah, "verify_action", None)
+            try:
+                authority = minah_authority_check(request) if callable(minah_authority_check) else self.authority_adapter.verify_action(request)
+            except Exception:
+                authority = {"verified": False, "status": "UNKNOWN", "mode": "VERIFICATION_UNAVAILABLE"}
+            authority_status = _verification_status(authority)
+            if authority_status != "VERIFIED":
+                authority_unknown = authority_status == "UNKNOWN"
+                result = {
+                    "operation_id": operation_id,
+                    "status": authority_status,
+                    "reason": "AUTHORITY_VERIFICATION_UNAVAILABLE" if authority_unknown else "AUTHORITY_NOT_VERIFIED",
+                    "minah_disposition": disposition,
+                    "authority_result": _safe_verification_result(authority),
+                    "ivm_decision": None, "funds_moved": False,
+                }
+                terminal_status = result["status"]
+                self.cee.advance(
+                    operation_id, "FINALIZED", status=terminal_status, outcome=terminal_status,
+                    result=result, detail={"reason": result["reason"], "ivm_not_invoked": True},
+                )
+                return self._response_result(operation_id, result, duplicate=False)
+            authority_metadata = _safe_verification_metadata(
+                authority,
+                ("evidence_ref", "verification_ref", "verification_id", "mandate_ref",
+                 "authority_ref", "policy_version", "mandate_version", "scope_ref",
+                 "issuer_ref", "verified_at", "valid_until"),
+            )
+            contract_envelope = request.get("_contract_envelope")
+            self.cee.advance(
+                operation_id, "AUTHORITY_VERIFIED", status="EVALUATED",
+                detail={
+                    "authority_mode": _safe_verification_result(authority)["mode"],
+                    "verified": True,
+                    "authority_evidence": {
+                        "principal_ref": request["actor_id"],
+                        "authority_ref": (
+                            contract_envelope.get("authority_ref")
+                            if isinstance(contract_envelope, dict) else None
+                        ),
+                        "action": request["event_type"],
+                        "target_ref": request["process_id"],
+                        "jurisdiction": request["jurisdiction"],
+                        "rule_set": request["rule_set"],
+                        "rule_version": request["rule_version"],
+                        "metadata": authority_metadata,
+                        "evidence_reference_supplied": bool(
+                            authority_metadata.get("evidence_ref") or authority_metadata.get("verification_ref")
+                            or authority_metadata.get("mandate_ref")
+                        ),
+                    },
+                },
+            )
+
+        # Admission and context pinning are downstream of MINAH, identity, and
+        # action checks. Only then does CEE admit the instruction.
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "AUTHORITY_VERIFIED":
+            self.cee.advance(
+                operation_id, "ADMITTED",
+                detail={
+                    "admission": "SYNTHETIC_REQUEST_SCHEMA_ACCEPTED",
+                    "minah_gate_passed": True, "identity_gate_passed": True,
+                    "authority_gate_passed": True,
+                },
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "ADMITTED":
+            self.cee.advance(
+                operation_id, "CONTEXT_ESTABLISHED",
+                detail={
+                    "jurisdiction": request["jurisdiction"],
+                    "rule_set": request["rule_set"],
+                    "rule_version": request["rule_version"],
+                    "evidence_digest": _digest(evidence),
+                },
+            )
+        operation = self.cee.get(operation_id)
+        assert operation is not None
+        if operation["phase"] == "CONTEXT_ESTABLISHED":
+            self.cee.advance(
+                operation_id, "AUTHORITY_EVALUATED",
+                status="EVALUATED",
                 detail={"minah_is_advisory": True, "may_authorise": False},
                 minah=disposition,
             )
@@ -368,6 +954,87 @@ class KinSysProtocolPipeline:
 
         ivm_result: dict[str, Any]
         if operation["phase"] == "COMMITTING":
+            # A retry may safely reuse an event ID only if the IVM event and
+            # transition history agree with the pinned request. Corrupt or
+            # contradictory store evidence must remain unresolved.
+            self._assert_ivm_event_consistent(request)
+            existing_event = self.ivm.event(request["event_id"])
+            # A COMMITTING operation may be resumed after a crash. Revalidate
+            # action authority immediately before an uncommitted IVM transition;
+            # if the IVM event already exists, its durable outcome is reconciled
+            # instead of re-authorising or repeating the protected transition.
+            if existing_event is None:
+                minah_authority_check = getattr(self.minah, "verify_action", None)
+                try:
+                    authority = (
+                        minah_authority_check(request)
+                        if callable(minah_authority_check)
+                        else self.authority_adapter.verify_action(request)
+                    )
+                except Exception:
+                    authority = {"verified": False, "status": "UNKNOWN", "mode": "REVALIDATION_UNAVAILABLE"}
+                revalidation_metadata = _safe_verification_metadata(
+                    authority if isinstance(authority, dict) else {},
+                    ("evidence_ref", "verification_ref", "verification_id", "mandate_ref",
+                     "authority_ref", "policy_version", "mandate_version", "scope_ref",
+                     "issuer_ref", "verified_at", "valid_until"),
+                )
+                revalidation_status = _verification_status(authority)
+                revalidation_verified = revalidation_status == "VERIFIED"
+                revalidation_unknown = revalidation_status == "UNKNOWN"
+                self.cee.record_observation(
+                    operation_id, "AUTHORITY_REVALIDATION",
+                    "VERIFIED" if revalidation_verified else "UNKNOWN" if revalidation_unknown else "REJECTED",
+                    {
+                        "principal_ref": request["actor_id"],
+                        "action": request["event_type"],
+                        "target_ref": request["process_id"],
+                        "jurisdiction": request["jurisdiction"],
+                        "rule_set": request["rule_set"],
+                        "rule_version": request["rule_version"],
+                        "mode": _safe_verification_result(authority)["mode"],
+                        "metadata": revalidation_metadata,
+                        "evidence_reference_supplied": bool(
+                            revalidation_metadata.get("evidence_ref") or revalidation_metadata.get("verification_ref")
+                            or revalidation_metadata.get("mandate_ref")
+                        ),
+                    },
+                )
+                if not revalidation_verified:
+                    authority_unknown = revalidation_status == "UNKNOWN"
+                    terminal_status = revalidation_status
+                    result = {
+                        "operation_id": operation_id,
+                        "status": terminal_status,
+                        "reason": (
+                            "AUTHORITY_REVALIDATION_UNAVAILABLE"
+                            if authority_unknown
+                            else "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION"
+                        ),
+                        "minah_disposition": disposition,
+                        "authority_result": _safe_verification_result(authority),
+                        "ivm_decision": None,
+                        "funds_moved": False,
+                    }
+                    self.cee.advance(
+                        operation_id, "FINALIZED", status=terminal_status,
+                        outcome=terminal_status, result=result,
+                        detail={
+                            "reason": result["reason"],
+                            "authority_revalidation": "FAILED_CLOSED",
+                            "ivm_not_invoked": True,
+                        },
+                    )
+                    return self._response_result(operation_id, result, duplicate=False)
+            else:
+                self.cee.record_observation(
+                    operation_id, "AUTHORITY_REVALIDATION", "NOT_REQUIRED",
+                    {
+                        "event_id": request["event_id"],
+                        "ivm_event_outcome": existing_event.get("outcome"),
+                        "reason": "IVM_EVENT_ALREADY_DURABLE; RECONCILE_EXISTING_OUTCOME",
+                    },
+                )
             decision = self.ivm.execute({
                 "event_id": request["event_id"],
                 "process_id": request["process_id"],
@@ -435,6 +1102,88 @@ class KinSysProtocolPipeline:
             return self._response_result(operation_id, result, duplicate=True)
         raise LifecycleViolation(f"UNHANDLED_RESUMABLE_PHASE:{operation['phase']}")
 
+    def recover(
+        self, operation_id: str, expected_request: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Resume an existing operation only from durable, recoverable lifecycle state.
+
+        Recovery never creates a new operation or accepts replacement request content.
+        A persisted MINAH disposition is required; after that point the canonical
+        pipeline resumes in phase order, with IVM's stable event ID preventing a
+        committed local transition from being applied twice.
+        """
+        self._assert_store_integrity()
+        operation = self.cee.get(operation_id)
+        if operation is None:
+            return {
+                "operation_id": operation_id,
+                "status": "UNKNOWN",
+                "reason": "OPERATION_NOT_FOUND",
+                "recovery_required": True,
+            }
+
+        self._assert_cross_store_consistent(operation)
+
+        pinned_request = operation["request_json"]
+        request_without_pins = {
+            key: value for key, value in pinned_request.items()
+            if not key.startswith("_minah_")
+        }
+        if expected_request is not None:
+            if _canonical(request_without_pins) != _canonical(expected_request):
+                raise ExecutionConflict("RECOVERY_REQUEST_DIFFERS_FROM_DURABLE_INGRESS_REQUEST")
+
+        # A final CEE record is immutable evidence. It can be returned for ingress
+        # reconciliation even if the currently configured profile has since changed;
+        # no execution is resumed in this branch.
+        if operation["phase"] == "FINALIZED":
+            result = operation["result_json"]
+            if isinstance(result, dict):
+                return self._response_result(operation_id, result, duplicate=True)
+            return {
+                "operation_id": operation_id,
+                "status": "UNKNOWN",
+                "reason": "FINALIZED_CEE_RESULT_MISSING",
+                "recovery_required": True,
+            }
+
+        pinned_profile = pinned_request.get("_minah_deployment_profile")
+        if _canonical(pinned_profile) != _canonical(self.minah_profile):
+            raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
+        if self.require_profile_approval:
+            if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
+                raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
+            pinned_approval_metadata = pinned_request.get("_minah_profile_approval_verification")
+            if not isinstance(pinned_approval_metadata, dict) or pinned_approval_metadata.get("status") != "APPROVED":
+                raise ExecutionConflict("PINNED_PROFILE_APPROVAL_EVIDENCE_MISSING")
+        if operation["phase"] == "REQUESTED" and operation["minah_json"] is None:
+            raise ExecutionConflict(
+                "MINAH_DISPOSITION_NOT_DURABLE_REQUIRES_MANUAL_RECONCILIATION"
+            )
+        if (
+            operation["phase"] in {"ADMITTED", "CONTEXT_ESTABLISHED"}
+            and operation["minah_json"] is None
+        ):
+            raise ExecutionConflict("LEGACY_OPERATION_REQUIRES_RECONCILIATION")
+
+        recoverable_phases = {
+            "MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED",
+            "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+            "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED",
+        }
+        if operation["phase"] not in recoverable_phases or operation["minah_json"] is None:
+            return {
+                "operation_id": operation_id,
+                "status": "UNKNOWN",
+                "reason": "RECOVERY_REQUIRES_MANUAL_RECONCILIATION",
+                "cee_phase": operation["phase"],
+                "recovery_required": True,
+            }
+
+        # execute() reconstructs the pinned request and revalidates the current
+        # profile approval before any protected transition that is not already durable.
+        return self.execute(request_without_pins)
+
     def inspect(self, operation_id: str) -> dict[str, Any] | None:
         """Read a lifecycle snapshot without mutating or resuming the operation."""
         operation = self.cee.get(operation_id)
@@ -442,6 +1191,11 @@ class KinSysProtocolPipeline:
             return None
         events = self.cee.events(operation_id)
         request = operation["request_json"]
+        request_without_pins = {
+            key: value for key, value in request.items()
+            if not key.startswith("_minah_")
+        }
+        request_fingerprint = _digest(request_without_pins)
         ivm_event = self.ivm.event(request["event_id"])
         if operation["phase"] == "FINALIZED" and isinstance(operation["result_json"], dict):
             result = operation["result_json"]
@@ -449,20 +1203,24 @@ class KinSysProtocolPipeline:
             return {
                 "operation_id": operation_id,
                 "phase": operation["phase"],
+                "request_fingerprint": request_fingerprint,
                 "resumable": False,
                 "result": result,
                 "cee_events": events,
+                "cee_observations": self.cee.observations(operation_id),
                 "component_trace": response["component_trace"],
                 "ivm_event": ivm_event,
             }
         return {
             "operation_id": operation_id,
             "phase": operation["phase"],
+            "request_fingerprint": request_fingerprint,
             "resumable": True,
             "minah_disposition": operation["minah_json"],
             "ivm_decision": operation["ivm_json"],
             "ivm_event": ivm_event,
             "cee_events": events,
+            "cee_observations": self.cee.observations(operation_id),
             "component_trace": [],
         }
 
@@ -489,7 +1247,11 @@ class KinSysProtocolPipeline:
             })
 
         for event in events:
-            if event["phase"] == "AUTHORITY_EVALUATED" and not minah_inserted and isinstance(minah, dict):
+            if event["phase"] == "IDENTITY_VERIFIED":
+                append("IDENTITY", "VERIFIED", {"mode": event["detail"].get("identity_mode"), "synthetic": True})
+            if event["phase"] == "AUTHORITY_VERIFIED":
+                append("AUTHORITY", "VERIFIED", {"mode": event["detail"].get("authority_mode"), "synthetic": True})
+            if event["phase"] == "MINAH_REVIEWED" and not minah_inserted and isinstance(minah, dict):
                 append("MINAH", str(minah.get("status", "UNKNOWN")), {
                     "advisory_only": True,
                     "may_authorise": False,
@@ -518,6 +1280,7 @@ class KinSysProtocolPipeline:
             **result,
             "duplicate": duplicate,
             "cee_events": events,
+            "cee_observations": self.cee.observations(operation_id),
             "component_trace": trace,
         }
 
@@ -528,7 +1291,7 @@ class KinSysProtocolPipeline:
         required = {"status", "missing_fields", "source_refs", "uncertainty", "may_authorise", "model_version"}
         if required - set(disposition):
             return "MISSING_REQUIRED_FIELDS"
-        if disposition.get("status") not in {"NEEDS_INFORMATION", "ADVISORY_ONLY"}:
+        if disposition.get("status") not in {"NEEDS_INFORMATION", "ADVISORY_ONLY", "REJECTED", "UNKNOWN"}:
             return "INVALID_STATUS"
         if disposition.get("may_authorise") is not False:
             return "MINAH_MUST_NOT_AUTHORISE"
@@ -555,9 +1318,36 @@ class KinSysProtocolPipeline:
         if not isinstance(request, dict) or required - set(request):
             missing = sorted(required - set(request)) if isinstance(request, dict) else sorted(required)
             raise ValueError("MISSING_REQUIRED_FIELDS:" + ",".join(missing))
-        unknown = sorted(set(request) - required)
+        allowed_extensions = {"_contract_envelope"}
+        unknown = sorted(set(request) - required - allowed_extensions)
         if unknown:
             raise ValueError("UNKNOWN_FIELDS:" + ",".join(unknown))
+        if "_contract_envelope" in request:
+            # Preserve the complete validated client envelope inside the durable
+            # operation fingerprint so retries cannot alter omitted contract fields.
+            envelope = verify_instruction_payload_digest(request["_contract_envelope"])
+            bindings = (
+                ("operation_id", request["operation_id"], envelope["operation_id"]),
+                ("target_ref", request["process_id"], envelope["target_ref"]),
+                ("principal_ref", request["actor_id"], envelope["principal_ref"]),
+                ("action", request["event_type"], envelope["action"]),
+                ("jurisdiction", request["jurisdiction"], envelope["jurisdiction"]),
+                (
+                    "rule_pack_version",
+                    f"{request['rule_set']}:{request['rule_version']}",
+                    envelope["rule_pack_version"],
+                ),
+            )
+            for field, internal_value, envelope_value in bindings:
+                if internal_value != envelope_value:
+                    raise ValueError("CONTRACT_BINDING_MISMATCH:" + field)
+            if not isinstance(envelope.get("evidence"), dict) or request["evidence"] != envelope["evidence"]:
+                raise ValueError("CONTRACT_BINDING_MISMATCH:evidence")
+            expected_event_id = "EV-" + hashlib.sha256(
+                envelope["idempotency_key"].encode("utf-8")
+            ).hexdigest()[:24]
+            if request["event_id"] != expected_event_id:
+                raise ValueError("CONTRACT_BINDING_MISMATCH:idempotency_key")
         for key in (
             "operation_id", "event_id", "process_id", "actor_id", "event_type",
             "jurisdiction", "rule_set", "rule_version",
