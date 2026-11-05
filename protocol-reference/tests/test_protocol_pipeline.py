@@ -205,7 +205,7 @@ class ProtocolPipelineTests(unittest.TestCase):
         try:
             result = pipeline.execute(request())
             self.assertEqual(result['status'], 'COMMITTED')
-            self.assertEqual(agent.calls, ['review', 'identity_api', 'authority_api'])
+            self.assertEqual(agent.calls, ['review', 'identity_api', 'authority_api', 'authority_api'])
             phases = [event['phase'] for event in result['cee_events']]
             self.assertLess(phases.index('MINAH_REVIEWED'), phases.index('IDENTITY_VERIFIED'))
             self.assertLess(phases.index('IDENTITY_VERIFIED'), phases.index('AUTHORITY_VERIFIED'))
@@ -234,6 +234,74 @@ class ProtocolPipelineTests(unittest.TestCase):
             phases = [event["phase"] for event in result["cee_events"]]
             self.assertNotIn("AUTHORITY_VERIFIED", phases)
             self.assertNotIn("ADMITTED", phases)
+        finally:
+            pipeline.close()
+
+    def test_authority_revocation_before_ivm_commit_fails_closed(self):
+        class RevokingInstitutionAgent:
+            def __init__(self):
+                self.authority_checks = 0
+            def review(self, evidence):
+                return {
+                    "status": "ADVISORY_ONLY", "missing_fields": [],
+                    "source_refs": ["POLICY-1"], "uncertainty": "LOW",
+                    "may_authorise": False, "model_version": "institution-agent-v1",
+                }
+            def verify_principal(self, payload):
+                return {"verified": True, "mode": "IDENTITY_API"}
+            def verify_action(self, payload):
+                self.authority_checks += 1
+                if self.authority_checks == 1:
+                    return {"verified": True, "mode": "AUTHORITY_API"}
+                return {"verified": False, "status": "REVOKED", "mode": "AUTHORITY_API"}
+
+        agent = RevokingInstitutionAgent()
+        pipeline = KinSysProtocolPipeline(minah_adapter=agent)
+        try:
+            result = pipeline.execute(request(operation_id="AUTHORITY-REVOKED-BEFORE-COMMIT"))
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["reason"], "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION")
+            self.assertIsNone(result["ivm_decision"])
+            self.assertIsNone(pipeline.ivm.event("EV-001"))
+            self.assertEqual(agent.authority_checks, 2)
+            self.assertEqual(pipeline.cee.get("AUTHORITY-REVOKED-BEFORE-COMMIT")["phase"], "FINALIZED")
+        finally:
+            pipeline.close()
+
+    def test_recovery_revalidates_authority_before_uncommitted_ivm_transition(self):
+        class RevokedAuthority:
+            def verify_action(self, payload):
+                return {"verified": False, "status": "REVOKED", "mode": "INSTITUTION_AUTHORITY_API"}
+
+        pipeline = KinSysProtocolPipeline(authority_adapter=RevokedAuthority())
+        try:
+            payload = request(
+                operation_id="RECOVERY-AUTHORITY-REVOKED",
+                event_id="RECOVERY-AUTHORITY-EVENT",
+                process_id="RECOVERY-AUTHORITY-PROCESS",
+            )
+            pinned = {**payload, "_minah_deployment_profile": pipeline.minah_profile}
+            minah = {
+                "status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+                "uncertainty": "LOW", "may_authorise": False,
+                "model_version": "deterministic-minah-mock",
+            }
+            pipeline.cee.start(payload["operation_id"], pinned)
+            pipeline.cee.advance(payload["operation_id"], "MINAH_REVIEWED", minah=minah)
+            pipeline.cee.advance(payload["operation_id"], "IDENTITY_VERIFIED")
+            pipeline.cee.advance(payload["operation_id"], "AUTHORITY_VERIFIED")
+            pipeline.cee.advance(payload["operation_id"], "ADMITTED")
+            pipeline.cee.advance(payload["operation_id"], "CONTEXT_ESTABLISHED")
+            pipeline.cee.advance(payload["operation_id"], "AUTHORITY_EVALUATED", minah=minah)
+            pipeline.cee.advance(payload["operation_id"], "EXECUTING")
+            pipeline.cee.advance(payload["operation_id"], "PREPARED")
+            pipeline.cee.advance(payload["operation_id"], "COMMITTING")
+
+            result = pipeline.recover(payload["operation_id"])
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["reason"], "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION")
+            self.assertIsNone(pipeline.ivm.event(payload["event_id"]))
+            self.assertEqual(pipeline.cee.get(payload["operation_id"])["phase"], "FINALIZED")
         finally:
             pipeline.close()
 
