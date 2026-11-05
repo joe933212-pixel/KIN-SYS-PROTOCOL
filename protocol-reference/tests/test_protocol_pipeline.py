@@ -1243,7 +1243,7 @@ os._exit(76)
 
     def test_recovery_runs_structural_integrity_checks_before_reading_operation(self):
         self.pipeline._assert_store_integrity()
-        self.assertIsNone(self.pipeline.recover("NO-SUCH-OPERATION"))
+        self.assertEqual(self.pipeline.recover("NO-SUCH-OPERATION")["status"], "UNKNOWN")
 
 
 if __name__ == "__main__":
