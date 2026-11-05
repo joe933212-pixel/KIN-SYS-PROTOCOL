@@ -1062,6 +1062,8 @@ class HttpServiceTests(unittest.TestCase):
         self.assertFalse(body["operation"]["resumable"])
         self.assertEqual(body["operation"]["result"]["status"], "COMMITTED")
         self.assertTrue(body["operation"]["ivm_event"])
+        self.assertEqual(body["operation"]["cee_observations"][-1]["kind"], "AUTHORITY_REVALIDATION")
+        self.assertEqual(body["operation"]["cee_observations"][-1]["status"], "VERIFIED")
 
     def test_inspection_of_unknown_operation_is_not_found(self):
         response, body = self.request("/protocol/operations/DOES-NOT-EXIST")
