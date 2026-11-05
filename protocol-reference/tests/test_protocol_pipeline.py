@@ -1061,5 +1061,72 @@ os._exit(76)
             self.pipeline.execute(payload)
 
 
+    def test_cee_start_rolls_back_operation_when_initial_event_persistence_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "cee-start-fault.sqlite3")
+            pipeline = KinSysProtocolPipeline(cee_database=db)
+            self.addCleanup(pipeline.close)
+            pipeline.cee.db.execute("""
+                CREATE TRIGGER reject_requested_event
+                BEFORE INSERT ON cee_events
+                WHEN NEW.phase = 'REQUESTED'
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_CEE_EVENT_WRITE_FAILURE'); END;
+            """)
+            pipeline.cee.db.commit()
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "INJECTED_CEE_EVENT_WRITE_FAILURE"):
+                pipeline.cee.start("CEE-START-FAULT", request(
+                    operation_id="CEE-START-FAULT", event_id="CEE-START-EVENT",
+                    process_id="CEE-START-PROCESS",
+                ))
+            self.assertIsNone(pipeline.cee.get("CEE-START-FAULT"))
+            self.assertEqual(pipeline.cee.events("CEE-START-FAULT"), [])
+
+    def test_cee_phase_advance_rolls_back_state_when_event_persistence_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "cee-advance-fault.sqlite3")
+            pipeline = KinSysProtocolPipeline(cee_database=db)
+            self.addCleanup(pipeline.close)
+            payload = request(
+                operation_id="CEE-ADVANCE-FAULT", event_id="CEE-ADVANCE-EVENT",
+                process_id="CEE-ADVANCE-PROCESS",
+            )
+            pipeline.cee.start("CEE-ADVANCE-FAULT", payload)
+            pipeline.cee.db.execute("""
+                CREATE TRIGGER reject_minah_event
+                BEFORE INSERT ON cee_events
+                WHEN NEW.phase = 'MINAH_REVIEWED'
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_CEE_PHASE_EVENT_FAILURE'); END;
+            """)
+            pipeline.cee.db.commit()
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "INJECTED_CEE_PHASE_EVENT_FAILURE"):
+                pipeline.cee.advance("CEE-ADVANCE-FAULT", "MINAH_REVIEWED", minah={"status": "ADVISORY_ONLY"})
+            operation = pipeline.cee.get("CEE-ADVANCE-FAULT")
+            self.assertEqual(operation["phase"], "REQUESTED")
+            self.assertIsNone(operation["minah_json"])
+            self.assertEqual([event["phase"] for event in pipeline.cee.events("CEE-ADVANCE-FAULT")], ["REQUESTED"])
+
+    def test_cee_observation_write_failure_leaves_no_partial_observation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "cee-observation-fault.sqlite3")
+            pipeline = KinSysProtocolPipeline(cee_database=db)
+            self.addCleanup(pipeline.close)
+            payload = request(
+                operation_id="CEE-OBSERVATION-FAULT", event_id="CEE-OBSERVATION-EVENT",
+                process_id="CEE-OBSERVATION-PROCESS",
+            )
+            pipeline.cee.start("CEE-OBSERVATION-FAULT", payload)
+            pipeline.cee.db.execute("""
+                CREATE TRIGGER reject_observation
+                BEFORE INSERT ON cee_observations
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_CEE_OBSERVATION_FAILURE'); END;
+            """)
+            pipeline.cee.db.commit()
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "INJECTED_CEE_OBSERVATION_FAILURE"):
+                pipeline.cee.record_observation(
+                    "CEE-OBSERVATION-FAULT", "FAULT_TEST", "UNKNOWN", {"safe": True}
+                )
+            self.assertEqual(pipeline.cee.observations("CEE-OBSERVATION-FAULT"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
