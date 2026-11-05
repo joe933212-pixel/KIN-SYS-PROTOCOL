@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 
-APPROVAL_VERSION = "kin-sys-minah-approval-0.1"
+APPROVAL_VERSION = "kin-sys-minah-approval-0.2"
 APPROVAL_FIELDS = {
     "approval_version",
     "approval_id",
