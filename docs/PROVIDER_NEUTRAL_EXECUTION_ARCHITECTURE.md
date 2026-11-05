@@ -120,6 +120,19 @@ Each adapter contract must specify:
 
 The reference pipeline catches adapter exceptions and fails closed, but it does **not** enforce wall-clock deadlines or forcibly cancel a blocked adapter call. Injected identity and authority adapters must enforce their own bounded network/client timeouts, treat verification as read-only/idempotent, and return an explicit unknown/unavailable result or raise a timeout exception. A timeout after a request may have reached an external provider must not trigger an unbounded or blind retry.
 
+#### Verification result semantics
+
+Identity and action-authority adapters return a structured result with a boolean `verified` field and, where available, a machine-readable `status`. The reference implementation interprets results conservatively:
+
+- `verified: true` with no status, or with a recognised positive status (`VERIFIED`, `APPROVED`, `ACTIVE`, `VALID`, `PASSED`), is a positive verification.
+- A confirmed negative status (`REJECTED`, `DENIED`, `REVOKED`, `EXPIRED`, `INVALID`, `NOT_AUTHORISED`, `NOT_AUTHORIZED`) is a rejection, even if the adapter also sets `verified: true`. A positive boolean must not override an explicit negative status.
+- Explicit uncertainty/unavailability statuses (`UNKNOWN`, `UNAVAILABLE`, `TIMEOUT`, `PENDING`, `ERROR`, `INDETERMINATE`, `VERIFICATION_UNAVAILABLE`, `REVOCATION_UNKNOWN`) produce `UNKNOWN`.
+- Missing or non-boolean `verified` values, malformed responses, contradictory positive status with `verified: false`, and unrecognised statuses do not pass. They produce `UNKNOWN` so that an adapter contract error is not mistaken for confirmed identity or authority.
+
+A confirmed negative result is distinct from an unavailable verification service: the former is `REJECTED`, while the latter is `UNKNOWN`. Neither outcome may proceed to CEE admission or IVM execution. Action authority is checked again immediately before an uncommitted IVM transition; recovery must apply the same interpretation. If the IVM event is already durable, recovery reconciles that recorded local outcome rather than attempting to reverse or reapply it.
+
+Adapter payloads are untrusted input. The reference pipeline must not copy arbitrary adapter dictionaries into caller-visible failure results or CEE evidence. It returns a bounded decision summary and allow-listed references/version/timestamp metadata only. Raw identity documents, credentials, tokens, secrets, and unrestricted provider response fields must remain outside protocol results and routine evidence traces. Deployments remain responsible for securing the adapter-to-provider channel and for validating that evidence references are meaningful in their own trust domain.
+
 A simulator must identify itself as a simulator in capability responses and operation traces. A simulator must never be presented as an authoritative institution, live identity source, or real payment provider.
 
 ## 6. Human usability requirements
