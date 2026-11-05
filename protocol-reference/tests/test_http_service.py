@@ -296,7 +296,7 @@ class HttpServiceTests(unittest.TestCase):
         response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["status"], "COMMITTED")
-        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
+        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY", "AUTHORITY"])
         phases = [event["phase"] for event in body["result"]["cee_events"]]
         self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
         self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
@@ -375,7 +375,7 @@ class HttpServiceTests(unittest.TestCase):
             body = outcome["body"]
             self.assertEqual(outcome["status"], 200)
             self.assertEqual(body["status"], "COMMITTED")
-            self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
+            self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY", "AUTHORITY"])
             phases = [event["phase"] for event in body["result"]["cee_events"]]
             self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
             self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
@@ -1028,7 +1028,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["decision"]["protocol_decision"], "REJECTED")
         self.assertEqual(body["decision"]["external_effect_status"], "NOT_ATTEMPTED")
         self.assertEqual(body["result"]["reason"], "AUTHORITY_NOT_VERIFIED")
-        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
+        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY", "AUTHORITY"])
         phases = [event["phase"] for event in body["result"]["cee_events"]]
         self.assertNotIn("ADMITTED", phases)
         self.assertIsNone(body["result"]["ivm_decision"])
@@ -1302,6 +1302,7 @@ class HttpServiceTests(unittest.TestCase):
         environ = {
             "REQUEST_METHOD": "POST", "PATH_INFO": "/demo/instructions",
             "CONTENT_TYPE": "application/json", "CONTENT_LENGTH": str(64 * 1024 + 1),
+            "REMOTE_ADDR": "127.0.0.1",
             "wsgi.input": io.BytesIO(b""),
         }
         captured = {}
