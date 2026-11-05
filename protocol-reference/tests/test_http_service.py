@@ -104,7 +104,11 @@ class HttpServiceTests(unittest.TestCase):
         def authorizer(environ, scope, resource_id):
             calls.append((scope, resource_id))
             return True
-        app = create_app(authorizer=authorizer, allow_unauthenticated_loopback=False)
+        app = create_app(
+            enable_legacy_demo_routes=True,
+            authorizer=authorizer,
+            allow_unauthenticated_loopback=False,
+        )
         self.addCleanup(app.close)
         response, payload = self.request_with_app(
             app, "/protocol/instructions", "POST", {},
