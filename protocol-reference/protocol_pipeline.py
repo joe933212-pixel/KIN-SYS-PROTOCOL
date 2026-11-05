@@ -420,6 +420,20 @@ class KinSysProtocolPipeline:
         if stored_event.get("outcome") != "ACCEPTED" and matching_history:
             raise ExecutionConflict("REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY")
 
+    def _assert_store_integrity(self) -> None:
+        """Fail closed on SQLite structural errors; this is not a tamper-evidence check."""
+        for label, connection in (("CEE", self.cee.db), ("IVM", self.ivm.db)):
+            try:
+                rows = connection.execute("PRAGMA integrity_check").fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise ExecutionConflict(
+                    f"{label}_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                ) from exc
+            if len(rows) != 1 or rows[0][0] != "ok":
+                raise ExecutionConflict(
+                    f"{label}_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                )
+
     def _assert_cross_store_consistent(self, operation: dict[str, Any]) -> None:
         """Require CEE lifecycle claims and durable IVM evidence to agree.
 
@@ -516,6 +530,7 @@ class KinSysProtocolPipeline:
         # genuinely new operation, verify approval before MINAH or CEE admission.
         # Recovery of an existing operation may rely only on the approval metadata
         # already pinned in that operation's durable CEE request record.
+        self._assert_store_integrity()
         prior_operation = self.cee.get(operation_id)
         if prior_operation is not None:
             self._assert_cross_store_consistent(prior_operation)
