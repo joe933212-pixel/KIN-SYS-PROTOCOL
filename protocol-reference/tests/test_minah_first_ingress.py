@@ -131,25 +131,26 @@ class MinahFirstIngressTests(unittest.TestCase):
                     "external_effect_status": "NOT_ATTEMPTED", "evidence_refs": [],
                 }
 
-        first = MinahFirstIngress(
-            self.db_path, minah=FakeMinah(log), identity=FakeIdentity(log),
-            authority=FakeAuthority(log), cee=BlockingCEE(),
-        )
         second = MinahFirstIngress(
             self.db_path, minah=FakeMinah(log), identity=FakeIdentity(log),
             authority=FakeAuthority(log), cee=FakeCEE(log),
         )
-        self.addCleanup(first.close)
         self.addCleanup(second.close)
         submitted = self.instruction(operation_id="CONCURRENT-OP", request_id="CONCURRENT-REQ")
         outcome = {}
         errors = []
 
         def submit_first():
+            first = MinahFirstIngress(
+                self.db_path, minah=FakeMinah(log), identity=FakeIdentity(log),
+                authority=FakeAuthority(log), cee=BlockingCEE(),
+            )
             try:
                 outcome["first"] = first.execute(submitted)
             except Exception as exc:
                 errors.append(exc)
+            finally:
+                first.close()
 
         worker = threading.Thread(target=submit_first)
         worker.start()
