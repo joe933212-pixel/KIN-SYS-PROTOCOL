@@ -1128,5 +1128,47 @@ os._exit(76)
             self.assertEqual(pipeline.cee.observations("CEE-OBSERVATION-FAULT"), [])
 
 
+    def test_recovery_stops_when_cee_claims_commit_but_ivm_event_is_missing(self):
+        self.pipeline.execute(request())
+        self.pipeline.ivm.db.execute(
+            "DELETE FROM transition_history WHERE event_id = ?", ("EV-001",)
+        )
+        self.pipeline.ivm.db.execute(
+            "DELETE FROM events WHERE event_id = ?", ("EV-001",)
+        )
+        self.pipeline.ivm.db.commit()
+        with self.assertRaisesRegex(
+            ExecutionConflict,
+            "CEE_COMMIT_CLAIM_WITHOUT_DURABLE_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION",
+        ):
+            self.pipeline.recover("OP-001")
+
+    def test_recovery_stops_when_ivm_event_exists_before_cee_commit_boundary(self):
+        self.pipeline.execute(request())
+        self.pipeline.cee.db.execute(
+            "UPDATE cee_operations SET phase = 'EXECUTING' WHERE operation_id = ?",
+            ("OP-001",),
+        )
+        self.pipeline.cee.db.commit()
+        with self.assertRaisesRegex(
+            ExecutionConflict,
+            "IVM_EVENT_EXISTS_BEFORE_CEE_COMMIT_BOUNDARY_REQUIRES_MANUAL_RECONCILIATION",
+        ):
+            self.pipeline.recover("OP-001")
+
+    def test_recovery_stops_when_cee_ivm_decision_differs_from_durable_event(self):
+        self.pipeline.execute(request())
+        self.pipeline.cee.db.execute(
+            "UPDATE cee_operations SET ivm_json = ? WHERE operation_id = ?",
+            ('{"status":"REJECTED","event_id":"EV-001","process_id":"PROC-001"}', "OP-001"),
+        )
+        self.pipeline.cee.db.commit()
+        with self.assertRaisesRegex(
+            ExecutionConflict,
+            "CEE_IVM_DECISION_DIFFERS_FROM_DURABLE_EVENT_REQUIRES_MANUAL_RECONCILIATION",
+        ):
+            self.pipeline.recover("OP-001")
+
+
 if __name__ == "__main__":
     unittest.main()
