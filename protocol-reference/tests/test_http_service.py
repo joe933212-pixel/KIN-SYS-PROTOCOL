@@ -39,6 +39,7 @@ class HttpServiceTests(unittest.TestCase):
             "PATH_INFO": path,
             "CONTENT_TYPE": content_type,
             "CONTENT_LENGTH": str(len(raw)),
+            "REMOTE_ADDR": "127.0.0.1",
             "wsgi.input": io.BytesIO(raw),
         }
         for key, value in (headers or {}).items():
@@ -68,6 +69,42 @@ class HttpServiceTests(unittest.TestCase):
             capabilities["legacy_demo_routes"]["classification"],
             "SYNTHETIC_ONLY_NOT_THE_GOVERNED_V0_1_INSTRUCTION_PATH",
         )
+
+    def test_non_loopback_operational_request_requires_institutional_authorizer(self):
+        raw = b""
+        environ = {
+            "REQUEST_METHOD": "GET", "PATH_INFO": "/protocol/operations/OP-1",
+            "CONTENT_TYPE": "application/json", "CONTENT_LENGTH": "0",
+            "REMOTE_ADDR": "198.51.100.24", "wsgi.input": io.BytesIO(raw),
+        }
+        captured = {}
+        def start_response(status, headers):
+            captured["status"] = int(status.split()[0])
+        payload = json.loads(b"".join(self.app(environ, start_response)).decode("utf-8"))
+        self.assertEqual(captured["status"], 401)
+        self.assertEqual(payload["error"]["code"], "AUTHENTICATION_REQUIRED")
+
+    def test_institutional_authorizer_receives_distinct_recovery_and_audit_scopes(self):
+        calls = []
+        class Authorizer:
+            def authorize(self, environ, scope, resource_id):
+                calls.append((scope, resource_id))
+                return True
+        app = create_app(authorizer=Authorizer(), allow_unauthenticated_loopback=False)
+        self.addCleanup(app.close)
+        self.request_with_app(app, "/protocol/operations/OP-2/recovery-events", headers={"REMOTE_ADDR": "198.51.100.25"})
+        self.request_with_app(app, "/protocol/operations/OP-2/recover", "POST", headers={"REMOTE_ADDR": "198.51.100.25"})
+        self.assertEqual(calls, [
+            ("protocol:operation:audit", "OP-2"),
+            ("protocol:operation:recover", "OP-2"),
+        ])
+
+    def test_authorizer_denial_fails_closed(self):
+        app = create_app(authorizer=lambda environ, scope, resource_id: False)
+        self.addCleanup(app.close)
+        response, payload = self.request_with_app(app, "/protocol/operations/OP-3")
+        self.assertEqual(response["status"], 403)
+        self.assertEqual(payload["error"]["code"], "ACCESS_DENIED")
 
     def test_health_is_live_and_carries_request_id(self):
         response, body = self.request("/system/health", headers={"HTTP_X_REQUEST_ID": "test-request-1"})
