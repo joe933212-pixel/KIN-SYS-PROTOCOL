@@ -1241,6 +1241,23 @@ os._exit(76)
             finally:
                 source.close()
 
+    def test_recovery_fails_closed_when_sqlite_integrity_check_reports_damage(self):
+        original = self.pipeline.cee.db
+        class DamagedStore:
+            def execute(self, statement):
+                if statement == "PRAGMA integrity_check":
+                    return [("database disk image is malformed",)]
+                raise AssertionError("integrity check must run before other store reads")
+        self.pipeline.cee.db = DamagedStore()
+        try:
+            with self.assertRaisesRegex(
+                ExecutionConflict,
+                "CEE_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION",
+            ):
+                self.pipeline.recover("NO-SUCH-OPERATION")
+        finally:
+            self.pipeline.cee.db = original
+
     def test_recovery_runs_structural_integrity_checks_before_reading_operation(self):
         self.pipeline._assert_store_integrity()
         self.assertEqual(self.pipeline.recover("NO-SUCH-OPERATION")["status"], "UNKNOWN")
