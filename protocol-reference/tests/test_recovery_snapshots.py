@@ -105,7 +105,9 @@ class RecoverySnapshotTests(unittest.TestCase):
         create_recovery_snapshot_set(self.pipeline, destination, "SNAPSHOT-OP-001")
         manifest_path = destination / "manifest.json"
         manifest_path.chmod(0o644)
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))\n        manifest["operation_id"] = "ALTERED-OPERATION"\n        manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["operation_id"] = "ALTERED-OPERATION"
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
         self.assertEqual(
             verify_recovery_snapshot_set(destination)["status"],
             "MANIFEST_DIGEST_MISMATCH",
