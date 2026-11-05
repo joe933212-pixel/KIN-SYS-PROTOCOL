@@ -1244,9 +1244,12 @@ os._exit(76)
     def test_recovery_fails_closed_when_sqlite_integrity_check_reports_damage(self):
         original = self.pipeline.cee.db
         class DamagedStore:
+            class Cursor:
+                def fetchall(self):
+                    return [("database disk image is malformed",)]
             def execute(self, statement):
                 if statement == "PRAGMA integrity_check":
-                    return [("database disk image is malformed",)]
+                    return self.Cursor()
                 raise AssertionError("integrity check must run before other store reads")
         self.pipeline.cee.db = DamagedStore()
         try:
