@@ -1261,6 +1261,68 @@ os._exit(76)
         finally:
             self.pipeline.cee.db = original
 
+    def test_restart_recovery_matrix_at_each_cee_durable_phase_boundary(self):
+        # Each trigger simulates a process stopping immediately after the prior
+        # durable phase, when the next phase's CEE transaction cannot commit.
+        phases = (
+            "MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED",
+            "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+            "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED", "FINALIZED",
+        )
+        for phase in phases:
+            with self.subTest(failed_phase=phase), tempfile.TemporaryDirectory() as tmp:
+                cee_db = str(Path(tmp) / "cee.sqlite3")
+                ivm_db = str(Path(tmp) / "ivm.sqlite3")
+                payload = request(
+                    operation_id=f"RESTART-{phase}",
+                    event_id=f"EVENT-{phase}",
+                    process_id=f"PROCESS-{phase}",
+                )
+                first = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                first.cee.db.execute(f"""
+                    CREATE TRIGGER interrupt_before_{phase.lower()}_event
+                    BEFORE INSERT ON cee_events
+                    WHEN NEW.phase = '{phase}'
+                    BEGIN SELECT RAISE(ABORT, 'INJECTED_RESTART_AT_{phase}'); END;
+                """)
+                first.cee.db.commit()
+                with self.assertRaisesRegex(
+                    sqlite3.IntegrityError, f"INJECTED_RESTART_AT_{phase}"
+                ):
+                    first.execute(payload)
+                durable = first.cee.get(payload["operation_id"])
+                self.assertIsNotNone(durable)
+                first.close()
+
+                # Reopen both file-backed stores as a new process would, remove
+                # only the test fault injector, and ask the recovery path to resume.
+                restarted = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                try:
+                    restarted.cee.db.execute(
+                        f"DROP TRIGGER interrupt_before_{phase.lower()}_event"
+                    )
+                    restarted.cee.db.commit()
+                    if phase == "MINAH_REVIEWED":
+                        # MINAH returned, but its disposition never became durable.
+                        # Recovery must not invent or silently repeat that decision.
+                        with self.assertRaisesRegex(
+                            ExecutionConflict, "MINAH_DISPOSITION_NOT_DURABLE"
+                        ):
+                            restarted.recover(payload["operation_id"])
+                    else:
+                        result = restarted.recover(payload["operation_id"])
+                        self.assertEqual(result["status"], "COMMITTED")
+                        self.assertEqual(
+                            restarted.cee.get(payload["operation_id"])["phase"],
+                            "FINALIZED",
+                        )
+                        self.assertEqual(
+                            restarted.ivm.event(payload["event_id"])["outcome"],
+                            "ACCEPTED",
+                        )
+                finally:
+                    restarted.close()
+
     def test_recovery_runs_structural_integrity_checks_before_reading_operation(self):
         self.pipeline._assert_store_integrity()
         self.assertEqual(self.pipeline.recover("NO-SUCH-OPERATION")["status"], "UNKNOWN")
