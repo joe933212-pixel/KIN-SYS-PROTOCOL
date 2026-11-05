@@ -90,6 +90,63 @@ def _safe_verification_metadata(result: dict[str, Any], allowed_fields: tuple[st
             metadata[field] = value.strip()
     return metadata
 
+_VERIFICATION_POSITIVE = {"VERIFIED", "APPROVED", "ACTIVE", "VALID", "PASSED"}
+_VERIFICATION_NEGATIVE = {"REJECTED", "DENIED", "REVOKED", "EXPIRED", "INVALID", "NOT_AUTHORISED", "NOT_AUTHORIZED"}
+_VERIFICATION_UNKNOWN = {"UNKNOWN", "UNAVAILABLE", "TIMEOUT", "PENDING", "ERROR", "INDETERMINATE", "VERIFICATION_UNAVAILABLE", "REVOCATION_UNKNOWN"}
+
+
+def _verification_status(result: Any) -> str:
+    """Interpret adapter output conservatively; contradictory or malformed output never passes."""
+    if not isinstance(result, dict):
+        return "UNKNOWN"
+    verified = result.get("verified")
+    status = result.get("status")
+    if isinstance(status, str):
+        status = status.strip().upper()
+    elif status is not None:
+        return "UNKNOWN"
+
+    if verified is True:
+        if status is None or status in _VERIFICATION_POSITIVE:
+            return "VERIFIED"
+        if status in _VERIFICATION_NEGATIVE:
+            return "REJECTED"
+        return "UNKNOWN"
+    if verified is False:
+        if status in _VERIFICATION_UNKNOWN:
+            return "UNKNOWN"
+        if status in _VERIFICATION_POSITIVE:
+            return "UNKNOWN"
+        if status is None or status in _VERIFICATION_NEGATIVE:
+            return "REJECTED"
+        return "UNKNOWN"
+    return "UNKNOWN"
+
+
+def _safe_verification_result(result: Any) -> dict[str, Any]:
+    """Return a bounded decision summary, never echo arbitrary adapter payloads."""
+    status = _verification_status(result)
+    safe: dict[str, Any] = {"verified": status == "VERIFIED", "status": status}
+    if not isinstance(result, dict):
+        safe["mode"] = "INVALID_ADAPTER_RESPONSE"
+        return safe
+    mode = result.get("mode")
+    if isinstance(mode, str) and mode.strip() and len(mode.strip()) <= 128:
+        safe["mode"] = mode.strip()
+    else:
+        safe["mode"] = "ADAPTER"
+    reason_code = result.get("reason_code")
+    if isinstance(reason_code, str) and reason_code.strip() and len(reason_code.strip()) <= 128:
+        safe["reason_code"] = reason_code.strip()
+    safe.update(_safe_verification_metadata(
+        result,
+        ("evidence_ref", "verification_ref", "verification_id", "identity_provider_ref",
+         "subject_ref", "principal_ref", "mandate_ref", "authority_ref", "policy_version",
+         "mandate_version", "scope_ref", "issuer_ref", "verified_at", "valid_until",
+         "assurance_level"),
+    ))
+    return safe
+
 
 class CEEJournal:
     """Durable local lifecycle journal with explicit phase and event history."""
@@ -586,14 +643,15 @@ class KinSysProtocolPipeline:
                 identity = minah_identity_check(request) if callable(minah_identity_check) else self.identity_adapter.verify_principal(request)
             except Exception:
                 identity = {"verified": False, "status": "UNKNOWN", "mode": "VERIFICATION_UNAVAILABLE"}
-            if not isinstance(identity, dict) or identity.get("verified") is not True:
-                identity_unknown = isinstance(identity, dict) and identity.get("status") == "UNKNOWN"
+            identity_status = _verification_status(identity)
+            if identity_status != "VERIFIED":
+                identity_unknown = identity_status == "UNKNOWN"
                 result = {
                     "operation_id": operation_id,
-                    "status": "UNKNOWN" if identity_unknown else "REJECTED",
+                    "status": identity_status,
                     "reason": "IDENTITY_VERIFICATION_UNAVAILABLE" if identity_unknown else "IDENTITY_NOT_VERIFIED",
                     "minah_disposition": disposition,
-                    "identity_result": identity if isinstance(identity, dict) else {"verified": False},
+                    "identity_result": _safe_verification_result(identity),
                     "ivm_decision": None, "funds_moved": False,
                 }
                 terminal_status = result["status"]
@@ -632,14 +690,15 @@ class KinSysProtocolPipeline:
                 authority = minah_authority_check(request) if callable(minah_authority_check) else self.authority_adapter.verify_action(request)
             except Exception:
                 authority = {"verified": False, "status": "UNKNOWN", "mode": "VERIFICATION_UNAVAILABLE"}
-            if not isinstance(authority, dict) or authority.get("verified") is not True:
-                authority_unknown = isinstance(authority, dict) and authority.get("status") == "UNKNOWN"
+            authority_status = _verification_status(authority)
+            if authority_status != "VERIFIED":
+                authority_unknown = authority_status == "UNKNOWN"
                 result = {
                     "operation_id": operation_id,
-                    "status": "UNKNOWN" if authority_unknown else "REJECTED",
+                    "status": authority_status,
                     "reason": "AUTHORITY_VERIFICATION_UNAVAILABLE" if authority_unknown else "AUTHORITY_NOT_VERIFIED",
                     "minah_disposition": disposition,
-                    "authority_result": authority if isinstance(authority, dict) else {"verified": False},
+                    "authority_result": _safe_verification_result(authority),
                     "ivm_decision": None, "funds_moved": False,
                 }
                 terminal_status = result["status"]
@@ -814,8 +873,9 @@ class KinSysProtocolPipeline:
                      "authority_ref", "policy_version", "mandate_version", "scope_ref",
                      "issuer_ref", "verified_at", "valid_until"),
                 )
-                revalidation_verified = isinstance(authority, dict) and authority.get("verified") is True
-                revalidation_unknown = isinstance(authority, dict) and authority.get("status") == "UNKNOWN"
+                revalidation_status = _verification_status(authority)
+                revalidation_verified = revalidation_status == "VERIFIED"
+                revalidation_unknown = revalidation_status == "UNKNOWN"
                 self.cee.record_observation(
                     operation_id, "AUTHORITY_REVALIDATION",
                     "VERIFIED" if revalidation_verified else "UNKNOWN" if revalidation_unknown else "REJECTED",
@@ -835,8 +895,8 @@ class KinSysProtocolPipeline:
                     },
                 )
                 if not revalidation_verified:
-                    authority_unknown = isinstance(authority, dict) and authority.get("status") == "UNKNOWN"
-                    terminal_status = "UNKNOWN" if authority_unknown else "REJECTED"
+                    authority_unknown = revalidation_status == "UNKNOWN"
+                    terminal_status = revalidation_status
                     result = {
                         "operation_id": operation_id,
                         "status": terminal_status,
@@ -846,7 +906,7 @@ class KinSysProtocolPipeline:
                             else "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION"
                         ),
                         "minah_disposition": disposition,
-                        "authority_result": authority if isinstance(authority, dict) else {"verified": False},
+                        "authority_result": _safe_verification_result(authority),
                         "ivm_decision": None,
                         "funds_moved": False,
                     }
