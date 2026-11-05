@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - "protocol-reference/**"
+      - "scripts/prototype_smoke_test.py"
       - "docs/TRANSITION_CONTRACT.md"
       - ".github/workflows/protocol-conformance.yml"
   pull_request:
