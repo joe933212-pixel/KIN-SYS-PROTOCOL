@@ -20,6 +20,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 - **IVM event identity and history must agree.** The same IVM event ID and request digest are used on retry. Before resuming the commit phase, the runtime checks the pinned event digest and confirms that an accepted event has exactly one matching transition-history entry. A missing event with surviving history, a changed digest, or inconsistent history remains unresolved; the runtime must not convert store corruption into a normal rejection.
 - **Unknown stays unknown.** Missing or inconsistent evidence, an unsupported phase, or a failed recovery does not become a successful decision.
 - **Recovery is auditable without storing raw errors.** Ingress records recovery start, completion, or blocked attempts, including the phase, stable reason codes and exception type. Raw exception messages and provider response bodies are not stored in the recovery audit trail.
+- **Verification provenance is minimised.** Identity and initial action-authority lifecycle events retain allow-listed evidence references, pseudonymous principal/mandate references, action and target binding, jurisdiction, and available policy/mandate versions and validity timestamps. Raw identity documents, secrets and unrecognised adapter fields are excluded. Execution-time authority revalidation is appended to a separate CEE observation log so repeated checks do not rewrite the lifecycle phase history.
 
 ## Failure-point matrix
 
