@@ -99,6 +99,21 @@ class HttpServiceTests(unittest.TestCase):
             ("protocol:operation:recover", "OP-2"),
         ])
 
+    def test_institutional_authorizer_receives_instruction_submission_scope(self):
+        calls = []
+        def authorizer(environ, scope, resource_id):
+            calls.append((scope, resource_id))
+            return True
+        app = create_app(authorizer=authorizer, allow_unauthenticated_loopback=False)
+        self.addCleanup(app.close)
+        response, payload = self.request_with_app(
+            app, "/protocol/instructions", "POST", {},
+            headers={"REMOTE_ADDR": "198.51.100.26"},
+        )
+        self.assertEqual(response["status"], 422)
+        self.assertEqual(calls, [("protocol:instruction:submit", None)])
+        self.assertEqual(payload["error"]["code"], "MISSING_REQUIRED_FIELDS")
+
     def test_authorizer_denial_fails_closed(self):
         app = create_app(authorizer=lambda environ, scope, resource_id: False)
         self.addCleanup(app.close)
