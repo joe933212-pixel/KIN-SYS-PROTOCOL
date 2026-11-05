@@ -19,6 +19,8 @@ APPROVAL_FIELDS = {
     "signer_ref",
     "algorithm",
     "profile_digest",
+    "profile_owner_scope",
+    "profile_owner_ref",
     "approved_at",
     "expires_at",
     "signature",
@@ -70,8 +72,10 @@ def verify_minah_profile_approval(
     """Verify an approval envelope; fail closed on every missing/uncertain check.
 
     signature_verifier(signer_ref, algorithm, signed_payload, signature) must
-    validate the signature against a trusted key registry and return True only
-    for a cryptographically valid signature. revocation_checker(approval_id)
+    validate the signature against a trusted key registry, enforce that the signer
+    is authorised for the signed profile_owner_scope/profile_owner_ref, enforce
+    algorithm/key-usage policy and return True only for a valid signature.
+    revocation_checker(approval_id)
     must return True only when the approval is known to be revoked. Exceptions
     from either callback fail closed. The signature covers every approval field
     except 'signature', including the profile digest and expiry.
@@ -81,13 +85,24 @@ def verify_minah_profile_approval(
     missing = sorted(APPROVAL_FIELDS - set(approval))
     if missing:
         raise MinahApprovalViolation("MISSING_APPROVAL_FIELDS:" + ",".join(missing))
+    unexpected = sorted(set(approval) - APPROVAL_FIELDS)
+    if unexpected:
+        raise MinahApprovalViolation("UNSUPPORTED_APPROVAL_FIELDS:" + ",".join(unexpected))
     if approval.get("approval_version") != APPROVAL_VERSION:
         raise MinahApprovalViolation("UNSUPPORTED_APPROVAL_VERSION")
 
-    for field in ("approval_id", "signer_ref", "algorithm", "signature"):
+    for field in (
+        "approval_id", "signer_ref", "algorithm", "signature",
+        "profile_owner_scope", "profile_owner_ref",
+    ):
         value = approval.get(field)
         if not isinstance(value, str) or not value.strip():
             raise MinahApprovalViolation("INVALID_" + field.upper())
+
+    if approval["profile_owner_scope"] != profile.get("owner_scope"):
+        raise MinahApprovalViolation("PROFILE_OWNER_SCOPE_MISMATCH")
+    if approval["profile_owner_ref"] != profile.get("owner_ref"):
+        raise MinahApprovalViolation("PROFILE_OWNER_REF_MISMATCH")
 
     actual_digest = profile_digest(profile)
     if approval.get("profile_digest") != actual_digest:
