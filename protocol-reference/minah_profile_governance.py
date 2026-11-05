@@ -140,13 +140,17 @@ def verify_minah_profile_approval(
         revoked = revocation_checker(approval["approval_id"])
     except Exception as exc:
         raise MinahApprovalViolation("REVOCATION_CHECK_UNAVAILABLE") from exc
+    if revoked is True:
+        raise MinahApprovalViolation("APPROVAL_REVOKED")
     if revoked is not False:
-        raise MinahApprovalViolation("APPROVAL_REVOKED_OR_REVOCATION_UNKNOWN")
+        raise MinahApprovalViolation("REVOCATION_UNKNOWN")
 
     return {
         "verified": True,
         "approval_id": approval["approval_id"],
         "signer_ref": approval["signer_ref"],
+        "profile_owner_scope": approval["profile_owner_scope"],
+        "profile_owner_ref": approval["profile_owner_ref"],
         "profile_digest": actual_digest,
         "approved_at": approved_at.isoformat(),
         "expires_at": expires_at.isoformat(),
