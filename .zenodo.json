@@ -1,0 +1,24 @@
+{
+  "creators": [
+    {
+      "name": "Kagoro, Joel"
+    }
+  ],
+  "title": "KIN-SYS Protocol: Provider-Neutral Governed Execution Prototype",
+  "version": "0.1.0",
+  "description": "KIN-SYS is a provider-neutral protocol architecture for governing and verifying digital instructions across institutional and jurisdictional boundaries. This 0.1.0 software release preserves a runnable local synthetic reference prototype with MINAH-first instruction ingress, identity and action-specific authority gates, CEE-controlled execution with IVM transition checks, durable local SQLite journals, explicit decision outcomes, operation inspection, and bounded recovery tooling. The repository includes reproducible tests, a process-level HTTP smoke test, paired comparison harnesses, and documented architecture and assurance limits. This is a research/reference prototype, not a production deployment: MINAH, identity and authority adapters, legal rules, institutional decisions, and payment interactions are synthetic or test doubles; no live external services or real funds are involved; distributed finality, production authentication/TLS, and production cryptographic trust infrastructure are not claimed.",
+  "access_right": "open",
+  "license": "apache-2.0",
+  "upload_type": "software",
+  "language": "eng",
+  "keywords": [
+    "KIN-SYS",
+    "governed execution",
+    "institutional coordination",
+    "verifiable execution",
+    "distributed systems",
+    "digital sovereignty",
+    "protocol architecture",
+    "East Africa"
+  ]
+}
