@@ -135,6 +135,20 @@ Adapter payloads are untrusted input. The reference pipeline must not copy arbit
 
 A simulator must identify itself as a simulator in capability responses and operation traces. A simulator must never be presented as an authoritative institution, live identity source, or real payment provider.
 
+### CEE/IVM cross-store recovery consistency
+
+The reference pipeline stores CEE lifecycle state and IVM transition evidence in separate SQLite databases. A recovery decision must therefore inspect both stores before resuming or returning a terminal outcome:
+
+- A durable IVM event appearing before CEE reaches `COMMITTING` is a contradiction and requires manual reconciliation.
+- `COMMITTING` with no IVM event is an expected pre-commit recovery state; the pipeline must revalidate authority before attempting the transition.
+- `COMMITTING` with an IVM event is the expected crash-after-commit/before-CEE-acknowledgement window only when the event digest, process binding, outcome, and transition-history evidence are internally consistent. Recovery may then reconcile that existing event without repeating the transition.
+- CEE `COMMITTED`, or `FINALIZED` with outcome `COMMITTED`, must have a matching accepted IVM event, exactly one corresponding transition-history record, and a CEE IVM decision that agrees with the durable event/history identifiers and state change.
+- A CEE IVM decision without its corresponding IVM event, a finalized operation with an unrecorded IVM event, or any mismatch between the CEE decision and IVM evidence must stop for manual reconciliation. The pipeline must not manufacture missing records, delete evidence, or guess which store is authoritative.
+- A consistent rejected IVM event may be reconciled only with its matching CEE decision and no transition-history record.
+
+These are local consistency checks, not a distributed transaction or a complete storage-integrity system. They do not prove that SQLite files have not been maliciously rewritten, that backups are mutually consistent, or that writes survive every filesystem/power-loss failure. Operator reconciliation needs a separately specified, authenticated, append-only procedure with evidence preservation and explicit approval; it is not implemented by this reference pipeline.
+
+
 ## 6. Human usability requirements
 
 The protocol's clients and institutional workflows should:
