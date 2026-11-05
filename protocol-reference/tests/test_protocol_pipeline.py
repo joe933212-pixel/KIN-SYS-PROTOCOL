@@ -1184,5 +1184,67 @@ os._exit(76)
             self.pipeline.recover("OP-001")
 
 
+    def test_recovery_rejects_restored_cee_snapshot_ahead_of_ivm_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_cee = str(Path(tmp) / "source-cee.sqlite3")
+            source_ivm = str(Path(tmp) / "source-ivm.sqlite3")
+            source = KinSysProtocolPipeline(cee_database=source_cee, ivm_database=source_ivm)
+            try:
+                source.execute(request())
+                # Model restoring an older CEE backup while retaining the newer IVM store.
+                source.cee.db.execute(
+                    "UPDATE cee_operations SET phase='EXECUTING', ivm_json=NULL WHERE operation_id=?",
+                    ("OP-001",),
+                )
+                source.cee.db.commit()
+                target_cee = str(Path(tmp) / "restored-cee.sqlite3")
+                target_ivm = str(Path(tmp) / "retained-ivm.sqlite3")
+                target = KinSysProtocolPipeline(cee_database=target_cee, ivm_database=target_ivm)
+                try:
+                    with source.cee.db:
+                        source.cee.db.backup(target.cee.db)
+                    with source.ivm.db:
+                        source.ivm.db.backup(target.ivm.db)
+                    with self.assertRaisesRegex(
+                        ExecutionConflict,
+                        "IVM_EVENT_EXISTS_BEFORE_CEE_COMMIT_BOUNDARY_REQUIRES_MANUAL_RECONCILIATION",
+                    ):
+                        target.recover("OP-001")
+                finally:
+                    target.close()
+            finally:
+                source.close()
+
+    def test_recovery_rejects_restored_cee_commit_snapshot_with_older_ivm_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = KinSysProtocolPipeline(
+                cee_database=str(Path(tmp) / "source-cee.sqlite3"),
+                ivm_database=str(Path(tmp) / "source-ivm.sqlite3"),
+            )
+            try:
+                source.execute(request())
+                target = KinSysProtocolPipeline(
+                    cee_database=str(Path(tmp) / "restored-cee.sqlite3"),
+                    ivm_database=str(Path(tmp) / "older-ivm.sqlite3"),
+                )
+                try:
+                    # Restore the newer CEE backup but leave the newly initialised,
+                    # structurally valid IVM store in place as an older backup.
+                    source.cee.db.backup(target.cee.db)
+                    with self.assertRaisesRegex(
+                        ExecutionConflict,
+                        "CEE_COMMIT_CLAIM_WITHOUT_DURABLE_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION",
+                    ):
+                        target.recover("OP-001")
+                finally:
+                    target.close()
+            finally:
+                source.close()
+
+    def test_recovery_runs_structural_integrity_checks_before_reading_operation(self):
+        self.pipeline._assert_store_integrity()
+        self.assertIsNone(self.pipeline.recover("NO-SUCH-OPERATION"))
+
+
 if __name__ == "__main__":
     unittest.main()
