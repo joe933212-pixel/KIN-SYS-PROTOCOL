@@ -236,6 +236,10 @@ class ProtocolPipelineTests(unittest.TestCase):
             self.assertEqual(authority_evidence['metadata']['mandate_version'], '3')
             self.assertTrue(authority_evidence['evidence_reference_supplied'])
             self.assertNotIn('raw_authority_document', authority_evidence['metadata'])
+            revalidation = result['cee_observations'][-1]
+            self.assertEqual(revalidation['kind'], 'AUTHORITY_REVALIDATION')
+            self.assertEqual(revalidation['status'], 'VERIFIED')
+            self.assertEqual(revalidation['detail']['metadata']['mandate_ref'], 'mandate:opaque-001')
         finally:
             pipeline.close()
 
@@ -287,6 +291,8 @@ class ProtocolPipelineTests(unittest.TestCase):
             self.assertIsNone(result["ivm_decision"])
             self.assertIsNone(pipeline.ivm.event("EV-001"))
             self.assertEqual(agent.authority_checks, 2)
+            self.assertEqual(result["cee_observations"][-1]["kind"], "AUTHORITY_REVALIDATION")
+            self.assertEqual(result["cee_observations"][-1]["status"], "REJECTED")
             self.assertEqual(pipeline.cee.get("AUTHORITY-REVOKED-BEFORE-COMMIT")["phase"], "FINALIZED")
         finally:
             pipeline.close()
@@ -325,6 +331,8 @@ class ProtocolPipelineTests(unittest.TestCase):
             self.assertEqual(result["reason"], "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION")
             self.assertIsNone(pipeline.ivm.event(payload["event_id"]))
             self.assertEqual(pipeline.cee.get(payload["operation_id"])["phase"], "FINALIZED")
+            self.assertEqual(result["cee_observations"][-1]["kind"], "AUTHORITY_REVALIDATION")
+            self.assertEqual(result["cee_observations"][-1]["status"], "REJECTED")
         finally:
             pipeline.close()
 
