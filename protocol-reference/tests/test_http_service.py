@@ -116,7 +116,7 @@ class HttpServiceTests(unittest.TestCase):
         )
         self.assertEqual(response["status"], 422)
         self.assertEqual(calls, [("protocol:instruction:submit", None)])
-        self.assertEqual(payload["error"]["code"], "MISSING_REQUIRED_FIELDS")
+        self.assertEqual(payload["error"]["code"], "INVALID_PROTOCOL_INSTRUCTION")
 
     def test_authorizer_denial_fails_closed(self):
         app = create_app(authorizer=lambda environ, scope, resource_id: False)
