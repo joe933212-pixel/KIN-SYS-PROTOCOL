@@ -158,6 +158,10 @@ class HttpServiceTests(unittest.TestCase):
             "NOT_IMPLEMENTED",
         )
         self.assertEqual(
+            body["ingress_adapter_contract"]["action_authority_revalidation"],
+            "RECHECKED_AT_COMMITTING_BEFORE_UNCOMMITTED_IVM_EVENT; REVOKED_OR_UNAVAILABLE_CHECK_FAILS_CLOSED",
+        )
+        self.assertEqual(
             body["http_access_control"]["recovery_scope"],
             "protocol:operation:recover",
         )
