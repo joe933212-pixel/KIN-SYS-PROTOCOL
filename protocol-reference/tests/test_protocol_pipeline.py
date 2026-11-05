@@ -358,6 +358,112 @@ class ProtocolPipelineTests(unittest.TestCase):
         finally:
             pipeline.close()
 
+    def test_identity_adapter_contradictions_fail_closed_and_sanitise_result(self):
+        class Adapter:
+            def __init__(self, response):
+                self.response = response
+            def review(self, evidence):
+                return {"status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+                        "uncertainty": "LOW", "may_authorise": False, "model_version": "test"}
+            def verify_principal(self, payload):
+                return self.response
+            def verify_action(self, payload):
+                raise AssertionError("authority check must not run after identity failure")
+
+        cases = (
+            ({"verified": True, "status": "REVOKED", "raw_document": "SECRET"}, "REJECTED"),
+            ({"verified": True, "status": "EXPIRED", "raw_document": "SECRET"}, "REJECTED"),
+            ({"verified": True, "status": "UNKNOWN", "raw_document": "SECRET"}, "UNKNOWN"),
+            ({"verified": "true", "raw_document": "SECRET"}, "UNKNOWN"),
+            ({"status": "VERIFIED", "raw_document": "SECRET"}, "UNKNOWN"),
+        )
+        for index, (response, expected) in enumerate(cases):
+            with self.subTest(response=response):
+                pipeline = KinSysProtocolPipeline(minah_adapter=Adapter(response))
+                try:
+                    result = pipeline.execute(request(operation_id=f"IDENTITY-STRICT-{index}"))
+                    self.assertEqual(result["status"], expected)
+                    self.assertIsNone(result["ivm_decision"])
+                    self.assertNotIn("raw_document", result["identity_result"])
+                    self.assertEqual(result["identity_result"]["status"], expected)
+                    self.assertEqual(pipeline.cee.get(f"IDENTITY-STRICT-{index}")["phase"], "FINALIZED")
+                finally:
+                    pipeline.close()
+
+    def test_authority_adapter_contradictions_fail_closed_and_sanitise_result(self):
+        class Adapter:
+            def __init__(self, response):
+                self.response = response
+            def review(self, evidence):
+                return {"status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+                        "uncertainty": "LOW", "may_authorise": False, "model_version": "test"}
+            def verify_principal(self, payload):
+                return {"verified": True, "mode": "TEST_IDENTITY"}
+            def verify_action(self, payload):
+                return self.response
+
+        cases = (
+            ({"verified": True, "status": "REVOKED", "raw_mandate": "SECRET"}, "REJECTED"),
+            ({"verified": True, "status": "EXPIRED", "raw_mandate": "SECRET"}, "REJECTED"),
+            ({"verified": True, "status": "UNKNOWN", "raw_mandate": "SECRET"}, "UNKNOWN"),
+            ({"verified": "true", "raw_mandate": "SECRET"}, "UNKNOWN"),
+            ({"status": "VERIFIED", "raw_mandate": "SECRET"}, "UNKNOWN"),
+        )
+        for index, (response, expected) in enumerate(cases):
+            with self.subTest(response=response):
+                pipeline = KinSysProtocolPipeline(minah_adapter=Adapter(response))
+                try:
+                    result = pipeline.execute(request(operation_id=f"AUTHORITY-STRICT-{index}"))
+                    self.assertEqual(result["status"], expected)
+                    self.assertIsNone(result["ivm_decision"])
+                    self.assertNotIn("raw_mandate", result["authority_result"])
+                    self.assertEqual(result["authority_result"]["status"], expected)
+                    phases = [event["phase"] for event in result["cee_events"]]
+                    self.assertNotIn("ADMITTED", phases)
+                finally:
+                    pipeline.close()
+
+    def test_recovery_revalidation_rejects_verified_true_with_revoked_status(self):
+        class ContradictoryAuthority:
+            def verify_action(self, payload):
+                return {
+                    "verified": True, "status": "REVOKED",
+                    "mode": "TEST_AUTHORITY", "raw_mandate_document": "SECRET",
+                }
+
+        pipeline = KinSysProtocolPipeline(authority_adapter=ContradictoryAuthority())
+        try:
+            payload = request(
+                operation_id="RECOVERY-CONTRADICTORY-AUTHORITY",
+                event_id="RECOVERY-CONTRADICTORY-EVENT",
+                process_id="RECOVERY-CONTRADICTORY-PROCESS",
+            )
+            pinned = {**payload, "_minah_deployment_profile": pipeline.minah_profile}
+            minah = {
+                "status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+                "uncertainty": "LOW", "may_authorise": False,
+                "model_version": "deterministic-minah-mock",
+            }
+            pipeline.cee.start(payload["operation_id"], pinned)
+            pipeline.cee.advance(payload["operation_id"], "MINAH_REVIEWED", minah=minah)
+            pipeline.cee.advance(payload["operation_id"], "IDENTITY_VERIFIED")
+            pipeline.cee.advance(payload["operation_id"], "AUTHORITY_VERIFIED")
+            pipeline.cee.advance(payload["operation_id"], "ADMITTED")
+            pipeline.cee.advance(payload["operation_id"], "CONTEXT_ESTABLISHED")
+            pipeline.cee.advance(payload["operation_id"], "AUTHORITY_EVALUATED", minah=minah)
+            pipeline.cee.advance(payload["operation_id"], "EXECUTING")
+            pipeline.cee.advance(payload["operation_id"], "PREPARED")
+            pipeline.cee.advance(payload["operation_id"], "COMMITTING")
+
+            result = pipeline.recover(payload["operation_id"])
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["reason"], "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION")
+            self.assertNotIn("raw_mandate_document", result["authority_result"])
+            self.assertIsNone(pipeline.ivm.event(payload["event_id"]))
+            self.assertEqual(result["cee_observations"][-1]["status"], "REJECTED")
+        finally:
+            pipeline.close()
+
     def test_minah_verification_api_outage_returns_unknown_and_stops(self):
         class UnavailableInstitutionAgent:
             def review(self, evidence):
