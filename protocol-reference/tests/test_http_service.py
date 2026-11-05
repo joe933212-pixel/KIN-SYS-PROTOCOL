@@ -1028,7 +1028,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(body["decision"]["protocol_decision"], "REJECTED")
         self.assertEqual(body["decision"]["external_effect_status"], "NOT_ATTEMPTED")
         self.assertEqual(body["result"]["reason"], "AUTHORITY_NOT_VERIFIED")
-        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY", "AUTHORITY"])
+        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
         phases = [event["phase"] for event in body["result"]["cee_events"]]
         self.assertNotIn("ADMITTED", phases)
         self.assertIsNone(body["result"]["ivm_decision"])
