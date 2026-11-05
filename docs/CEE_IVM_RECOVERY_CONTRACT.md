@@ -20,6 +20,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 - **IVM event identity and history must agree.** The same IVM event ID and request digest are used on retry. Before resuming the commit phase, the runtime checks the pinned event digest and confirms that an accepted event has exactly one matching transition-history entry. A missing event with surviving history, a changed digest, or inconsistent history remains unresolved; the runtime must not convert store corruption into a normal rejection.
 - **Unknown stays unknown.** Missing or inconsistent evidence, an unsupported phase, or a failed recovery does not become a successful decision.
 - **Recovery is auditable without storing raw errors.** Ingress records recovery start, completion, or blocked attempts, including the phase, stable reason codes and exception type. Raw exception messages and provider response bodies are not stored in the recovery audit trail.
+- **Verification provenance is minimised.** Identity and initial action-authority lifecycle events retain allow-listed evidence references, pseudonymous principal/mandate references, action and target binding, jurisdiction, and available policy/mandate versions and validity timestamps. Raw identity documents, secrets and unrecognised adapter fields are excluded. Execution-time authority revalidation is appended to a separate CEE observation log so repeated checks do not rewrite the lifecycle phase history.
 
 ## Failure-point matrix
 
@@ -27,7 +28,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 |---|---|---|
 | Ingress accepted; no CEE record exists | Ingress row and mapped-request fingerprint only | Return `UNKNOWN`. Do not create a fresh CEE operation automatically; establish whether the CEE store is missing, reset or unavailable first. |
 | CEE `REQUESTED`; no MINAH disposition persisted | CEE request, but no durable MINAH decision | Stop for manual reconciliation. MINAH may have been called before the interruption, so blind re-invocation is not assumed safe. |
-| MINAH disposition persisted; identity or authority phase incomplete | Pinned CEE request and MINAH disposition | Resume from the durable CEE phase. Identity and authority adapters must be read-only/idempotent verification operations; uncertain checks fail closed. |
+| MINAH disposition persisted; identity or authority phase incomplete | Pinned CEE request and MINAH disposition | Resume from the durable CEE phase. Identity and initial authority adapters must be read-only/idempotent verification operations; uncertain checks fail closed. Before an uncommitted IVM event is applied or retried at `COMMITTING`, action authority is checked again. A revoked/invalid mandate is rejected; an unavailable check remains `UNKNOWN`. |
 | CEE `EXECUTING` / `PREPARED` | Pinned process context and CEE phase | Resume the phase-aware pipeline. Process creation and context checks must be idempotent and must reject immutable-context mismatches. |
 | CEE `COMMITTING`; IVM has not committed | CEE phase and stable IVM event ID | Execute the pinned IVM event. The local IVM transaction determines whether it commits. |
 | IVM committed; CEE acknowledgement was lost | IVM event and transition history exist; CEE remains `COMMITTING` | Re-submit only the same pinned event to the idempotent IVM store. It returns the prior outcome; CEE then records `COMMITTED` and `FINALIZED`. No second state transition is created. |
@@ -38,19 +39,21 @@ The canonical execution path remains **MINAH → identity verification → actio
 
 ## HTTP contract
 
-`GET /protocol/operations/{operation_id}` is for inspection and passive reconciliation from an already-finalized CEE result. It verifies that CEE's pinned request fingerprint matches the ingress execution-request fingerprint before copying the result; it does not resume execution.
-- `POST /protocol/operations/{operation_id}/recover` requests explicit recovery of an existing uncertain operation. It accepts no replacement instruction body.
+`GET /protocol/operations/{operation_id}` is read-only inspection. It does not reconcile ingress state, resume execution, or write recovery records. An unresolved ingress operation remains `UNKNOWN` in this view.
+- `POST /protocol/operations/{operation_id}/recover` requests explicit recovery of an existing uncertain operation. It accepts no replacement instruction body. It is also the authorised path for reconciling an already-finalized CEE result into the ingress journal after a lost ingress acknowledgement; it never resubmits replacement instruction content.
 - Completed ingress replay returns the stored result without rerunning the pipeline.
 - Recovery outcomes are recorded in the ingress recovery-event journal. `GET /protocol/operations/{operation_id}/recovery-events` exposes a sanitized audit projection with action, phase, timestamp and allow-listed evidence; raw exception messages are not returned by this route.
-- The recovery and recovery-audit routes are local prototype interfaces without production authentication or rate limiting. They must not be exposed to untrusted networks.
+- The recovery and recovery-audit routes have distinct authorizer scopes (`protocol:operation:recover` and `protocol:operation:audit`). The built-in reference server is loopback-bind-only; the app denies non-loopback operational requests unless an institutional authorizer is injected. The local fallback is not caller authentication, and production rate limiting is not implemented.
 
-The route currently runs with synthetic adapters and no production authentication. It is suitable for local protocol verification, not as an exposed production recovery endpoint.
+The route currently runs with synthetic adapters. Remote use requires a production WSGI server, TLS, and an institutional authorizer; no production identity provider, key management, rate limiting or security monitoring is included. It is suitable for local protocol verification, not as an exposed production recovery endpoint.
 
 ## Evidence and acceptance gates
 
 CI includes both an application-level restart test and subprocess tests that terminate the process with `os._exit` at four durable boundaries: after CEE records `REQUESTED` but before a MINAH disposition; immediately before the IVM transaction; after the IVM commit but before CEE acknowledges it; and after CEE records `COMMITTED` but before `FINALIZED`. The stores are reopened and the tests verify the prescribed recovery or manual-reconciliation behaviour, including that IVM transition history never contains a duplicate transition.
 
 These tests demonstrate recovery at four representative boundaries in the reference implementation. They do not cover every instruction between durable writes or prove resilience against every operating-system, filesystem, power-loss, storage-corruption or multi-worker failure.
+
+The conformance suite also exercises concurrency across independent SQLite connections: simultaneous duplicate ingress for one operation ID is serialised so that one request executes while an in-flight duplicate remains `UNKNOWN`; rebinding that operation ID to changed instruction content is rejected; concurrent reuse of one IVM event ID across different process contexts permits only one event binding while the conflicting request fails closed; and distinct concurrent events targeting one process serialise so that only one transition from the same prior state is accepted. These tests do not establish thread safety for sharing one SQLite connection across threads, multi-worker HTTP safety, distributed locking, or production-scale contention behaviour. The built-in reference server is single-threaded; any multi-worker deployment requires separately designed per-worker connection management, contention policy, load testing and operational safeguards.
 
 Still required before production consideration:
 

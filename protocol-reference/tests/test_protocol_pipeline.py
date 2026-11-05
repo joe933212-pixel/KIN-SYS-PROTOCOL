@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 from protocol_pipeline import (
     ExecutionConflict, KinSysProtocolPipeline, LIFECYCLE, LifecycleViolation,
 )
+from minah_profile_governance import APPROVAL_VERSION, MinahApprovalViolation, profile_digest
 from governed_contracts import compute_payload_digest
 
 
@@ -42,6 +43,120 @@ class ProtocolPipelineTests(unittest.TestCase):
     def setUp(self):
         self.pipeline = KinSysProtocolPipeline()
         self.addCleanup(self.pipeline.close)
+
+    def _profile_approval_fixture(self, revoked_state):
+        profile = {
+            "profile_version": "kin-sys-minah-profile-0.1",
+            "deployment_id": "approval-recovery-test",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "INSTITUTION-APPROVAL-01",
+            "use_case": "RECOVERY_TEST",
+            "jurisdictions": ["UG-DEMO"],
+            "policy_pack_version": "POLICY-1",
+            "source_pack_version": "SOURCES-1",
+            "model_ref": "model-1",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": False,
+        }
+        approval = {
+            "approval_version": APPROVAL_VERSION,
+            "approval_id": "approval-recovery-001",
+            "signer_ref": "trusted-owner-key-01",
+            "algorithm": "TEST-ONLY",
+            "profile_digest": profile_digest(profile),
+            "profile_owner_scope": profile["owner_scope"],
+            "profile_owner_ref": profile["owner_ref"],
+            "approved_at": "2026-11-01T00:00:00Z",
+            "expires_at": "2027-11-01T00:00:00Z",
+            "signature": "test-signature",
+        }
+        def signature_verifier(signer_ref, algorithm, payload, signature):
+            return signer_ref == "trusted-owner-key-01" and algorithm == "TEST-ONLY" and bool(payload) and signature == "test-signature"
+        def revocation_checker(approval_id):
+            return revoked_state["revoked"]
+        return profile, approval, signature_verifier, revocation_checker
+
+    def test_recovery_rejects_profile_approval_revoked_after_initial_admission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cee_db = str(Path(tmp) / "cee.sqlite3")
+            ivm_db = str(Path(tmp) / "ivm.sqlite3")
+            revoked = {"revoked": False}
+            profile, approval, verifier, revocation = self._profile_approval_fixture(revoked)
+            first = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db,
+                minah_profile=profile, minah_profile_approval=approval,
+                profile_signature_verifier=verifier,
+                profile_revocation_checker=revocation, require_profile_approval=True,
+            )
+            original_advance = first.cee.advance
+            def interrupt_after_authority(operation_id, phase, **kwargs):
+                result = original_advance(operation_id, phase, **kwargs)
+                if operation_id == "PROFILE-REVOKED-DURING-RECOVERY" and phase == "AUTHORITY_VERIFIED":
+                    raise RuntimeError("INJECTED_FAILURE_AFTER_AUTHORITY_VERIFIED")
+                return result
+            first.cee.advance = interrupt_after_authority
+            try:
+                with self.assertRaisesRegex(RuntimeError, "AUTHORITY_VERIFIED"):
+                    first.execute(request(operation_id="PROFILE-REVOKED-DURING-RECOVERY"))
+            finally:
+                first.close()
+
+            revoked["revoked"] = True
+            resumed = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db,
+                minah_profile=profile, minah_profile_approval=approval,
+                profile_signature_verifier=verifier,
+                profile_revocation_checker=revocation, require_profile_approval=True,
+            )
+            try:
+                with self.assertRaisesRegex(MinahApprovalViolation, "APPROVAL_REVOKED"):
+                    resumed.recover("PROFILE-REVOKED-DURING-RECOVERY")
+                self.assertIsNone(resumed.ivm.event("EV-001"))
+                observation = resumed.cee.observations("PROFILE-REVOKED-DURING-RECOVERY")[-1]
+                self.assertEqual(observation["kind"], "MINAH_PROFILE_APPROVAL_REVALIDATION")
+                self.assertEqual(observation["status"], "REJECTED")
+            finally:
+                resumed.close()
+
+    def test_recovery_reconciles_already_durable_ivm_event_even_if_profile_approval_later_revoked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cee_db = str(Path(tmp) / "cee.sqlite3")
+            ivm_db = str(Path(tmp) / "ivm.sqlite3")
+            revoked = {"revoked": False}
+            profile, approval, verifier, revocation = self._profile_approval_fixture(revoked)
+            first = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db,
+                minah_profile=profile, minah_profile_approval=approval,
+                profile_signature_verifier=verifier,
+                profile_revocation_checker=revocation, require_profile_approval=True,
+            )
+            try:
+                with self.assertRaisesRegex(RuntimeError, "INJECTED_FAILURE_AFTER_IVM_COMMIT"):
+                    first.execute(
+                        request(operation_id="PROFILE-REVOKED-AFTER-IVM-COMMIT"),
+                        fail_after_ivm_commit=True,
+                    )
+            finally:
+                first.close()
+
+            revoked["revoked"] = True
+            resumed = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db,
+                minah_profile=profile, minah_profile_approval=approval,
+                profile_signature_verifier=verifier,
+                profile_revocation_checker=revocation, require_profile_approval=True,
+            )
+            try:
+                result = resumed.recover("PROFILE-REVOKED-AFTER-IVM-COMMIT")
+                self.assertEqual(result["status"], "COMMITTED")
+                self.assertTrue(result["duplicate"])
+                self.assertEqual(len(resumed.ivm.history("PROC-001")), 1)
+                self.assertFalse(any(
+                    item["kind"] == "MINAH_PROFILE_APPROVAL_REVALIDATION"
+                    for item in result["cee_observations"]
+                ))
+            finally:
+                resumed.close()
 
     def test_operation_records_its_institution_owned_minah_profile(self):
         profile = {
@@ -195,17 +310,31 @@ class ProtocolPipelineTests(unittest.TestCase):
                 return {'status': 'ADVISORY_ONLY', 'missing_fields': [], 'source_refs': ['OWNER-POLICY-1'], 'uncertainty': 'LOW', 'may_authorise': False, 'model_version': 'institution-agent-v1'}
             def verify_principal(self, payload):
                 self.calls.append('identity_api')
-                return {'verified': True, 'mode': 'INSTITUTION_MINAH_IDENTITY_API'}
+                return {
+                    'verified': True, 'mode': 'INSTITUTION_MINAH_IDENTITY_API',
+                    'evidence_ref': 'identity-evidence:opaque-001',
+                    'subject_ref': 'subject:pseudonymous-001',
+                    'verified_at': '2026-11-05T08:00:00Z',
+                    'raw_document_number': 'TEST-ONLY-SENSITIVE-FIELD',
+                }
             def verify_action(self, payload):
                 self.calls.append('authority_api')
-                return {'verified': True, 'mode': 'INSTITUTION_MINAH_AUTHORITY_API'}
+                return {
+                    'verified': True, 'mode': 'INSTITUTION_MINAH_AUTHORITY_API',
+                    'mandate_ref': 'mandate:opaque-001',
+                    'policy_version': 'FINANCE-POLICY-7',
+                    'mandate_version': '3',
+                    'scope_ref': 'scope:payments:approve',
+                    'valid_until': '2026-11-05T09:00:00Z',
+                    'raw_authority_document': 'TEST-ONLY-SECRET-FIELD',
+                }
 
         agent = InstitutionAgent()
         pipeline = KinSysProtocolPipeline(minah_adapter=agent)
         try:
             result = pipeline.execute(request())
             self.assertEqual(result['status'], 'COMMITTED')
-            self.assertEqual(agent.calls, ['review', 'identity_api', 'authority_api'])
+            self.assertEqual(agent.calls, ['review', 'identity_api', 'authority_api', 'authority_api'])
             phases = [event['phase'] for event in result['cee_events']]
             self.assertLess(phases.index('MINAH_REVIEWED'), phases.index('IDENTITY_VERIFIED'))
             self.assertLess(phases.index('IDENTITY_VERIFIED'), phases.index('AUTHORITY_VERIFIED'))
@@ -213,6 +342,125 @@ class ProtocolPipelineTests(unittest.TestCase):
             authority_event = next(event for event in result['cee_events'] if event['phase'] == 'AUTHORITY_VERIFIED')
             self.assertEqual(identity_event['detail']['identity_mode'], 'INSTITUTION_MINAH_IDENTITY_API')
             self.assertEqual(authority_event['detail']['authority_mode'], 'INSTITUTION_MINAH_AUTHORITY_API')
+            identity_evidence = identity_event['detail']['identity_evidence']
+            self.assertEqual(identity_evidence['metadata']['evidence_ref'], 'identity-evidence:opaque-001')
+            self.assertTrue(identity_evidence['evidence_reference_supplied'])
+            self.assertNotIn('raw_document_number', identity_evidence['metadata'])
+            authority_evidence = authority_event['detail']['authority_evidence']
+            self.assertEqual(authority_evidence['metadata']['mandate_ref'], 'mandate:opaque-001')
+            self.assertEqual(authority_evidence['metadata']['mandate_version'], '3')
+            self.assertTrue(authority_evidence['evidence_reference_supplied'])
+            self.assertNotIn('raw_authority_document', authority_evidence['metadata'])
+            revalidation = result['cee_observations'][-1]
+            self.assertEqual(revalidation['kind'], 'AUTHORITY_REVALIDATION')
+            self.assertEqual(revalidation['status'], 'VERIFIED')
+            self.assertEqual(revalidation['detail']['metadata']['mandate_ref'], 'mandate:opaque-001')
+        finally:
+            pipeline.close()
+
+    def test_identity_adapter_contradictions_fail_closed_and_sanitise_result(self):
+        class Adapter:
+            def __init__(self, response):
+                self.response = response
+            def review(self, evidence):
+                return {"status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+                        "uncertainty": "LOW", "may_authorise": False, "model_version": "test"}
+            def verify_principal(self, payload):
+                return self.response
+            def verify_action(self, payload):
+                raise AssertionError("authority check must not run after identity failure")
+
+        cases = (
+            ({"verified": True, "status": "REVOKED", "raw_document": "SECRET"}, "REJECTED"),
+            ({"verified": True, "status": "EXPIRED", "raw_document": "SECRET"}, "REJECTED"),
+            ({"verified": True, "status": "UNKNOWN", "raw_document": "SECRET"}, "UNKNOWN"),
+            ({"verified": "true", "raw_document": "SECRET"}, "UNKNOWN"),
+            ({"status": "VERIFIED", "raw_document": "SECRET"}, "UNKNOWN"),
+        )
+        for index, (response, expected) in enumerate(cases):
+            with self.subTest(response=response):
+                pipeline = KinSysProtocolPipeline(minah_adapter=Adapter(response))
+                try:
+                    result = pipeline.execute(request(operation_id=f"IDENTITY-STRICT-{index}"))
+                    self.assertEqual(result["status"], expected)
+                    self.assertIsNone(result["ivm_decision"])
+                    self.assertNotIn("raw_document", result["identity_result"])
+                    self.assertEqual(result["identity_result"]["status"], expected)
+                    self.assertEqual(pipeline.cee.get(f"IDENTITY-STRICT-{index}")["phase"], "FINALIZED")
+                finally:
+                    pipeline.close()
+
+    def test_authority_adapter_contradictions_fail_closed_and_sanitise_result(self):
+        class Adapter:
+            def __init__(self, response):
+                self.response = response
+            def review(self, evidence):
+                return {"status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+                        "uncertainty": "LOW", "may_authorise": False, "model_version": "test"}
+            def verify_principal(self, payload):
+                return {"verified": True, "mode": "TEST_IDENTITY"}
+            def verify_action(self, payload):
+                return self.response
+
+        cases = (
+            ({"verified": True, "status": "REVOKED", "raw_mandate": "SECRET"}, "REJECTED"),
+            ({"verified": True, "status": "EXPIRED", "raw_mandate": "SECRET"}, "REJECTED"),
+            ({"verified": True, "status": "UNKNOWN", "raw_mandate": "SECRET"}, "UNKNOWN"),
+            ({"verified": "true", "raw_mandate": "SECRET"}, "UNKNOWN"),
+            ({"status": "VERIFIED", "raw_mandate": "SECRET"}, "UNKNOWN"),
+        )
+        for index, (response, expected) in enumerate(cases):
+            with self.subTest(response=response):
+                pipeline = KinSysProtocolPipeline(minah_adapter=Adapter(response))
+                try:
+                    result = pipeline.execute(request(operation_id=f"AUTHORITY-STRICT-{index}"))
+                    self.assertEqual(result["status"], expected)
+                    self.assertIsNone(result["ivm_decision"])
+                    self.assertNotIn("raw_mandate", result["authority_result"])
+                    self.assertEqual(result["authority_result"]["status"], expected)
+                    phases = [event["phase"] for event in result["cee_events"]]
+                    self.assertNotIn("ADMITTED", phases)
+                finally:
+                    pipeline.close()
+
+    def test_recovery_revalidation_rejects_verified_true_with_revoked_status(self):
+        class ContradictoryAuthority:
+            def verify_action(self, payload):
+                return {
+                    "verified": True, "status": "REVOKED",
+                    "mode": "TEST_AUTHORITY", "raw_mandate_document": "SECRET",
+                }
+
+        pipeline = KinSysProtocolPipeline(authority_adapter=ContradictoryAuthority())
+        try:
+            payload = request(
+                operation_id="RECOVERY-CONTRADICTORY-AUTHORITY",
+                event_id="RECOVERY-CONTRADICTORY-EVENT",
+                process_id="RECOVERY-CONTRADICTORY-PROCESS",
+            )
+            pinned = {**payload, "_minah_deployment_profile": pipeline.minah_profile}
+            minah = {
+                "status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+                "uncertainty": "LOW", "may_authorise": False,
+                "model_version": "deterministic-minah-mock",
+            }
+            pipeline.cee.start(payload["operation_id"], pinned)
+            pipeline.cee.advance(payload["operation_id"], "MINAH_REVIEWED", minah=minah)
+            pipeline.cee.advance(payload["operation_id"], "IDENTITY_VERIFIED")
+            pipeline.cee.advance(payload["operation_id"], "AUTHORITY_VERIFIED")
+            pipeline.cee.advance(payload["operation_id"], "ADMITTED")
+            pipeline.cee.advance(payload["operation_id"], "CONTEXT_ESTABLISHED")
+            pipeline.cee.advance(payload["operation_id"], "AUTHORITY_EVALUATED", minah=minah)
+            pipeline.cee.advance(payload["operation_id"], "EXECUTING")
+            pipeline.cee.advance(payload["operation_id"], "PREPARED")
+            pipeline.cee.advance(payload["operation_id"], "COMMITTING")
+
+            result = pipeline.recover(payload["operation_id"])
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["reason"], "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION")
+            self.assertNotIn("raw_mandate_document", result["authority_result"])
+            self.assertIsNone(pipeline.ivm.event(payload["event_id"]))
+            self.assertEqual(result["cee_observations"][-1]["status"], "REJECTED")
         finally:
             pipeline.close()
 
@@ -234,6 +482,78 @@ class ProtocolPipelineTests(unittest.TestCase):
             phases = [event["phase"] for event in result["cee_events"]]
             self.assertNotIn("AUTHORITY_VERIFIED", phases)
             self.assertNotIn("ADMITTED", phases)
+        finally:
+            pipeline.close()
+
+    def test_authority_revocation_before_ivm_commit_fails_closed(self):
+        class RevokingInstitutionAgent:
+            def __init__(self):
+                self.authority_checks = 0
+            def review(self, evidence):
+                return {
+                    "status": "ADVISORY_ONLY", "missing_fields": [],
+                    "source_refs": ["POLICY-1"], "uncertainty": "LOW",
+                    "may_authorise": False, "model_version": "institution-agent-v1",
+                }
+            def verify_principal(self, payload):
+                return {"verified": True, "mode": "IDENTITY_API"}
+            def verify_action(self, payload):
+                self.authority_checks += 1
+                if self.authority_checks == 1:
+                    return {"verified": True, "mode": "AUTHORITY_API"}
+                return {"verified": False, "status": "REVOKED", "mode": "AUTHORITY_API"}
+
+        agent = RevokingInstitutionAgent()
+        pipeline = KinSysProtocolPipeline(minah_adapter=agent)
+        try:
+            result = pipeline.execute(request(operation_id="AUTHORITY-REVOKED-BEFORE-COMMIT"))
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["reason"], "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION")
+            self.assertIsNone(result["ivm_decision"])
+            self.assertIsNone(pipeline.ivm.event("EV-001"))
+            self.assertEqual(agent.authority_checks, 2)
+            self.assertEqual(result["cee_observations"][-1]["kind"], "AUTHORITY_REVALIDATION")
+            self.assertEqual(result["cee_observations"][-1]["status"], "REJECTED")
+            self.assertEqual(pipeline.cee.get("AUTHORITY-REVOKED-BEFORE-COMMIT")["phase"], "FINALIZED")
+        finally:
+            pipeline.close()
+
+    def test_recovery_revalidates_authority_before_uncommitted_ivm_transition(self):
+        class RevokedAuthority:
+            def verify_action(self, payload):
+                return {"verified": False, "status": "REVOKED", "mode": "INSTITUTION_AUTHORITY_API"}
+
+        pipeline = KinSysProtocolPipeline(authority_adapter=RevokedAuthority())
+        try:
+            payload = request(
+                operation_id="RECOVERY-AUTHORITY-REVOKED",
+                event_id="RECOVERY-AUTHORITY-EVENT",
+                process_id="RECOVERY-AUTHORITY-PROCESS",
+            )
+            pinned = {**payload, "_minah_deployment_profile": pipeline.minah_profile}
+            minah = {
+                "status": "ADVISORY_ONLY", "missing_fields": [], "source_refs": [],
+                "uncertainty": "LOW", "may_authorise": False,
+                "model_version": "deterministic-minah-mock",
+            }
+            pipeline.cee.start(payload["operation_id"], pinned)
+            pipeline.cee.advance(payload["operation_id"], "MINAH_REVIEWED", minah=minah)
+            pipeline.cee.advance(payload["operation_id"], "IDENTITY_VERIFIED")
+            pipeline.cee.advance(payload["operation_id"], "AUTHORITY_VERIFIED")
+            pipeline.cee.advance(payload["operation_id"], "ADMITTED")
+            pipeline.cee.advance(payload["operation_id"], "CONTEXT_ESTABLISHED")
+            pipeline.cee.advance(payload["operation_id"], "AUTHORITY_EVALUATED", minah=minah)
+            pipeline.cee.advance(payload["operation_id"], "EXECUTING")
+            pipeline.cee.advance(payload["operation_id"], "PREPARED")
+            pipeline.cee.advance(payload["operation_id"], "COMMITTING")
+
+            result = pipeline.recover(payload["operation_id"])
+            self.assertEqual(result["status"], "REJECTED")
+            self.assertEqual(result["reason"], "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION")
+            self.assertIsNone(pipeline.ivm.event(payload["event_id"]))
+            self.assertEqual(pipeline.cee.get(payload["operation_id"])["phase"], "FINALIZED")
+            self.assertEqual(result["cee_observations"][-1]["kind"], "AUTHORITY_REVALIDATION")
+            self.assertEqual(result["cee_observations"][-1]["status"], "REJECTED")
         finally:
             pipeline.close()
 
@@ -379,6 +699,8 @@ class ProtocolPipelineTests(unittest.TestCase):
                 self.assertTrue(result["duplicate"])
                 self.assertEqual(resumed.ivm.process("PROC-001")["state"], "ACTIVE")
                 self.assertEqual(len(resumed.ivm.history("PROC-001")), 1)
+                self.assertEqual(result["cee_observations"][-1]["kind"], "AUTHORITY_REVALIDATION")
+                self.assertEqual(result["cee_observations"][-1]["status"], "NOT_REQUIRED")
                 self.assertEqual([e["phase"] for e in resumed.cee.events("OP-001")][-2:], ["COMMITTED", "FINALIZED"])
             finally:
                 resumed.close()
@@ -639,6 +961,13 @@ os._exit(76)
             "purpose": "test execution envelope binding",
             "jurisdiction": "UG-DEMO",
             "submitted_at": "2026-10-27T10:00:00+03:00",
+            "evidence": {
+                "consignment_id": "PROC-001",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
             "payload_digest": "sha256:" + ("0" * 64),
             "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
         }
@@ -730,6 +1059,331 @@ os._exit(76)
         self.pipeline.cee.db.commit()
         with self.assertRaisesRegex(ExecutionConflict, "LEGACY_OPERATION_REQUIRES_RECONCILIATION"):
             self.pipeline.execute(payload)
+
+
+    def test_cee_start_rolls_back_operation_when_initial_event_persistence_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "cee-start-fault.sqlite3")
+            pipeline = KinSysProtocolPipeline(cee_database=db)
+            self.addCleanup(pipeline.close)
+            pipeline.cee.db.execute("""
+                CREATE TRIGGER reject_requested_event
+                BEFORE INSERT ON cee_events
+                WHEN NEW.phase = 'REQUESTED'
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_CEE_EVENT_WRITE_FAILURE'); END;
+            """)
+            pipeline.cee.db.commit()
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "INJECTED_CEE_EVENT_WRITE_FAILURE"):
+                pipeline.cee.start("CEE-START-FAULT", request(
+                    operation_id="CEE-START-FAULT", event_id="CEE-START-EVENT",
+                    process_id="CEE-START-PROCESS",
+                ))
+            self.assertIsNone(pipeline.cee.get("CEE-START-FAULT"))
+            self.assertEqual(pipeline.cee.events("CEE-START-FAULT"), [])
+
+    def test_cee_phase_advance_rolls_back_state_when_event_persistence_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "cee-advance-fault.sqlite3")
+            pipeline = KinSysProtocolPipeline(cee_database=db)
+            self.addCleanup(pipeline.close)
+            payload = request(
+                operation_id="CEE-ADVANCE-FAULT", event_id="CEE-ADVANCE-EVENT",
+                process_id="CEE-ADVANCE-PROCESS",
+            )
+            pipeline.cee.start("CEE-ADVANCE-FAULT", payload)
+            pipeline.cee.db.execute("""
+                CREATE TRIGGER reject_minah_event
+                BEFORE INSERT ON cee_events
+                WHEN NEW.phase = 'MINAH_REVIEWED'
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_CEE_PHASE_EVENT_FAILURE'); END;
+            """)
+            pipeline.cee.db.commit()
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "INJECTED_CEE_PHASE_EVENT_FAILURE"):
+                pipeline.cee.advance("CEE-ADVANCE-FAULT", "MINAH_REVIEWED", minah={"status": "ADVISORY_ONLY"})
+            operation = pipeline.cee.get("CEE-ADVANCE-FAULT")
+            self.assertEqual(operation["phase"], "REQUESTED")
+            self.assertIsNone(operation["minah_json"])
+            self.assertEqual([event["phase"] for event in pipeline.cee.events("CEE-ADVANCE-FAULT")], ["REQUESTED"])
+
+    def test_cee_observation_write_failure_leaves_no_partial_observation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "cee-observation-fault.sqlite3")
+            pipeline = KinSysProtocolPipeline(cee_database=db)
+            self.addCleanup(pipeline.close)
+            payload = request(
+                operation_id="CEE-OBSERVATION-FAULT", event_id="CEE-OBSERVATION-EVENT",
+                process_id="CEE-OBSERVATION-PROCESS",
+            )
+            pipeline.cee.start("CEE-OBSERVATION-FAULT", payload)
+            pipeline.cee.db.execute("""
+                CREATE TRIGGER reject_observation
+                BEFORE INSERT ON cee_observations
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_CEE_OBSERVATION_FAILURE'); END;
+            """)
+            pipeline.cee.db.commit()
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "INJECTED_CEE_OBSERVATION_FAILURE"):
+                pipeline.cee.record_observation(
+                    "CEE-OBSERVATION-FAULT", "FAULT_TEST", "UNKNOWN", {"safe": True}
+                )
+            self.assertEqual(pipeline.cee.observations("CEE-OBSERVATION-FAULT"), [])
+
+
+    def test_recovery_stops_when_cee_claims_commit_but_ivm_event_is_missing(self):
+        self.pipeline.execute(request())
+        self.pipeline.ivm.db.execute(
+            "DELETE FROM transition_history WHERE event_id = ?", ("EV-001",)
+        )
+        self.pipeline.ivm.db.execute(
+            "DELETE FROM events WHERE event_id = ?", ("EV-001",)
+        )
+        self.pipeline.ivm.db.commit()
+        with self.assertRaisesRegex(
+            ExecutionConflict,
+            "CEE_COMMIT_CLAIM_WITHOUT_DURABLE_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION",
+        ):
+            self.pipeline.recover("OP-001")
+
+    def test_recovery_stops_when_ivm_event_exists_before_cee_commit_boundary(self):
+        self.pipeline.execute(request())
+        self.pipeline.cee.db.execute(
+            "UPDATE cee_operations SET phase = 'EXECUTING' WHERE operation_id = ?",
+            ("OP-001",),
+        )
+        self.pipeline.cee.db.commit()
+        with self.assertRaisesRegex(
+            ExecutionConflict,
+            "IVM_EVENT_EXISTS_BEFORE_CEE_COMMIT_BOUNDARY_REQUIRES_MANUAL_RECONCILIATION",
+        ):
+            self.pipeline.recover("OP-001")
+
+    def test_recovery_stops_when_cee_ivm_decision_differs_from_durable_event(self):
+        self.pipeline.execute(request())
+        self.pipeline.cee.db.execute(
+            "UPDATE cee_operations SET ivm_json = ? WHERE operation_id = ?",
+            ('{"status":"REJECTED","event_id":"EV-001","process_id":"PROC-001"}', "OP-001"),
+        )
+        self.pipeline.cee.db.commit()
+        with self.assertRaisesRegex(
+            ExecutionConflict,
+            "CEE_IVM_DECISION_DIFFERS_FROM_DURABLE_EVENT_REQUIRES_MANUAL_RECONCILIATION",
+        ):
+            self.pipeline.recover("OP-001")
+
+
+    def test_recovery_stops_when_final_cee_outcome_contradicts_ivm_event(self):
+        self.pipeline.execute(request())
+        self.pipeline.cee.db.execute(
+            "UPDATE cee_operations SET outcome = 'REJECTED' WHERE operation_id = ?",
+            ("OP-001",),
+        )
+        self.pipeline.cee.db.commit()
+        with self.assertRaisesRegex(
+            ExecutionConflict,
+            "CEE_FINAL_OUTCOME_DIFFERS_FROM_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION",
+        ):
+            self.pipeline.recover("OP-001")
+
+
+    def test_recovery_rejects_restored_cee_snapshot_ahead_of_ivm_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_cee = str(Path(tmp) / "source-cee.sqlite3")
+            source_ivm = str(Path(tmp) / "source-ivm.sqlite3")
+            source = KinSysProtocolPipeline(cee_database=source_cee, ivm_database=source_ivm)
+            try:
+                source.execute(request())
+                # Model restoring an older CEE backup while retaining the newer IVM store.
+                source.cee.db.execute(
+                    "UPDATE cee_operations SET phase='EXECUTING', ivm_json=NULL WHERE operation_id=?",
+                    ("OP-001",),
+                )
+                source.cee.db.commit()
+                target_cee = str(Path(tmp) / "restored-cee.sqlite3")
+                target_ivm = str(Path(tmp) / "retained-ivm.sqlite3")
+                target = KinSysProtocolPipeline(cee_database=target_cee, ivm_database=target_ivm)
+                try:
+                    with source.cee.db:
+                        source.cee.db.backup(target.cee.db)
+                    with source.ivm.db:
+                        source.ivm.db.backup(target.ivm.db)
+                    with self.assertRaisesRegex(
+                        ExecutionConflict,
+                        "IVM_EVENT_EXISTS_BEFORE_CEE_COMMIT_BOUNDARY_REQUIRES_MANUAL_RECONCILIATION",
+                    ):
+                        target.recover("OP-001")
+                finally:
+                    target.close()
+            finally:
+                source.close()
+
+    def test_recovery_rejects_restored_cee_commit_snapshot_with_older_ivm_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = KinSysProtocolPipeline(
+                cee_database=str(Path(tmp) / "source-cee.sqlite3"),
+                ivm_database=str(Path(tmp) / "source-ivm.sqlite3"),
+            )
+            try:
+                source.execute(request())
+                target = KinSysProtocolPipeline(
+                    cee_database=str(Path(tmp) / "restored-cee.sqlite3"),
+                    ivm_database=str(Path(tmp) / "older-ivm.sqlite3"),
+                )
+                try:
+                    # Restore the newer CEE backup but leave the newly initialised,
+                    # structurally valid IVM store in place as an older backup.
+                    source.cee.db.backup(target.cee.db)
+                    with self.assertRaisesRegex(
+                        ExecutionConflict,
+                        "CEE_COMMIT_CLAIM_WITHOUT_DURABLE_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION",
+                    ):
+                        target.recover("OP-001")
+                finally:
+                    target.close()
+            finally:
+                source.close()
+
+    def test_recovery_fails_closed_when_sqlite_integrity_check_reports_damage(self):
+        original = self.pipeline.cee.db
+        class DamagedStore:
+            class Cursor:
+                def fetchall(self):
+                    return [("database disk image is malformed",)]
+            def execute(self, statement):
+                if statement == "PRAGMA integrity_check":
+                    return self.Cursor()
+                raise AssertionError("integrity check must run before other store reads")
+        self.pipeline.cee.db = DamagedStore()
+        try:
+            with self.assertRaisesRegex(
+                ExecutionConflict,
+                "CEE_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION",
+            ):
+                self.pipeline.recover("NO-SUCH-OPERATION")
+        finally:
+            self.pipeline.cee.db = original
+
+    def test_restart_recovery_matrix_at_each_cee_durable_phase_boundary(self):
+        # Each trigger simulates a process stopping immediately after the prior
+        # durable phase, when the next phase's CEE transaction cannot commit.
+        phases = (
+            "MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED",
+            "ADMITTED", "CONTEXT_ESTABLISHED", "AUTHORITY_EVALUATED",
+            "EXECUTING", "PREPARED", "COMMITTING", "COMMITTED", "FINALIZED",
+        )
+        for phase in phases:
+            with self.subTest(failed_phase=phase), tempfile.TemporaryDirectory() as tmp:
+                cee_db = str(Path(tmp) / "cee.sqlite3")
+                ivm_db = str(Path(tmp) / "ivm.sqlite3")
+                payload = request(
+                    operation_id=f"RESTART-{phase}",
+                    event_id=f"EVENT-{phase}",
+                    process_id=f"PROCESS-{phase}",
+                )
+                first = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                first.cee.db.execute(f"""
+                    CREATE TRIGGER interrupt_before_{phase.lower()}_event
+                    BEFORE INSERT ON cee_events
+                    WHEN NEW.phase = '{phase}'
+                    BEGIN SELECT RAISE(ABORT, 'INJECTED_RESTART_AT_{phase}'); END;
+                """)
+                first.cee.db.commit()
+                with self.assertRaisesRegex(
+                    sqlite3.IntegrityError, f"INJECTED_RESTART_AT_{phase}"
+                ):
+                    first.execute(payload)
+                durable = first.cee.get(payload["operation_id"])
+                self.assertIsNotNone(durable)
+                first.close()
+
+                # Reopen both file-backed stores as a new process would, remove
+                # only the test fault injector, and ask the recovery path to resume.
+                restarted = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                try:
+                    restarted.cee.db.execute(
+                        f"DROP TRIGGER interrupt_before_{phase.lower()}_event"
+                    )
+                    restarted.cee.db.commit()
+                    if phase == "MINAH_REVIEWED":
+                        # MINAH returned, but its disposition never became durable.
+                        # Recovery must not invent or silently repeat that decision.
+                        with self.assertRaisesRegex(
+                            ExecutionConflict, "MINAH_DISPOSITION_NOT_DURABLE"
+                        ):
+                            restarted.recover(payload["operation_id"])
+                    else:
+                        result = restarted.recover(payload["operation_id"])
+                        self.assertEqual(result["status"], "COMMITTED")
+                        self.assertEqual(
+                            restarted.cee.get(payload["operation_id"])["phase"],
+                            "FINALIZED",
+                        )
+                        self.assertEqual(
+                            restarted.ivm.event(payload["event_id"])["outcome"],
+                            "ACCEPTED",
+                        )
+                finally:
+                    restarted.close()
+
+    def test_ivm_transaction_restart_matrix_rolls_back_partial_writes(self):
+        fault_points = (
+            ("event_insert", """
+                CREATE TRIGGER interrupt_ivm_event_insert
+                BEFORE INSERT ON events
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_IVM_EVENT_INSERT'); END;
+            """, "interrupt_ivm_event_insert", "INJECTED_IVM_EVENT_INSERT"),
+            ("process_update", """
+                CREATE TRIGGER interrupt_ivm_process_update
+                BEFORE UPDATE OF state ON processes
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_IVM_PROCESS_UPDATE'); END;
+            """, "interrupt_ivm_process_update", "INJECTED_IVM_PROCESS_UPDATE"),
+            ("history_insert", """
+                CREATE TRIGGER interrupt_ivm_history_insert
+                BEFORE INSERT ON transition_history
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_IVM_HISTORY_INSERT'); END;
+            """, "interrupt_ivm_history_insert", "INJECTED_IVM_HISTORY_INSERT"),
+        )
+        for label, trigger_sql, trigger_name, error_text in fault_points:
+            with self.subTest(ivm_fault_point=label), tempfile.TemporaryDirectory() as tmp:
+                cee_db = str(Path(tmp) / "cee.sqlite3")
+                ivm_db = str(Path(tmp) / "ivm.sqlite3")
+                payload = request(
+                    operation_id=f"IVM-RESTART-{label}",
+                    event_id=f"IVM-EVENT-{label}",
+                    process_id=f"IVM-PROCESS-{label}",
+                )
+                first = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                first.cee.db.execute("SELECT 1")
+                first.ivm.db.executescript(trigger_sql)
+                first.ivm.db.commit()
+                with self.assertRaisesRegex(sqlite3.IntegrityError, error_text):
+                    first.execute(payload)
+                operation = first.cee.get(payload["operation_id"])
+                self.assertEqual(operation["phase"], "COMMITTING")
+                self.assertIsNone(first.ivm.event(payload["event_id"]))
+                self.assertEqual(first.ivm.history(payload["process_id"]), [])
+                self.assertEqual(first.ivm.process(payload["process_id"])["state"], "PENDING")
+                first.close()
+
+                restarted = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                try:
+                    restarted.ivm.db.execute(f"DROP TRIGGER {trigger_name}")
+                    restarted.ivm.db.commit()
+                    result = restarted.recover(payload["operation_id"])
+                    self.assertEqual(result["status"], "COMMITTED")
+                    self.assertEqual(
+                        restarted.ivm.event(payload["event_id"])["outcome"], "ACCEPTED"
+                    )
+                    self.assertEqual(
+                        len(restarted.ivm.history(payload["process_id"])), 1
+                    )
+                    self.assertEqual(
+                        restarted.ivm.process(payload["process_id"])["state"], "ACTIVE"
+                    )
+                finally:
+                    restarted.close()
+
+    def test_recovery_runs_structural_integrity_checks_before_reading_operation(self):
+        self.pipeline._assert_store_integrity()
+        self.assertEqual(self.pipeline.recover("NO-SUCH-OPERATION")["status"], "UNKNOWN")
 
 
 if __name__ == "__main__":

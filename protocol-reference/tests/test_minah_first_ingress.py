@@ -1,6 +1,7 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -112,6 +113,64 @@ class MinahFirstIngressTests(unittest.TestCase):
         result = self.ingress.execute(self.instruction())
         self.assertEqual(result["reason_code"], "AUTHORITY_NOT_VERIFIED")
         self.assertEqual(self.log, ["MINAH", "IDENTITY", "AUTHORITY"])
+
+    def test_concurrent_duplicate_ingress_is_serialized_and_conflicts_on_changed_content(self):
+        entered_cee = threading.Event()
+        release_cee = threading.Event()
+        log = []
+
+        class BlockingCEE:
+            def execute_governed_instruction(self, instruction, **context):
+                log.append("CEE")
+                entered_cee.set()
+                if not release_cee.wait(timeout=5):
+                    raise TimeoutError("test CEE release timed out")
+                return {
+                    "protocol_decision": "PASSED", "reason_code": "CHECKS_PASSED",
+                    "user_message": "Checks passed.", "cee_execution_ref": "cee:concurrent",
+                    "external_effect_status": "NOT_ATTEMPTED", "evidence_refs": [],
+                }
+
+        second = MinahFirstIngress(
+            self.db_path, minah=FakeMinah(log), identity=FakeIdentity(log),
+            authority=FakeAuthority(log), cee=FakeCEE(log),
+        )
+        self.addCleanup(second.close)
+        submitted = self.instruction(operation_id="CONCURRENT-OP", request_id="CONCURRENT-REQ")
+        outcome = {}
+        errors = []
+
+        def submit_first():
+            first = MinahFirstIngress(
+                self.db_path, minah=FakeMinah(log), identity=FakeIdentity(log),
+                authority=FakeAuthority(log), cee=BlockingCEE(),
+            )
+            try:
+                outcome["first"] = first.execute(submitted)
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                first.close()
+
+        worker = threading.Thread(target=submit_first)
+        worker.start()
+        try:
+            self.assertTrue(entered_cee.wait(timeout=3), "first request did not reach CEE")
+            with self.assertRaisesRegex(IngressConflict, "OPERATION_ID_REUSED_WITH_DIFFERENT_INSTRUCTION"):
+                second.execute({**submitted, "purpose": "altered while first request is in flight"})
+            duplicate = second.execute(submitted)
+            self.assertEqual(duplicate["protocol_decision"], "UNKNOWN")
+            self.assertEqual(duplicate["reason_code"], "INGRESS_IN_FLIGHT_REQUIRES_RECONCILIATION")
+        finally:
+            release_cee.set()
+            worker.join(timeout=5)
+        self.assertFalse(worker.is_alive(), "first request did not finish")
+        self.assertEqual(errors, [])
+        self.assertEqual(outcome["first"]["protocol_decision"], "PASSED")
+        self.assertEqual(log, ["MINAH", "IDENTITY", "AUTHORITY", "CEE"])
+        replay = second.execute(submitted)
+        self.assertTrue(replay["duplicate"])
+        self.assertEqual(replay["protocol_decision"], "PASSED")
 
     def test_identical_replay_returns_saved_result_without_repeating_adapters(self):
         first = self.ingress.execute(self.instruction())

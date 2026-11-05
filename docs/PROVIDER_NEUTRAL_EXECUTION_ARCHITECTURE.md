@@ -120,7 +120,38 @@ Each adapter contract must specify:
 
 The reference pipeline catches adapter exceptions and fails closed, but it does **not** enforce wall-clock deadlines or forcibly cancel a blocked adapter call. Injected identity and authority adapters must enforce their own bounded network/client timeouts, treat verification as read-only/idempotent, and return an explicit unknown/unavailable result or raise a timeout exception. A timeout after a request may have reached an external provider must not trigger an unbounded or blind retry.
 
+#### Verification result semantics
+
+Identity and action-authority adapters return a structured result with a boolean `verified` field and, where available, a machine-readable `status`. The reference implementation interprets results conservatively:
+
+- `verified: true` with no status, or with a recognised positive status (`VERIFIED`, `APPROVED`, `ACTIVE`, `VALID`, `PASSED`), is a positive verification.
+- A confirmed negative status (`REJECTED`, `DENIED`, `REVOKED`, `EXPIRED`, `INVALID`, `NOT_AUTHORISED`, `NOT_AUTHORIZED`) is a rejection, even if the adapter also sets `verified: true`. A positive boolean must not override an explicit negative status.
+- Explicit uncertainty/unavailability statuses (`UNKNOWN`, `UNAVAILABLE`, `TIMEOUT`, `PENDING`, `ERROR`, `INDETERMINATE`, `VERIFICATION_UNAVAILABLE`, `REVOCATION_UNKNOWN`) produce `UNKNOWN`.
+- Missing or non-boolean `verified` values, malformed responses, contradictory positive status with `verified: false`, and unrecognised statuses do not pass. They produce `UNKNOWN` so that an adapter contract error is not mistaken for confirmed identity or authority.
+
+A confirmed negative result is distinct from an unavailable verification service: the former is `REJECTED`, while the latter is `UNKNOWN`. Neither outcome may proceed to CEE admission or IVM execution. Action authority is checked again immediately before an uncommitted IVM transition; recovery must apply the same interpretation. If the IVM event is already durable, recovery reconciles that recorded local outcome rather than attempting to reverse or reapply it.
+
+Adapter payloads are untrusted input. The reference pipeline must not copy arbitrary adapter dictionaries into caller-visible failure results or CEE evidence. It returns a bounded decision summary and allow-listed references/version/timestamp metadata only. Raw identity documents, credentials, tokens, secrets, and unrestricted provider response fields must remain outside protocol results and routine evidence traces. Deployments remain responsible for securing the adapter-to-provider channel and for validating that evidence references are meaningful in their own trust domain.
+
 A simulator must identify itself as a simulator in capability responses and operation traces. A simulator must never be presented as an authoritative institution, live identity source, or real payment provider.
+
+### CEE/IVM cross-store recovery consistency
+
+The reference pipeline stores CEE lifecycle state and IVM transition evidence in separate SQLite databases. A recovery decision must therefore inspect both stores before resuming or returning a terminal outcome:
+
+- A durable IVM event appearing before CEE reaches `COMMITTING` is a contradiction and requires manual reconciliation.
+- `COMMITTING` with no IVM event is an expected pre-commit recovery state; the pipeline must revalidate authority before attempting the transition.
+- `COMMITTING` with an IVM event is the expected crash-after-commit/before-CEE-acknowledgement window only when the event digest, process binding, outcome, and transition-history evidence are internally consistent. Recovery may then reconcile that existing event without repeating the transition.
+- CEE `COMMITTED`, or `FINALIZED` with outcome `COMMITTED`, must have a matching accepted IVM event, exactly one corresponding transition-history record, and a CEE IVM decision that agrees with the durable event/history identifiers and state change. A finalized CEE outcome must also agree with the IVM event outcome (`COMMITTED` for accepted, `REJECTED` for rejected).
+- A CEE IVM decision without its corresponding IVM event, a finalized operation with an unrecorded IVM event, or any mismatch between the CEE decision and IVM evidence must stop for manual reconciliation. The pipeline must not manufacture missing records, delete evidence, or guess which store is authoritative.
+- A consistent rejected IVM event may be reconciled only with its matching CEE decision and no transition-history record.
+
+These are local consistency checks, not a distributed transaction or a complete storage-integrity system. They do not prove that SQLite files have not been maliciously rewritten, that backups are mutually consistent, or that writes survive every filesystem/power-loss failure. Operator reconciliation needs a separately specified, authenticated, append-only procedure with evidence preservation and explicit approval; it is not implemented by this reference pipeline.
+
+Before replay or recovery, the reference pipeline also runs SQLite `PRAGMA integrity_check` against both local stores and fails closed when SQLite reports a structural error or the check cannot be completed. This is a structural database check only: it does not detect a malicious but structurally valid rewrite, establish backup provenance, prove that CEE and IVM backups represent the same logical point in time, or guarantee power-loss durability. File-backed tests use SQLite's backup API to create deliberately mismatched CEE/IVM snapshots and verify that cross-store contradictions stop recovery rather than being silently repaired. These tests exercise restore-skew states; they are not a full backup/restore operational drill. A restart matrix now injects a stop immediately before each of the eleven post-receipt CEE lifecycle phase events (`MINAH_REVIEWED` through `FINALIZED`), closes both file-backed stores, reopens them, and exercises recovery. Where a MINAH disposition was not durably recorded, recovery correctly stops for manual reconciliation rather than rerunning an unrecorded MINAH decision. At later boundaries, recovery completes the operation and confirms one accepted IVM event. This is a controlled close/reopen test of durable phase boundaries, not an operating-system process-kill, power-loss, filesystem-cache, or hardware-failure test. Separate IVM fault-injection tests abort the local transition transaction at three write points—event insertion, process-state update, and transition-history insertion—then reopen both stores and recover. Each injected failure leaves no partial event/history/state transition; after removing the fault, recovery commits one accepted event and one history record. This validates SQLite transaction rollback at those tested write points, not arbitrary storage-engine or power-failure behaviour.
+
+
+Authenticated operator reconciliation is not implemented. The separate [Operator Reconciliation Design](OPERATOR_RECONCILIATION_DESIGN.md) defines preservation, authentication, separation-of-duties, signed evidence, conservative dispositions, and acceptance requirements. Until those controls and their institutional trust dependencies are implemented and independently tested, contradictions remain outside the protocol execution path and require manual investigation.
 
 ## 6. Human usability requirements
 

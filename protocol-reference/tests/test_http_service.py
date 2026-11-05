@@ -39,6 +39,7 @@ class HttpServiceTests(unittest.TestCase):
             "PATH_INFO": path,
             "CONTENT_TYPE": content_type,
             "CONTENT_LENGTH": str(len(raw)),
+            "REMOTE_ADDR": "127.0.0.1",
             "wsgi.input": io.BytesIO(raw),
         }
         for key, value in (headers or {}).items():
@@ -68,6 +69,61 @@ class HttpServiceTests(unittest.TestCase):
             capabilities["legacy_demo_routes"]["classification"],
             "SYNTHETIC_ONLY_NOT_THE_GOVERNED_V0_1_INSTRUCTION_PATH",
         )
+
+    def test_non_loopback_operational_request_requires_institutional_authorizer(self):
+        raw = b""
+        environ = {
+            "REQUEST_METHOD": "GET", "PATH_INFO": "/protocol/operations/OP-1",
+            "CONTENT_TYPE": "application/json", "CONTENT_LENGTH": "0",
+            "REMOTE_ADDR": "198.51.100.24", "wsgi.input": io.BytesIO(raw),
+        }
+        captured = {}
+        def start_response(status, headers):
+            captured["status"] = int(status.split()[0])
+        payload = json.loads(b"".join(self.app(environ, start_response)).decode("utf-8"))
+        self.assertEqual(captured["status"], 401)
+        self.assertEqual(payload["error"]["code"], "AUTHENTICATION_REQUIRED")
+
+    def test_institutional_authorizer_receives_distinct_recovery_and_audit_scopes(self):
+        calls = []
+        class Authorizer:
+            def authorize(self, environ, scope, resource_id):
+                calls.append((scope, resource_id))
+                return True
+        app = create_app(authorizer=Authorizer(), allow_unauthenticated_loopback=False)
+        self.addCleanup(app.close)
+        self.request_with_app(app, "/protocol/operations/OP-2/recovery-events", headers={"REMOTE_ADDR": "198.51.100.25"})
+        self.request_with_app(app, "/protocol/operations/OP-2/recover", "POST", headers={"REMOTE_ADDR": "198.51.100.25"})
+        self.assertEqual(calls, [
+            ("protocol:operation:audit", "OP-2"),
+            ("protocol:operation:recover", "OP-2"),
+        ])
+
+    def test_institutional_authorizer_receives_instruction_submission_scope(self):
+        calls = []
+        def authorizer(environ, scope, resource_id):
+            calls.append((scope, resource_id))
+            return True
+        app = create_app(
+            enable_legacy_demo_routes=True,
+            authorizer=authorizer,
+            allow_unauthenticated_loopback=False,
+        )
+        self.addCleanup(app.close)
+        response, payload = self.request_with_app(
+            app, "/protocol/instructions", "POST", {},
+            headers={"REMOTE_ADDR": "198.51.100.26"},
+        )
+        self.assertEqual(response["status"], 422)
+        self.assertEqual(calls, [("protocol:instruction:submit", None)])
+        self.assertEqual(payload["error"]["code"], "INVALID_PROTOCOL_INSTRUCTION")
+
+    def test_authorizer_denial_fails_closed(self):
+        app = create_app(authorizer=lambda environ, scope, resource_id: False)
+        self.addCleanup(app.close)
+        response, payload = self.request_with_app(app, "/protocol/operations/OP-3")
+        self.assertEqual(response["status"], 403)
+        self.assertEqual(payload["error"]["code"], "ACCESS_DENIED")
 
     def test_health_is_live_and_carries_request_id(self):
         response, body = self.request("/system/health", headers={"HTTP_X_REQUEST_ID": "test-request-1"})
@@ -119,6 +175,22 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(
             body["ingress_adapter_contract"]["profile_owner_authentication"],
             "NOT_IMPLEMENTED",
+        )
+        self.assertEqual(
+            body["ingress_adapter_contract"]["action_authority_revalidation"],
+            "RECHECKED_AT_COMMITTING_BEFORE_UNCOMMITTED_IVM_EVENT; REVOKED_OR_UNAVAILABLE_CHECK_FAILS_CLOSED",
+        )
+        self.assertEqual(
+            body["http_access_control"]["recovery_scope"],
+            "protocol:operation:recover",
+        )
+        self.assertEqual(
+            body["http_access_control"]["recovery_audit_scope"],
+            "protocol:operation:audit",
+        )
+        self.assertEqual(
+            body["http_access_control"]["remote_access_without_authorizer"],
+            "DENIED",
         )
         self.assertIn(
             "production identity and cryptographic authentication",
@@ -247,7 +319,7 @@ class HttpServiceTests(unittest.TestCase):
         response, body = self.request_with_app(app, "/protocol/instructions", "POST", payload)
         self.assertEqual(response["status"], 200)
         self.assertEqual(body["status"], "COMMITTED")
-        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
+        self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY", "AUTHORITY"])
         phases = [event["phase"] for event in body["result"]["cee_events"]]
         self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
         self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
@@ -326,7 +398,7 @@ class HttpServiceTests(unittest.TestCase):
             body = outcome["body"]
             self.assertEqual(outcome["status"], 200)
             self.assertEqual(body["status"], "COMMITTED")
-            self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY"])
+            self.assertEqual(calls, ["MINAH", "IDENTITY", "AUTHORITY", "AUTHORITY"])
             phases = [event["phase"] for event in body["result"]["cee_events"]]
             self.assertLess(phases.index("MINAH_REVIEWED"), phases.index("IDENTITY_VERIFIED"))
             self.assertLess(phases.index("IDENTITY_VERIFIED"), phases.index("AUTHORITY_VERIFIED"))
@@ -680,7 +752,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(operation_body["error"]["code"], "OPERATION_NOT_FOUND")
 
 
-    def test_http_inspection_reconciles_lost_ingress_ack_from_finalized_cee(self):
+    def test_http_inspection_is_read_only_and_explicit_recovery_reconciles_lost_ingress_ack(self):
         calls = []
 
         class RecordingMinah:
@@ -735,6 +807,14 @@ class HttpServiceTests(unittest.TestCase):
                          "UNKNOWN_REQUIRES_RECONCILIATION")
 
         app.ingress._finish = original_finish
+        inspection_response, inspection_body = self.request_with_app(
+            app, "/protocol/operations/HTTP-RECONCILE-1"
+        )
+        self.assertEqual(inspection_response["status"], 200)
+        self.assertEqual(inspection_body["status"], "UNKNOWN")
+        self.assertTrue(inspection_body["reconciliation_required"])
+        self.assertIsNone(app.ingress.inspect(payload["operation_id"])["result"])
+
         recovery_response, recovery_body = self.request_with_app(
             app, "/protocol/operations/HTTP-RECONCILE-1/recover", "POST"
         )
@@ -1009,6 +1089,8 @@ class HttpServiceTests(unittest.TestCase):
         self.assertFalse(body["operation"]["resumable"])
         self.assertEqual(body["operation"]["result"]["status"], "COMMITTED")
         self.assertTrue(body["operation"]["ivm_event"])
+        self.assertEqual(body["operation"]["cee_observations"][-1]["kind"], "AUTHORITY_REVALIDATION")
+        self.assertEqual(body["operation"]["cee_observations"][-1]["status"], "VERIFIED")
 
     def test_inspection_of_unknown_operation_is_not_found(self):
         response, body = self.request("/protocol/operations/DOES-NOT-EXIST")
@@ -1253,6 +1335,7 @@ class HttpServiceTests(unittest.TestCase):
         environ = {
             "REQUEST_METHOD": "POST", "PATH_INFO": "/demo/instructions",
             "CONTENT_TYPE": "application/json", "CONTENT_LENGTH": str(64 * 1024 + 1),
+            "REMOTE_ADDR": "127.0.0.1",
             "wsgi.input": io.BytesIO(b""),
         }
         captured = {}
