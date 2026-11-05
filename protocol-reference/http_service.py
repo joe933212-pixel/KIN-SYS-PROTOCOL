@@ -12,6 +12,7 @@ Run from the repository root:
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -115,6 +116,8 @@ class KinSysPrototypeApplication:
         profile_revocation_checker: Any | None = None,
         require_profile_approval: bool = False,
         ingress_database: str = ":memory:",
+        authorizer: Any | None = None,
+        allow_unauthenticated_loopback: bool = True,
     ):
         if pipeline is not None and any(
             adapter is not None
@@ -137,12 +140,37 @@ class KinSysPrototypeApplication:
         )
         self.case_coordinator = case_coordinator or CEECaseCoordinator()
         self.enable_legacy_demo_routes = enable_legacy_demo_routes
+        self.authorizer = authorizer
+        self.allow_unauthenticated_loopback = bool(allow_unauthenticated_loopback)
 
     def close(self) -> None:
         self.demonstrator.close()
         self.pipeline.close()
         self.ingress.close()
         self.case_coordinator.close()
+
+    @staticmethod
+    def _required_scope(path: str, method: str) -> tuple[str | None, str | None]:
+        """Return the institutional permission required for an operational route."""
+        if path.startswith("/protocol/operations/"):
+            suffix = path.rsplit("/", 1)[-1]
+            operation_id = path[len("/protocol/operations/"):].split("/", 1)[0]
+            if suffix == "recover":
+                return "protocol:operation:recover", operation_id
+            if suffix == "recovery-events":
+                return "protocol:operation:audit", operation_id
+            return "protocol:operation:read", operation_id
+        if path.startswith("/cee/operations/"):
+            return "cee:operation:read", path[len("/cee/operations/"):]
+        scopes = {
+            "/protocol/instructions": "protocol:instruction:submit",
+            "/demo/instructions": "demo:execute",
+            "/cee/cases": "cee:case:execute",
+            "/cee/reconciliation": "cee:reconciliation:record",
+            "/cee/settlement-evidence": "cee:settlement:record",
+        }
+        scope = scopes.get(path)
+        return (scope, None) if scope is not None else (None, None)
 
     def __call__(self, environ: dict[str, Any], start_response: Callable):
         request_id = environ.get("HTTP_X_REQUEST_ID", "")
@@ -248,6 +276,39 @@ class KinSysPrototypeApplication:
                 },
                 request_id,
             )
+        # The three system discovery endpoints above are intentionally public.
+        # Every operational route requires an explicit scope. Without an injected
+        # institutional authorizer, the reference app is usable only from loopback.
+        scope, resource_id = self._required_scope(path, method)
+        if scope is not None:
+            if self.authorizer is not None:
+                try:
+                    authorize = getattr(self.authorizer, "authorize", self.authorizer)
+                    decision = authorize(environ, scope, resource_id)
+                    allowed = decision is True or (
+                        isinstance(decision, dict) and decision.get("authorized") is True
+                    )
+                except Exception:
+                    allowed = False
+                if not allowed:
+                    return _response(
+                        start_response, 403,
+                        {"error": {"code": "ACCESS_DENIED", "message": "The caller is not authorised for this operation."}},
+                        request_id,
+                    )
+            else:
+                remote_addr = environ.get("REMOTE_ADDR", "")
+                try:
+                    is_loopback = ipaddress.ip_address(remote_addr).is_loopback
+                except ValueError:
+                    is_loopback = False
+                if not (self.allow_unauthenticated_loopback and is_loopback):
+                    return _response(
+                        start_response, 401,
+                        {"error": {"code": "AUTHENTICATION_REQUIRED", "message": "An institutional authorizer is required for non-loopback access."}},
+                        request_id,
+                    )
+
         cee_operation_prefix = "/cee/operations/"
         if path.startswith(cee_operation_prefix):
             if method != "GET":
@@ -840,6 +901,8 @@ def create_app(
     profile_revocation_checker: Any | None = None,
     require_profile_approval: bool = False,
     ingress_database: str = ":memory:",
+    authorizer: Any | None = None,
+    allow_unauthenticated_loopback: bool = True,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -853,6 +916,8 @@ def create_app(
         profile_revocation_checker=profile_revocation_checker,
         require_profile_approval=require_profile_approval,
         ingress_database=ingress_database,
+        authorizer=authorizer,
+        allow_unauthenticated_loopback=allow_unauthenticated_loopback,
     )
 
 
@@ -865,6 +930,15 @@ def main() -> None:
         raise SystemExit("KIN_SYS_PORT must be an integer") from exc
     if not 1 <= port <= 65535:
         raise SystemExit("KIN_SYS_PORT must be between 1 and 65535")
+    try:
+        loopback_bind = ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        loopback_bind = False
+    if not loopback_bind:
+        raise SystemExit(
+            "The built-in reference server may bind only to a loopback IP. "
+            "Use a production WSGI server with TLS and an injected institutional authorizer for remote access."
+        )
     data_dir = Path(os.environ.get("KIN_SYS_DATA_DIR", ".kin-sys-prototype"))
     cee_database = os.environ.get("KIN_SYS_CEE_DB", str(data_dir / "cee.sqlite3"))
     ivm_database = os.environ.get("KIN_SYS_IVM_DB", str(data_dir / "ivm.sqlite3"))
