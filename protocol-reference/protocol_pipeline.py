@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from minah_deployment_profile import PROFILE_VERSION, validate_minah_profile
-from minah_profile_governance import MinahApprovalViolation, verify_minah_profile_approval
+from minah_profile_governance import MinahApprovalViolation, profile_digest, verify_minah_profile_approval
 from governed_contracts import verify_instruction_payload_digest
 
 from integrated_demo import DeterministicMinahAdapter
