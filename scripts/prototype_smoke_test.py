@@ -128,7 +128,7 @@ finally:
                 "request_id": f"request-{uuid.uuid4().hex}",
                 "operation_id": operation_id,
                 "idempotency_key": f"idem-{uuid.uuid4().hex}",
-                "principal_ref": "SYNTHETIC-TEST-PRINCIPAL",
+                "principal_ref": "AUTHORITY-001",
                 "authority_ref": "authority-check:synthetic-smoke",
                 "action": "ACTIVATE",
                 "target_ref": target_ref,
