@@ -420,6 +420,87 @@ class KinSysProtocolPipeline:
         if stored_event.get("outcome") != "ACCEPTED" and matching_history:
             raise ExecutionConflict("REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY")
 
+    def _assert_cross_store_consistent(self, operation: dict[str, Any]) -> None:
+        """Require CEE lifecycle claims and durable IVM evidence to agree.
+
+        COMMITTING plus a consistent durable IVM event is the one expected
+        crash window: recovery may reconcile it. Every other phase/event
+        combination must be internally consistent or stop for manual review.
+        """
+        pinned_request = operation.get("request_json")
+        if not isinstance(pinned_request, dict):
+            raise ExecutionConflict("CEE_REQUEST_MISSING_REQUIRES_MANUAL_RECONCILIATION")
+        request = {
+            key: value for key, value in pinned_request.items()
+            if not key.startswith("_minah_")
+        }
+        self._assert_ivm_event_consistent(request)
+
+        phase = operation.get("phase")
+        event = self.ivm.event(request["event_id"])
+        ivm_decision = operation.get("ivm_json")
+        if phase not in LIFECYCLE:
+            raise ExecutionConflict("CEE_PHASE_INVALID_REQUIRES_MANUAL_RECONCILIATION")
+
+        if event is not None and phase not in {"COMMITTING", "COMMITTED", "FINALIZED"}:
+            raise ExecutionConflict(
+                "IVM_EVENT_EXISTS_BEFORE_CEE_COMMIT_BOUNDARY_REQUIRES_MANUAL_RECONCILIATION"
+            )
+
+        committed_claim = (
+            phase == "COMMITTED"
+            or (phase == "FINALIZED" and operation.get("outcome") == "COMMITTED")
+        )
+        if committed_claim and event is None:
+            raise ExecutionConflict(
+                "CEE_COMMIT_CLAIM_WITHOUT_DURABLE_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+            )
+        if phase == "COMMITTED" and not isinstance(ivm_decision, dict):
+            raise ExecutionConflict(
+                "CEE_COMMITTED_PHASE_WITHOUT_IVM_DECISION_REQUIRES_MANUAL_RECONCILIATION"
+            )
+
+        if event is None:
+            if ivm_decision is not None:
+                raise ExecutionConflict(
+                    "CEE_IVM_DECISION_WITHOUT_DURABLE_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+                )
+            return
+
+        # An event found after CEE has already finalized is only reconcilable
+        # when CEE durably recorded the matching IVM decision as well.
+        if phase == "FINALIZED" and not isinstance(ivm_decision, dict):
+            raise ExecutionConflict(
+                "FINALIZED_CEE_WITH_UNRECORDED_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+            )
+        if ivm_decision is not None:
+            expected_status = "ACCEPTED" if event.get("outcome") == "ACCEPTED" else "REJECTED"
+            if (
+                ivm_decision.get("event_id") != event.get("event_id")
+                or ivm_decision.get("process_id") != event.get("process_id")
+                or ivm_decision.get("status") != expected_status
+            ):
+                raise ExecutionConflict(
+                    "CEE_IVM_DECISION_DIFFERS_FROM_DURABLE_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+                )
+            history = [
+                item for item in self.ivm.history(event["process_id"])
+                if item.get("event_id") == event["event_id"]
+            ]
+            if expected_status == "ACCEPTED":
+                if len(history) != 1 or (
+                    ivm_decision.get("history_id") != history[0].get("history_id")
+                    or ivm_decision.get("from_state") != history[0].get("from_state")
+                    or ivm_decision.get("to_state") != history[0].get("to_state")
+                ):
+                    raise ExecutionConflict(
+                        "CEE_IVM_HISTORY_BINDING_MISMATCH_REQUIRES_MANUAL_RECONCILIATION"
+                    )
+            elif history:
+                raise ExecutionConflict(
+                    "REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY"
+                )
+
     def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
         self._validate(request)
         operation_id = request["operation_id"]
@@ -428,6 +509,8 @@ class KinSysProtocolPipeline:
         # Recovery of an existing operation may rely only on the approval metadata
         # already pinned in that operation's durable CEE request record.
         prior_operation = self.cee.get(operation_id)
+        if prior_operation is not None:
+            self._assert_cross_store_consistent(prior_operation)
         approval_metadata = None
         if self.require_profile_approval:
             if prior_operation is None:
@@ -1014,6 +1097,8 @@ class KinSysProtocolPipeline:
                 "reason": "OPERATION_NOT_FOUND",
                 "recovery_required": True,
             }
+
+        self._assert_cross_store_consistent(operation)
 
         pinned_request = operation["request_json"]
         request_without_pins = {
