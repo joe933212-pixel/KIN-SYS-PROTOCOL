@@ -473,6 +473,14 @@ class KinSysProtocolPipeline:
             raise ExecutionConflict(
                 "FINALIZED_CEE_WITH_UNRECORDED_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION"
             )
+        if phase == "FINALIZED":
+            expected_final_outcome = (
+                "COMMITTED" if event.get("outcome") == "ACCEPTED" else "REJECTED"
+            )
+            if operation.get("outcome") != expected_final_outcome:
+                raise ExecutionConflict(
+                    "CEE_FINAL_OUTCOME_DIFFERS_FROM_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION"
+                )
         if ivm_decision is not None:
             expected_status = "ACCEPTED" if event.get("outcome") == "ACCEPTED" else "REJECTED"
             if (
