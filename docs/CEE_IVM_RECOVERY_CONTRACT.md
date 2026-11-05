@@ -27,7 +27,7 @@ The canonical execution path remains **MINAH → identity verification → actio
 |---|---|---|
 | Ingress accepted; no CEE record exists | Ingress row and mapped-request fingerprint only | Return `UNKNOWN`. Do not create a fresh CEE operation automatically; establish whether the CEE store is missing, reset or unavailable first. |
 | CEE `REQUESTED`; no MINAH disposition persisted | CEE request, but no durable MINAH decision | Stop for manual reconciliation. MINAH may have been called before the interruption, so blind re-invocation is not assumed safe. |
-| MINAH disposition persisted; identity or authority phase incomplete | Pinned CEE request and MINAH disposition | Resume from the durable CEE phase. Identity and authority adapters must be read-only/idempotent verification operations; uncertain checks fail closed. |
+| MINAH disposition persisted; identity or authority phase incomplete | Pinned CEE request and MINAH disposition | Resume from the durable CEE phase. Identity and initial authority adapters must be read-only/idempotent verification operations; uncertain checks fail closed. Before an uncommitted IVM event is applied or retried at `COMMITTING`, action authority is checked again. A revoked/invalid mandate is rejected; an unavailable check remains `UNKNOWN`. |
 | CEE `EXECUTING` / `PREPARED` | Pinned process context and CEE phase | Resume the phase-aware pipeline. Process creation and context checks must be idempotent and must reject immutable-context mismatches. |
 | CEE `COMMITTING`; IVM has not committed | CEE phase and stable IVM event ID | Execute the pinned IVM event. The local IVM transaction determines whether it commits. |
 | IVM committed; CEE acknowledgement was lost | IVM event and transition history exist; CEE remains `COMMITTING` | Re-submit only the same pinned event to the idempotent IVM store. It returns the prior outcome; CEE then records `COMMITTED` and `FINALIZED`. No second state transition is created. |
@@ -42,9 +42,9 @@ The canonical execution path remains **MINAH → identity verification → actio
 - `POST /protocol/operations/{operation_id}/recover` requests explicit recovery of an existing uncertain operation. It accepts no replacement instruction body.
 - Completed ingress replay returns the stored result without rerunning the pipeline.
 - Recovery outcomes are recorded in the ingress recovery-event journal. `GET /protocol/operations/{operation_id}/recovery-events` exposes a sanitized audit projection with action, phase, timestamp and allow-listed evidence; raw exception messages are not returned by this route.
-- The recovery and recovery-audit routes are local prototype interfaces without production authentication or rate limiting. They must not be exposed to untrusted networks.
+- The recovery and recovery-audit routes have distinct authorizer scopes (`protocol:operation:recover` and `protocol:operation:audit`). The built-in reference server is loopback-bind-only; the app denies non-loopback operational requests unless an institutional authorizer is injected. The local fallback is not caller authentication, and production rate limiting is not implemented.
 
-The route currently runs with synthetic adapters and no production authentication. It is suitable for local protocol verification, not as an exposed production recovery endpoint.
+The route currently runs with synthetic adapters. Remote use requires a production WSGI server, TLS, and an institutional authorizer; no production identity provider, key management, rate limiting or security monitoring is included. It is suitable for local protocol verification, not as an exposed production recovery endpoint.
 
 ## Evidence and acceptance gates
 
