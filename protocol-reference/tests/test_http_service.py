@@ -752,7 +752,7 @@ class HttpServiceTests(unittest.TestCase):
         self.assertEqual(operation_body["error"]["code"], "OPERATION_NOT_FOUND")
 
 
-    def test_http_inspection_reconciles_lost_ingress_ack_from_finalized_cee(self):
+    def test_http_inspection_is_read_only_and_explicit_recovery_reconciles_lost_ingress_ack(self):
         calls = []
 
         class RecordingMinah:
@@ -807,6 +807,14 @@ class HttpServiceTests(unittest.TestCase):
                          "UNKNOWN_REQUIRES_RECONCILIATION")
 
         app.ingress._finish = original_finish
+        inspection_response, inspection_body = self.request_with_app(
+            app, "/protocol/operations/HTTP-RECONCILE-1"
+        )
+        self.assertEqual(inspection_response["status"], 200)
+        self.assertEqual(inspection_body["status"], "UNKNOWN")
+        self.assertTrue(inspection_body["reconciliation_required"])
+        self.assertIsNone(app.ingress.inspect(payload["operation_id"])["result"])
+
         recovery_response, recovery_body = self.request_with_app(
             app, "/protocol/operations/HTTP-RECONCILE-1/recover", "POST"
         )
