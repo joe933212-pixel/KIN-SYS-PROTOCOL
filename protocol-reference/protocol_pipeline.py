@@ -819,6 +819,15 @@ class KinSysProtocolPipeline:
                         },
                     )
                     return self._response_result(operation_id, result, duplicate=False)
+            else:
+                self.cee.record_observation(
+                    operation_id, "AUTHORITY_REVALIDATION", "NOT_REQUIRED",
+                    {
+                        "event_id": request["event_id"],
+                        "ivm_event_outcome": existing_event.get("outcome"),
+                        "reason": "IVM_EVENT_ALREADY_DURABLE; RECONCILE_EXISTING_OUTCOME",
+                    },
+                )
             decision = self.ivm.execute({
                 "event_id": request["event_id"],
                 "process_id": request["process_id"],
