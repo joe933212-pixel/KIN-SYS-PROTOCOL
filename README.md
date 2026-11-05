@@ -68,7 +68,15 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 
 - [Local HTTP prototype adapter](protocol-reference/http_service.py) — runnable synthetic vertical slice, not the production API. It exposes health/readiness/capabilities, the governed `POST /protocol/instructions` route, operation inspection and explicit recovery. Legacy/demo and CEE case routes are synthetic and opt-in. The governed route runs MINAH-first ingress and the canonical reference pipeline; CEE and IVM use separate local SQLite stores, without cross-store atomicity or distributed finality.
 
-Run locally from the repository root with Python 3.12 or later:
+Run a process-level smoke test first (Python 3.12 or later, standard library only):
+
+```bash
+python scripts/prototype_smoke_test.py
+```
+
+The smoke test starts the HTTP service as a separate process with disposable SQLite stores, checks health/readiness, submits one synthetic governed instruction through MINAH-first ingress, and inspects the stored decision. It verifies that the local prototype can start and complete its reference path; it does not test production integrations or security.
+
+To run the service interactively from the repository root:
 
 ```bash
 PYTHONPATH=protocol-reference python -m http_service
