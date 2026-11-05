@@ -1323,6 +1323,64 @@ os._exit(76)
                 finally:
                     restarted.close()
 
+    def test_ivm_transaction_restart_matrix_rolls_back_partial_writes(self):
+        fault_points = (
+            ("event_insert", """
+                CREATE TRIGGER interrupt_ivm_event_insert
+                BEFORE INSERT ON events
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_IVM_EVENT_INSERT'); END;
+            """, "interrupt_ivm_event_insert", "INJECTED_IVM_EVENT_INSERT"),
+            ("process_update", """
+                CREATE TRIGGER interrupt_ivm_process_update
+                BEFORE UPDATE OF state ON processes
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_IVM_PROCESS_UPDATE'); END;
+            """, "interrupt_ivm_process_update", "INJECTED_IVM_PROCESS_UPDATE"),
+            ("history_insert", """
+                CREATE TRIGGER interrupt_ivm_history_insert
+                BEFORE INSERT ON transition_history
+                BEGIN SELECT RAISE(ABORT, 'INJECTED_IVM_HISTORY_INSERT'); END;
+            """, "interrupt_ivm_history_insert", "INJECTED_IVM_HISTORY_INSERT"),
+        )
+        for label, trigger_sql, trigger_name, error_text in fault_points:
+            with self.subTest(ivm_fault_point=label), tempfile.TemporaryDirectory() as tmp:
+                cee_db = str(Path(tmp) / "cee.sqlite3")
+                ivm_db = str(Path(tmp) / "ivm.sqlite3")
+                payload = request(
+                    operation_id=f"IVM-RESTART-{label}",
+                    event_id=f"IVM-EVENT-{label}",
+                    process_id=f"IVM-PROCESS-{label}",
+                )
+                first = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                first.cee.db.execute("SELECT 1")
+                first.ivm.db.executescript(trigger_sql)
+                first.ivm.db.commit()
+                with self.assertRaisesRegex(sqlite3.IntegrityError, error_text):
+                    first.execute(payload)
+                operation = first.cee.get(payload["operation_id"])
+                self.assertEqual(operation["phase"], "COMMITTING")
+                self.assertIsNone(first.ivm.event(payload["event_id"]))
+                self.assertEqual(first.ivm.history(payload["process_id"]), [])
+                self.assertEqual(first.ivm.process(payload["process_id"])["state"], "PENDING")
+                first.close()
+
+                restarted = KinSysProtocolPipeline(cee_database=cee_db, ivm_database=ivm_db)
+                try:
+                    restarted.ivm.db.execute(f"DROP TRIGGER {trigger_name}")
+                    restarted.ivm.db.commit()
+                    result = restarted.recover(payload["operation_id"])
+                    self.assertEqual(result["status"], "COMMITTED")
+                    self.assertEqual(
+                        restarted.ivm.event(payload["event_id"])["outcome"], "ACCEPTED"
+                    )
+                    self.assertEqual(
+                        len(restarted.ivm.history(payload["process_id"])), 1
+                    )
+                    self.assertEqual(
+                        restarted.ivm.process(payload["process_id"])["state"], "ACTIVE"
+                    )
+                finally:
+                    restarted.close()
+
     def test_recovery_runs_structural_integrity_checks_before_reading_operation(self):
         self.pipeline._assert_store_integrity()
         self.assertEqual(self.pipeline.recover("NO-SUCH-OPERATION")["status"], "UNKNOWN")
