@@ -563,14 +563,9 @@ class KinSysPrototypeApplication:
                 )
             ingress_operation = self.ingress.inspect(operation_id)
             if ingress_operation is not None:
-                if ingress_operation["result"] is None:
-                    # Reconcile only from an already-finalized CEE record. This
-                    # endpoint never resumes or resubmits a non-final operation.
-                    self.ingress.reconcile(
-                        operation_id, self.pipeline.inspect(operation_id)
-                    )
-                    ingress_operation = self.ingress.inspect(operation_id)
-                if ingress_operation is not None and ingress_operation["result"] is not None:
+                # GET is inspection-only. Even passive ingress/CEE reconciliation
+                # is performed only through the separately authorised POST recovery route.
+                if ingress_operation["result"] is not None:
                     return _response(
                         start_response, 200,
                         {
