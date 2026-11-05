@@ -389,6 +389,47 @@ class KinSysProtocolPipeline:
                 approval_metadata = pinned_request.get("_minah_profile_approval_verification")
                 if not isinstance(approval_metadata, dict) or approval_metadata.get("status") != "APPROVED":
                     raise ExecutionConflict("PINNED_PROFILE_APPROVAL_EVIDENCE_MISSING")
+                # A pinned approval proves what was accepted at initial ingress;
+                # it does not prove that the approval remains current after a crash.
+                # Recheck expiry, trusted signature and revocation before resuming
+                # any operation that has not durably committed its IVM event.
+                durable_ivm_event = self.ivm.event(request["event_id"])
+                protected_transition_already_durable = (
+                    prior_operation["phase"] in {"COMMITTED", "FINALIZED"}
+                    or (prior_operation["phase"] == "COMMITTING" and durable_ivm_event is not None)
+                )
+                if not protected_transition_already_durable:
+                    try:
+                        approval_metadata = verify_minah_profile_approval(
+                            self.minah_profile,
+                            self.minah_profile_approval,
+                            signature_verifier=self.profile_signature_verifier,
+                            revocation_checker=self.profile_revocation_checker,
+                        )
+                    except MinahApprovalViolation as exc:
+                        self.cee.record_observation(
+                            operation_id, "MINAH_PROFILE_APPROVAL_REVALIDATION",
+                            "REJECTED",
+                            {
+                                "approval_id": self.minah_profile_approval.get("approval_id")
+                                if isinstance(self.minah_profile_approval, dict) else None,
+                                "profile_digest": profile_digest(self.minah_profile),
+                                "reason": str(exc),
+                                "protected_transition_already_durable": False,
+                            },
+                        )
+                        raise
+                    self.cee.record_observation(
+                        operation_id, "MINAH_PROFILE_APPROVAL_REVALIDATION",
+                        "VERIFIED",
+                        {
+                            "approval_id": approval_metadata["approval_id"],
+                            "signer_ref": approval_metadata["signer_ref"],
+                            "profile_digest": approval_metadata["profile_digest"],
+                            "expires_at": approval_metadata["expires_at"],
+                            "protected_transition_already_durable": False,
+                        },
+                    )
         # Pin the deployment profile into the durable operation fingerprint before
         # MINAH is invoked. Replays cannot silently switch to another profile.
         journal_request = dict(request)
@@ -970,9 +1011,8 @@ class KinSysProtocolPipeline:
                 "recovery_required": True,
             }
 
-        # execute() will reconstruct the same pinned request metadata and resume
-        # from the stored phase. Existing profile approval evidence is reused rather
-        # than revalidated against the current clock during recovery.
+        # execute() reconstructs the pinned request and revalidates the current
+        # profile approval before any protected transition that is not already durable.
         return self.execute(request_without_pins)
 
     def inspect(self, operation_id: str) -> dict[str, Any] | None:
