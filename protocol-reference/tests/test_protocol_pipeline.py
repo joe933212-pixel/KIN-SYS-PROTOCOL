@@ -707,6 +707,13 @@ os._exit(76)
             "purpose": "test execution envelope binding",
             "jurisdiction": "UG-DEMO",
             "submitted_at": "2026-10-27T10:00:00+03:00",
+            "evidence": {
+                "consignment_id": "PROC-001",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
             "payload_digest": "sha256:" + ("0" * 64),
             "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
         }
