@@ -1112,6 +1112,7 @@ class KinSysProtocolPipeline:
         pipeline resumes in phase order, with IVM's stable event ID preventing a
         committed local transition from being applied twice.
         """
+        self._assert_store_integrity()
         operation = self.cee.get(operation_id)
         if operation is None:
             return {
