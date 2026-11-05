@@ -77,7 +77,7 @@ A legacy codebase or document describing a feature does not mark it implemented 
 
 ## Immediate next steps
 
-1. Extend the recovery/storage fault matrix beyond the implemented CEE transaction and CEE/IVM consistency checks: test process interruption at every durable boundary, filesystem/power-loss/corruption, backup/restore skew, and define an authenticated, evidence-preserving operator reconciliation procedure.
+1. Extend recovery/storage validation beyond controlled SQLite fault and close/reopen simulations: test real process termination, filesystem/power-loss/corruption, backup provenance and restore operations, plus multi-worker/multi-node behaviour. The [Operator Reconciliation Design](docs/OPERATOR_RECONCILIATION_DESIGN.md) now specifies preservation, authentication, separation-of-duties, signed evidence and conservative dispositions; implementation remains blocked on institution-approved identity, signer-registry and independently protected audit dependencies.
 2. Design and test a transactional outbox/dispatcher and provider idempotency contract before adding any external side effects; no current route moves real funds.
 3. Integrate institution-specific identity, authority, profile-signature and revocation services through authenticated adapters; define evidence provenance, expiry and revocation semantics, and deployment-specific key custody.
 4. Complete the HTTP security boundary for each deployment: production WSGI server, TLS/mTLS or institution-approved authentication, authorizer scopes, rate limiting, security monitoring, and multi-worker connection/locking tests.
