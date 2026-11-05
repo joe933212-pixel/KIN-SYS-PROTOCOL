@@ -267,6 +267,17 @@ class KinSysPrototypeApplication:
                         "distributed_finality": False,
                         "funds_moved": False,
                     },
+                    "http_access_control": {
+                        "public_routes": ["GET /system/health", "GET /system/readiness", "GET /system/capabilities"],
+                        "operational_routes": "REQUIRE_SCOPED_INSTITUTIONAL_AUTHORIZER_OR_LOOPBACK_ONLY_LOCAL_MODE",
+                        "authorizer_contract": "authorize(environ, scope, resource_id) -> True OR {authorized: true}",
+                        "recovery_scope": "protocol:operation:recover",
+                        "operation_read_scope": "protocol:operation:read",
+                        "recovery_audit_scope": "protocol:operation:audit",
+                        "remote_access_without_authorizer": "DENIED",
+                        "built_in_server_bind": "LOOPBACK_IP_ONLY",
+                        "tls_and_production_identity": "MUST_BE_PROVIDED_BY_DEPLOYMENT_EDGE_OR_PRODUCTION_SERVER",
+                    },
                     "not_yet_wired_as_production_components": [
                         "production identity and cryptographic authentication",
                         "authoritative legal sources and live MINAH model service",
