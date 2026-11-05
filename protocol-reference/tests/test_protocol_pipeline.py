@@ -478,6 +478,8 @@ class ProtocolPipelineTests(unittest.TestCase):
                 self.assertTrue(result["duplicate"])
                 self.assertEqual(resumed.ivm.process("PROC-001")["state"], "ACTIVE")
                 self.assertEqual(len(resumed.ivm.history("PROC-001")), 1)
+                self.assertEqual(result["cee_observations"][-1]["kind"], "AUTHORITY_REVALIDATION")
+                self.assertEqual(result["cee_observations"][-1]["status"], "NOT_REQUIRED")
                 self.assertEqual([e["phase"] for e in resumed.cee.events("OP-001")][-2:], ["COMMITTED", "FINALIZED"])
             finally:
                 resumed.close()
