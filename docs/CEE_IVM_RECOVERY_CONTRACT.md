@@ -39,8 +39,8 @@ The canonical execution path remains **MINAH → identity verification → actio
 
 ## HTTP contract
 
-`GET /protocol/operations/{operation_id}` is for inspection and passive reconciliation from an already-finalized CEE result. It verifies that CEE's pinned request fingerprint matches the ingress execution-request fingerprint before copying the result; it does not resume execution.
-- `POST /protocol/operations/{operation_id}/recover` requests explicit recovery of an existing uncertain operation. It accepts no replacement instruction body.
+`GET /protocol/operations/{operation_id}` is read-only inspection. It does not reconcile ingress state, resume execution, or write recovery records. An unresolved ingress operation remains `UNKNOWN` in this view.
+- `POST /protocol/operations/{operation_id}/recover` requests explicit recovery of an existing uncertain operation. It accepts no replacement instruction body. It is also the authorised path for reconciling an already-finalized CEE result into the ingress journal after a lost ingress acknowledgement; it never resubmits replacement instruction content.
 - Completed ingress replay returns the stored result without rerunning the pipeline.
 - Recovery outcomes are recorded in the ingress recovery-event journal. `GET /protocol/operations/{operation_id}/recovery-events` exposes a sanitized audit projection with action, phase, timestamp and allow-listed evidence; raw exception messages are not returned by this route.
 - The recovery and recovery-audit routes have distinct authorizer scopes (`protocol:operation:recover` and `protocol:operation:audit`). The built-in reference server is loopback-bind-only; the app denies non-loopback operational requests unless an institutional authorizer is injected. The local fallback is not caller authentication, and production rate limiting is not implemented.
