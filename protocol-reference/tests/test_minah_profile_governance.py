@@ -42,6 +42,8 @@ def approval_for(value, **overrides):
         "signer_ref": "trusted-owner-key-01",
         "algorithm": "TEST-ONLY",
         "profile_digest": profile_digest(value),
+        "profile_owner_scope": value["owner_scope"],
+        "profile_owner_ref": value["owner_ref"],
         "approved_at": "2026-10-26T10:00:00Z",
         "expires_at": "2027-10-26T10:00:00Z",
         "signature": "test-signature",
@@ -78,6 +80,18 @@ class MinahProfileGovernanceTests(unittest.TestCase):
         self.assertTrue(result["verified"])
         self.assertEqual(result["status"], "APPROVED")
         self.assertTrue(result["revocation_checked"])
+
+    def test_approval_is_bound_to_exact_profile_owner_scope_and_reference(self):
+        value = profile()
+        envelope = approval_for(value, profile_owner_ref="OTHER-INSTITUTION")
+        with self.assertRaisesRegex(MinahApprovalViolation, "PROFILE_OWNER_REF_MISMATCH"):
+            self.verify(value=value, envelope=envelope)
+
+    def test_unknown_approval_fields_are_rejected(self):
+        value = profile()
+        envelope = approval_for(value, unexpected_security_flag=True)
+        with self.assertRaisesRegex(MinahApprovalViolation, "UNSUPPORTED_APPROVAL_FIELDS"):
+            self.verify(value=value, envelope=envelope)
 
     def test_modified_profile_invalidates_approval_digest(self):
         original = profile()
