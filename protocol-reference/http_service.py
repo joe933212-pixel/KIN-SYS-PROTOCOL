@@ -254,7 +254,7 @@ class KinSysPrototypeApplication:
                         "adapter_timeout_enforcement": "NOT_ENFORCED_BY_REFERENCE_PIPELINE; INJECTED_ADAPTERS_MUST_BOUND_CALLS",
                         "adapter_timeout_outcome": "EXCEPTIONS_OR_UNKNOWN_FAIL_CLOSED_BEFORE_PROTECTED_EXECUTION",
                         "minah_profile": "VALIDATED_AND_PINNED_TO_OPERATION_FINGERPRINT_AND_MINAH_DISPOSITION",
-                        "profile_approval": "OPTIONAL_FAIL_CLOSED_PRE-MINAH_CHECK; REAL_TRUSTED_VERIFIERS_MUST_BE_INJECTED",
+                        "profile_approval": "OPTIONAL_FAIL_CLOSED_PRE-MINAH_CHECK_AND_RECOVERY_REVALIDATION; OWNER_BOUND_APPROVAL_V0_2; REAL_TRUSTED_VERIFIERS_AND_REVOCATION_SOURCE_MUST_BE_INJECTED",
                         "action_authority_revalidation": "RECHECKED_AT_COMMITTING_BEFORE_UNCOMMITTED_IVM_EVENT; REVOKED_OR_UNAVAILABLE_CHECK_FAILS_CLOSED",
                         "profile_owner_authentication": "NOT_IMPLEMENTED",
                         "jurisdiction_profile_matching": "EXACT_STRING_MATCH_AGAINST_PINNED_PROFILE; NOT_AUTHENTICATED_JURISDICTION_ATTESTATION",
