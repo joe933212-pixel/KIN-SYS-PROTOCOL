@@ -669,7 +669,7 @@ class KinSysProtocolPipeline:
             self.cee.advance(
                 operation_id, "IDENTITY_VERIFIED", status="EVALUATED",
                 detail={
-                    "identity_mode": identity.get("mode", "ADAPTER"),
+                    "identity_mode": _safe_verification_result(identity)["mode"],
                     "verified": True,
                     "identity_evidence": {
                         "principal_ref": request["actor_id"],
@@ -717,7 +717,7 @@ class KinSysProtocolPipeline:
             self.cee.advance(
                 operation_id, "AUTHORITY_VERIFIED", status="EVALUATED",
                 detail={
-                    "authority_mode": authority.get("mode", "ADAPTER"),
+                    "authority_mode": _safe_verification_result(authority)["mode"],
                     "verified": True,
                     "authority_evidence": {
                         "principal_ref": request["actor_id"],
@@ -886,7 +886,7 @@ class KinSysProtocolPipeline:
                         "jurisdiction": request["jurisdiction"],
                         "rule_set": request["rule_set"],
                         "rule_version": request["rule_version"],
-                        "mode": authority.get("mode", "ADAPTER") if isinstance(authority, dict) else "INVALID_ADAPTER_RESPONSE",
+                        "mode": _safe_verification_result(authority)["mode"],
                         "metadata": revalidation_metadata,
                         "evidence_reference_supplied": bool(
                             revalidation_metadata.get("evidence_ref") or revalidation_metadata.get("verification_ref")
