@@ -61,8 +61,39 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="kin-sys-smoke-") as data_dir:
         env["KIN_SYS_DATA_DIR"] = data_dir
+        server_code = """
+import os
+from wsgiref.simple_server import make_server
+from http_service import create_app
+from protocol_pipeline import KinSysProtocolPipeline
+
+class SmokeIdentity:
+    def verify_principal(self, request):
+        return {"verified": True, "mode": "SYNTHETIC_SMOKE_TEST"}
+
+class SmokeAuthority:
+    def verify_action(self, request):
+        return {"verified": True, "mode": "SYNTHETIC_SMOKE_TEST"}
+
+data_dir = os.environ["KIN_SYS_DATA_DIR"]
+pipeline = KinSysProtocolPipeline(
+    cee_database=os.path.join(data_dir, "cee.sqlite3"),
+    ivm_database=os.path.join(data_dir, "ivm.sqlite3"),
+    identity_adapter=SmokeIdentity(),
+    authority_adapter=SmokeAuthority(),
+)
+app = create_app(
+    pipeline=pipeline,
+    ingress_database=os.path.join(data_dir, "ingress.sqlite3"),
+)
+try:
+    with make_server(os.environ["KIN_SYS_HOST"], int(os.environ["KIN_SYS_PORT"]), app) as server:
+        server.serve_forever()
+finally:
+    app.close()
+"""
         process = subprocess.Popen(
-            [sys.executable, "-m", "http_service"],
+            [sys.executable, "-c", server_code],
             cwd=ROOT,
             env=env,
             stdout=subprocess.DEVNULL,
