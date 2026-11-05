@@ -157,6 +157,18 @@ class HttpServiceTests(unittest.TestCase):
             body["ingress_adapter_contract"]["profile_owner_authentication"],
             "NOT_IMPLEMENTED",
         )
+        self.assertEqual(
+            body["http_access_control"]["recovery_scope"],
+            "protocol:operation:recover",
+        )
+        self.assertEqual(
+            body["http_access_control"]["recovery_audit_scope"],
+            "protocol:operation:audit",
+        )
+        self.assertEqual(
+            body["http_access_control"]["remote_access_without_authorizer"],
+            "DENIED",
+        )
         self.assertIn(
             "production identity and cryptographic authentication",
             body["not_yet_wired_as_production_components"],
