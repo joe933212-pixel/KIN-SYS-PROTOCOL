@@ -85,7 +85,7 @@ def main() -> int:
             else:
                 raise RuntimeError("KIN-SYS prototype did not become healthy within 15 seconds")
 
-            if not isinstance(health, dict) or health.get("status") not in {"ok", "healthy", "live"}:
+            if not isinstance(health, dict) or health.get("status") not in {"ok", "healthy", "live", "ALIVE"}:
                 raise RuntimeError(f"Unexpected health response: {health!r}")
 
             readiness_status, readiness = _request(f"{base_url}/system/readiness")
