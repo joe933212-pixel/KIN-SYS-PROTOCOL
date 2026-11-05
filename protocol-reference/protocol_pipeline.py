@@ -80,6 +80,16 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _safe_verification_metadata(result: dict[str, Any], allowed_fields: tuple[str, ...]) -> dict[str, str]:
+    """Keep stable evidence references and version metadata, never raw identity data."""
+    metadata: dict[str, str] = {}
+    for field in allowed_fields:
+        value = result.get(field)
+        if isinstance(value, str) and value.strip() and len(value.strip()) <= 256:
+            metadata[field] = value.strip()
+    return metadata
+
+
 class CEEJournal:
     """Durable local lifecycle journal with explicit phase and event history."""
 
@@ -507,9 +517,26 @@ class KinSysProtocolPipeline:
                     result=result, detail={"reason": result["reason"], "ivm_not_invoked": True},
                 )
                 return self._response_result(operation_id, result, duplicate=False)
+            identity_metadata = _safe_verification_metadata(
+                identity,
+                ("evidence_ref", "verification_ref", "verification_id", "identity_provider_ref",
+                 "subject_ref", "principal_ref", "policy_version", "verified_at",
+                 "valid_until", "assurance_level"),
+            )
             self.cee.advance(
                 operation_id, "IDENTITY_VERIFIED", status="EVALUATED",
-                detail={"identity_mode": identity.get("mode", "ADAPTER"), "verified": True},
+                detail={
+                    "identity_mode": identity.get("mode", "ADAPTER"),
+                    "verified": True,
+                    "identity_evidence": {
+                        "principal_ref": request["actor_id"],
+                        "jurisdiction": request["jurisdiction"],
+                        "metadata": identity_metadata,
+                        "evidence_reference_supplied": bool(
+                            identity_metadata.get("evidence_ref") or identity_metadata.get("verification_ref")
+                        ),
+                    },
+                },
             )
         operation = self.cee.get(operation_id)
         assert operation is not None
@@ -536,9 +563,36 @@ class KinSysProtocolPipeline:
                     result=result, detail={"reason": result["reason"], "ivm_not_invoked": True},
                 )
                 return self._response_result(operation_id, result, duplicate=False)
+            authority_metadata = _safe_verification_metadata(
+                authority,
+                ("evidence_ref", "verification_ref", "verification_id", "mandate_ref",
+                 "authority_ref", "policy_version", "mandate_version", "scope_ref",
+                 "issuer_ref", "verified_at", "valid_until"),
+            )
+            contract_envelope = request.get("_contract_envelope")
             self.cee.advance(
                 operation_id, "AUTHORITY_VERIFIED", status="EVALUATED",
-                detail={"authority_mode": authority.get("mode", "ADAPTER"), "verified": True},
+                detail={
+                    "authority_mode": authority.get("mode", "ADAPTER"),
+                    "verified": True,
+                    "authority_evidence": {
+                        "principal_ref": request["actor_id"],
+                        "authority_ref": (
+                            contract_envelope.get("authority_ref")
+                            if isinstance(contract_envelope, dict) else None
+                        ),
+                        "action": request["event_type"],
+                        "target_ref": request["process_id"],
+                        "jurisdiction": request["jurisdiction"],
+                        "rule_set": request["rule_set"],
+                        "rule_version": request["rule_version"],
+                        "metadata": authority_metadata,
+                        "evidence_reference_supplied": bool(
+                            authority_metadata.get("evidence_ref") or authority_metadata.get("verification_ref")
+                            or authority_metadata.get("mandate_ref")
+                        ),
+                    },
+                },
             )
 
         # Admission and context pinning are downstream of MINAH, identity, and
