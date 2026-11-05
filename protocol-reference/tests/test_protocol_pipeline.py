@@ -64,6 +64,8 @@ class ProtocolPipelineTests(unittest.TestCase):
             "signer_ref": "trusted-owner-key-01",
             "algorithm": "TEST-ONLY",
             "profile_digest": profile_digest(profile),
+            "profile_owner_scope": profile["owner_scope"],
+            "profile_owner_ref": profile["owner_ref"],
             "approved_at": "2026-11-01T00:00:00Z",
             "expires_at": "2027-11-01T00:00:00Z",
             "signature": "test-signature",
