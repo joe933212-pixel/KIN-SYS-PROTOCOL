@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 from protocol_pipeline import (
     ExecutionConflict, KinSysProtocolPipeline, LIFECYCLE, LifecycleViolation,
 )
+from minah_profile_governance import APPROVAL_VERSION, MinahApprovalViolation, profile_digest
 from governed_contracts import compute_payload_digest
 
 
@@ -42,6 +43,118 @@ class ProtocolPipelineTests(unittest.TestCase):
     def setUp(self):
         self.pipeline = KinSysProtocolPipeline()
         self.addCleanup(self.pipeline.close)
+
+    def _profile_approval_fixture(self, revoked_state):
+        profile = {
+            "profile_version": "kin-sys-minah-profile-0.1",
+            "deployment_id": "approval-recovery-test",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "INSTITUTION-APPROVAL-01",
+            "use_case": "RECOVERY_TEST",
+            "jurisdictions": ["UG-DEMO"],
+            "policy_pack_version": "POLICY-1",
+            "source_pack_version": "SOURCES-1",
+            "model_ref": "model-1",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": False,
+        }
+        approval = {
+            "approval_version": APPROVAL_VERSION,
+            "approval_id": "approval-recovery-001",
+            "signer_ref": "trusted-owner-key-01",
+            "algorithm": "TEST-ONLY",
+            "profile_digest": profile_digest(profile),
+            "approved_at": "2026-11-01T00:00:00Z",
+            "expires_at": "2027-11-01T00:00:00Z",
+            "signature": "test-signature",
+        }
+        def signature_verifier(signer_ref, algorithm, payload, signature):
+            return signer_ref == "trusted-owner-key-01" and algorithm == "TEST-ONLY" and bool(payload) and signature == "test-signature"
+        def revocation_checker(approval_id):
+            return revoked_state["revoked"]
+        return profile, approval, signature_verifier, revocation_checker
+
+    def test_recovery_rejects_profile_approval_revoked_after_initial_admission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cee_db = str(Path(tmp) / "cee.sqlite3")
+            ivm_db = str(Path(tmp) / "ivm.sqlite3")
+            revoked = {"revoked": False}
+            profile, approval, verifier, revocation = self._profile_approval_fixture(revoked)
+            first = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db,
+                minah_profile=profile, minah_profile_approval=approval,
+                profile_signature_verifier=verifier,
+                profile_revocation_checker=revocation, require_profile_approval=True,
+            )
+            original_advance = first.cee.advance
+            def interrupt_after_authority(operation_id, phase, **kwargs):
+                result = original_advance(operation_id, phase, **kwargs)
+                if operation_id == "PROFILE-REVOKED-DURING-RECOVERY" and phase == "AUTHORITY_VERIFIED":
+                    raise RuntimeError("INJECTED_FAILURE_AFTER_AUTHORITY_VERIFIED")
+                return result
+            first.cee.advance = interrupt_after_authority
+            try:
+                with self.assertRaisesRegex(RuntimeError, "AUTHORITY_VERIFIED"):
+                    first.execute(request(operation_id="PROFILE-REVOKED-DURING-RECOVERY"))
+            finally:
+                first.close()
+
+            revoked["revoked"] = True
+            resumed = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db,
+                minah_profile=profile, minah_profile_approval=approval,
+                profile_signature_verifier=verifier,
+                profile_revocation_checker=revocation, require_profile_approval=True,
+            )
+            try:
+                with self.assertRaisesRegex(MinahApprovalViolation, "APPROVAL_REVOKED"):
+                    resumed.recover("PROFILE-REVOKED-DURING-RECOVERY")
+                self.assertIsNone(resumed.ivm.event("EV-001"))
+                observation = resumed.cee.observations("PROFILE-REVOKED-DURING-RECOVERY")[-1]
+                self.assertEqual(observation["kind"], "MINAH_PROFILE_APPROVAL_REVALIDATION")
+                self.assertEqual(observation["status"], "REJECTED")
+            finally:
+                resumed.close()
+
+    def test_recovery_reconciles_already_durable_ivm_event_even_if_profile_approval_later_revoked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cee_db = str(Path(tmp) / "cee.sqlite3")
+            ivm_db = str(Path(tmp) / "ivm.sqlite3")
+            revoked = {"revoked": False}
+            profile, approval, verifier, revocation = self._profile_approval_fixture(revoked)
+            first = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db,
+                minah_profile=profile, minah_profile_approval=approval,
+                profile_signature_verifier=verifier,
+                profile_revocation_checker=revocation, require_profile_approval=True,
+            )
+            try:
+                with self.assertRaisesRegex(RuntimeError, "INJECTED_FAILURE_AFTER_IVM_COMMIT"):
+                    first.execute(
+                        request(operation_id="PROFILE-REVOKED-AFTER-IVM-COMMIT"),
+                        fail_after_ivm_commit=True,
+                    )
+            finally:
+                first.close()
+
+            revoked["revoked"] = True
+            resumed = KinSysProtocolPipeline(
+                cee_database=cee_db, ivm_database=ivm_db,
+                minah_profile=profile, minah_profile_approval=approval,
+                profile_signature_verifier=verifier,
+                profile_revocation_checker=revocation, require_profile_approval=True,
+            )
+            try:
+                result = resumed.recover("PROFILE-REVOKED-AFTER-IVM-COMMIT")
+                self.assertEqual(result["status"], "COMMITTED")
+                self.assertTrue(result["duplicate"])
+                self.assertEqual(len(resumed.ivm.history("PROC-001")), 1)
+                self.assertFalse(any(
+                    item["kind"] == "MINAH_PROFILE_APPROVAL_REVALIDATION"
+                    for item in result["cee_observations"]
+                ))
+            finally:
+                resumed.close()
 
     def test_operation_records_its_institution_owned_minah_profile(self):
         profile = {
