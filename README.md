@@ -62,11 +62,11 @@ The CRS, CISA, IVM, and CEE research lineage must be traced explicitly in the ev
 0. [CEE-controlled integrated execution plan: institutional, payment, edge, recovery and acceptance gates](docs/CEE_INTEGRATION_PLAN.md)
 0. [Draft production integration API contract (OpenAPI 3.1 JSON; not yet routed)](api/openapi.json)
 0. [API implementation matrix: owner, dependencies and acceptance gate for every route](api/implementation-matrix.json)
-0. [Provider-neutral instruction and decision contract v0.1](docs/GOVERNED_INSTRUCTION_DECISION_CONTRACT_V0_1.md) — draft envelope validation and digest verification integrated into the existing synthetic HTTP pipeline; not a production wire standard.
+0. [Provider-neutral instruction and decision contract v0.1](docs/GOVERNED_INSTRUCTION_DECISION_CONTRACT_V0_1.md) — draft envelope validation and digest verification integrated into the synthetic MINAH-first HTTP ingress and reference pipeline; not a production wire standard.
 0. [Provider-neutral execution architecture and human usability](docs/PROVIDER_NEUTRAL_EXECUTION_ARCHITECTURE.md) — deployment profiles, adapter boundaries and conformance requirements.
-0. [MINAH-first ingress gate](docs/MINAH_FIRST_INGRESS_GATE.md) — reference orchestration boundary and fail-closed tests; not yet wired into HTTP ingress.
+0. [MINAH-first ingress gate](docs/MINAH_FIRST_INGRESS_GATE.md) — reference orchestration boundary and fail-closed tests; wired into the governed v0.1 HTTP instruction route through durable ingress.
 
-- [Local HTTP prototype adapter](protocol-reference/http_service.py) — runnable synthetic vertical slice, not the production API. It exposes health/readiness/capabilities and `POST /demo/instructions`; IVM and CEE are explicitly marked as not yet wired as separate runtime components.
+- [Local HTTP prototype adapter](protocol-reference/http_service.py) — runnable synthetic vertical slice, not the production API. It exposes health/readiness/capabilities, the governed `POST /protocol/instructions` route, operation inspection and explicit recovery. Legacy/demo and CEE case routes are synthetic and opt-in. The governed route runs MINAH-first ingress and the canonical reference pipeline; CEE and IVM use separate local SQLite stores, without cross-store atomicity or distributed finality.
 
 Run locally from the repository root with Python 3.12 or later:
 
@@ -77,7 +77,7 @@ PYTHONPATH=protocol-reference python -m http_service
 The service binds to `127.0.0.1:8080` by default. Do not expose it to the public internet. Submit only synthetic test data. A normal service run creates file-backed stores under `.kin-sys-prototype/`; configure `KIN_SYS_DATA_DIR`, or override the individual paths with `KIN_SYS_CEE_DB` and `KIN_SYS_IVM_DB`. Tests use isolated in-memory stores unless a test explicitly exercises restart recovery.
 
 - `POST /demo/instructions` runs the legacy integrated demonstrator.
-- `POST /protocol/instructions` runs a synthetic vertical slice through CEE admission/context, MINAH's advisory disposition, IVM transition checks, and CEE commitment/finalization. The response includes both the CEE lifecycle journal and an ordered `component_trace` showing each component's role and outcome.
+- `POST /protocol/instructions` accepts a governed v0.1 instruction envelope and runs it through durable MINAH-first ingress, identity verification, action-specific authority verification, CEE admission/context, IVM transition checks coordinated by CEE, and a final decision. The current implementation is a synthetic reference path; CEE and IVM persist to separate SQLite stores, so it does not provide cross-store atomicity, distributed finality, or exactly-once external effects.
 - `GET /protocol/operations/{operation_id}` reads the saved lifecycle, component trace, result and IVM event for an operation without mutating or resuming it. This is intended for review and recovery diagnostics.
 - `POST /cee/cases` runs the new CEE-controlled synthetic case path: MINAH advisory review, origin and destination decisions, IVM economic gate, synthetic assessment and simulated payment lifecycle. `GET /cee/operations/{operation_id}` provides a read-only view of its recorded events and trace. `POST /cee/reconciliation` records source-sequenced synthetic reconciliation evidence and does not resubmit a payment. `POST /cee/settlement-evidence` records caller-supplied synthetic settlement evidence only when amount/currency match the pinned obligation; it supports replay recovery if the payment store commits before the CEE journal update. These are prototype orchestration routes, not the 29 proposed production API routes.
 
