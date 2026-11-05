@@ -195,10 +195,24 @@ class ProtocolPipelineTests(unittest.TestCase):
                 return {'status': 'ADVISORY_ONLY', 'missing_fields': [], 'source_refs': ['OWNER-POLICY-1'], 'uncertainty': 'LOW', 'may_authorise': False, 'model_version': 'institution-agent-v1'}
             def verify_principal(self, payload):
                 self.calls.append('identity_api')
-                return {'verified': True, 'mode': 'INSTITUTION_MINAH_IDENTITY_API'}
+                return {
+                    'verified': True, 'mode': 'INSTITUTION_MINAH_IDENTITY_API',
+                    'evidence_ref': 'identity-evidence:opaque-001',
+                    'subject_ref': 'subject:pseudonymous-001',
+                    'verified_at': '2026-11-05T08:00:00Z',
+                    'raw_document_number': 'TEST-ONLY-SENSITIVE-FIELD',
+                }
             def verify_action(self, payload):
                 self.calls.append('authority_api')
-                return {'verified': True, 'mode': 'INSTITUTION_MINAH_AUTHORITY_API'}
+                return {
+                    'verified': True, 'mode': 'INSTITUTION_MINAH_AUTHORITY_API',
+                    'mandate_ref': 'mandate:opaque-001',
+                    'policy_version': 'FINANCE-POLICY-7',
+                    'mandate_version': '3',
+                    'scope_ref': 'scope:payments:approve',
+                    'valid_until': '2026-11-05T09:00:00Z',
+                    'raw_authority_document': 'TEST-ONLY-SECRET-FIELD',
+                }
 
         agent = InstitutionAgent()
         pipeline = KinSysProtocolPipeline(minah_adapter=agent)
@@ -213,6 +227,15 @@ class ProtocolPipelineTests(unittest.TestCase):
             authority_event = next(event for event in result['cee_events'] if event['phase'] == 'AUTHORITY_VERIFIED')
             self.assertEqual(identity_event['detail']['identity_mode'], 'INSTITUTION_MINAH_IDENTITY_API')
             self.assertEqual(authority_event['detail']['authority_mode'], 'INSTITUTION_MINAH_AUTHORITY_API')
+            identity_evidence = identity_event['detail']['identity_evidence']
+            self.assertEqual(identity_evidence['metadata']['evidence_ref'], 'identity-evidence:opaque-001')
+            self.assertTrue(identity_evidence['evidence_reference_supplied'])
+            self.assertNotIn('raw_document_number', identity_evidence['metadata'])
+            authority_evidence = authority_event['detail']['authority_evidence']
+            self.assertEqual(authority_evidence['metadata']['mandate_ref'], 'mandate:opaque-001')
+            self.assertEqual(authority_evidence['metadata']['mandate_version'], '3')
+            self.assertTrue(authority_evidence['evidence_reference_supplied'])
+            self.assertNotIn('raw_authority_document', authority_evidence['metadata'])
         finally:
             pipeline.close()
 
