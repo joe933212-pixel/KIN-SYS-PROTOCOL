@@ -98,3 +98,12 @@ A future implementation must demonstrate that:
 The repository currently implements local CEE/IVM consistency checks, SQLite structural checks, controlled backup-skew tests, and controlled restart/fault-injection tests. It does **not** implement an authenticated operator identity service, trusted signer registry, signed reconciliation envelope, quarantine control, external immutable audit store, or backup-pair provenance mechanism.
 
 Until those dependencies and controls exist, contradictions must continue to stop for manual investigation outside the protocol execution path. This document is a design input, not evidence that operator reconciliation is available or production-ready.
+
+
+## 9. Read-only evidence bundle prototype
+
+A method-only prototype is implemented in `protocol-reference/recovery_evidence.py`. It creates a versioned allow-listed diagnostic bundle from the live reference pipeline connections. The bundle includes relevant CEE lifecycle events and safe observations, request digest and selected policy/context references, the related IVM event/process/history, SQLite structural-check outcomes, a cross-store consistency result, and a canonical payload digest that excludes the variable capture timestamp.
+
+The builder does not invoke recovery, mutate either store, or expose raw request bodies, raw evidence objects, identity documents, credentials, or arbitrary adapter payloads. Tests cover committed and rejected outcomes, a deliberately contradictory record, missing operations, data minimisation, and unchanged row counts.
+
+This is **not** the evidence-preservation system specified above. It does not create stable read-only database snapshots, calculate database-file digests, establish backup provenance, authenticate an operator, sign a bundle, provide a trusted timestamp, or write to an independently protected audit store. It is not exposed as a remote HTTP route. The bundle digest is an integrity checksum over the generated JSON payload only; it is not a signature, proof of origin, or tamper-proof record.
