@@ -1170,5 +1170,19 @@ os._exit(76)
             self.pipeline.recover("OP-001")
 
 
+    def test_recovery_stops_when_final_cee_outcome_contradicts_ivm_event(self):
+        self.pipeline.execute(request())
+        self.pipeline.cee.db.execute(
+            "UPDATE cee_operations SET outcome = 'REJECTED' WHERE operation_id = ?",
+            ("OP-001",),
+        )
+        self.pipeline.cee.db.commit()
+        with self.assertRaisesRegex(
+            ExecutionConflict,
+            "CEE_FINAL_OUTCOME_DIFFERS_FROM_IVM_EVENT_REQUIRES_MANUAL_RECONCILIATION",
+        ):
+            self.pipeline.recover("OP-001")
+
+
 if __name__ == "__main__":
     unittest.main()
