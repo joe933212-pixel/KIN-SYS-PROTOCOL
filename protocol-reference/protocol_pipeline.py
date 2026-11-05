@@ -199,7 +199,7 @@ class CEEJournal:
                 next_phase == "FINALIZED"
                 and (
                     (current in {"MINAH_REVIEWED", "IDENTITY_VERIFIED", "AUTHORITY_VERIFIED", "AUTHORITY_EVALUATED"} and outcome in {"DEFERRED", "REJECTED", "UNKNOWN"})
-                    or (current == "COMMITTING" and outcome == "REJECTED")
+                    or (current == "COMMITTING" and outcome in {"REJECTED", "UNKNOWN"})
                 )
             )
             if not allowed and not terminal_branch:
@@ -654,6 +654,47 @@ class KinSysProtocolPipeline:
             # transition history agree with the pinned request. Corrupt or
             # contradictory store evidence must remain unresolved.
             self._assert_ivm_event_consistent(request)
+            existing_event = self.ivm.event(request["event_id"])
+            # A COMMITTING operation may be resumed after a crash. Revalidate
+            # action authority immediately before an uncommitted IVM transition;
+            # if the IVM event already exists, its durable outcome is reconciled
+            # instead of re-authorising or repeating the protected transition.
+            if existing_event is None:
+                minah_authority_check = getattr(self.minah, "verify_action", None)
+                try:
+                    authority = (
+                        minah_authority_check(request)
+                        if callable(minah_authority_check)
+                        else self.authority_adapter.verify_action(request)
+                    )
+                except Exception:
+                    authority = {"verified": False, "status": "UNKNOWN", "mode": "REVALIDATION_UNAVAILABLE"}
+                if not isinstance(authority, dict) or authority.get("verified") is not True:
+                    authority_unknown = isinstance(authority, dict) and authority.get("status") == "UNKNOWN"
+                    terminal_status = "UNKNOWN" if authority_unknown else "REJECTED"
+                    result = {
+                        "operation_id": operation_id,
+                        "status": terminal_status,
+                        "reason": (
+                            "AUTHORITY_REVALIDATION_UNAVAILABLE"
+                            if authority_unknown
+                            else "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION"
+                        ),
+                        "minah_disposition": disposition,
+                        "authority_result": authority if isinstance(authority, dict) else {"verified": False},
+                        "ivm_decision": None,
+                        "funds_moved": False,
+                    }
+                    self.cee.advance(
+                        operation_id, "FINALIZED", status=terminal_status,
+                        outcome=terminal_status, result=result,
+                        detail={
+                            "reason": result["reason"],
+                            "authority_revalidation": "FAILED_CLOSED",
+                            "ivm_not_invoked": True,
+                        },
+                    )
+                    return self._response_result(operation_id, result, duplicate=False)
             decision = self.ivm.execute({
                 "event_id": request["event_id"],
                 "process_id": request["process_id"],
