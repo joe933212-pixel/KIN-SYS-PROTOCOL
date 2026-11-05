@@ -52,6 +52,8 @@ CI includes both an application-level restart test and subprocess tests that ter
 
 These tests demonstrate recovery at four representative boundaries in the reference implementation. They do not cover every instruction between durable writes or prove resilience against every operating-system, filesystem, power-loss, storage-corruption or multi-worker failure.
 
+The conformance suite also exercises concurrency across independent SQLite connections: simultaneous duplicate ingress for one operation ID is serialised so that one request executes while an in-flight duplicate remains `UNKNOWN`; rebinding that operation ID to changed instruction content is rejected; and concurrent reuse of one IVM event ID across different process contexts permits only one event binding while the conflicting request fails closed. These tests do not establish thread safety for sharing one SQLite connection across threads, multi-worker HTTP safety, distributed locking, or production-scale contention behaviour. The built-in reference server is single-threaded; any multi-worker deployment requires separately designed per-worker connection management, contention policy, load testing and operational safeguards.
+
 Still required before production consideration:
 
 - crash testing at all remaining durable phase boundaries and under filesystem/power-loss fault injection;
