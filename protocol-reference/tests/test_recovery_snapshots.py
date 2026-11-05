@@ -1,5 +1,6 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """SQLite recovery snapshot-set capture and verification tests."""
+import json
 import sqlite3
 import sys
 import tempfile
