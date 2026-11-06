@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "KIN-SYS Institutional Deployment Domain Records",
-  "description": "Draft record shapes. Cross-record ownership, approval and activation invariants require the reference validator.",
+  "description": "Draft record shapes. Cross-record ownership, approval and activation invariants require the reference validator. Authority-grant, issuer-trust and trust-key record shapes are included; cryptographic verification and trust governance remain application-level requirements.",
   "oneOf": [
     {
       "$ref": "#/$defs/institution"
@@ -14,6 +14,15 @@
     },
     {
       "$ref": "#/$defs/deploymentBinding"
+    },
+    {
+      "$ref": "#/$defs/authorityGrant"
+    },
+    {
+      "$ref": "#/$defs/trustedIssuer"
+    },
+    {
+      "$ref": "#/$defs/institutionalTrustKey"
     }
   ],
   "$defs": {
@@ -278,6 +287,170 @@
             "string",
             "null"
           ]
+        }
+      }
+    },
+    "authorityGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grant_id",
+        "tenant_id",
+        "status",
+        "actor_ref",
+        "institution_id",
+        "authority_ref",
+        "roles",
+        "resource_types",
+        "resource_ids",
+        "valid_from",
+        "valid_until",
+        "version",
+        "issuer_institution_id",
+        "approval_ref"
+      ],
+      "properties": {
+        "grant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "status": {
+          "enum": [
+            "PENDING",
+            "ACTIVE",
+            "SUSPENDED",
+            "REVOKED"
+          ]
+        },
+        "actor_ref": {
+          "$ref": "#/$defs/s"
+        },
+        "institution_id": {
+          "$ref": "#/$defs/s"
+        },
+        "authority_ref": {
+          "$ref": "#/$defs/s"
+        },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/s"
+          }
+        },
+        "resource_types": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/s"
+          }
+        },
+        "resource_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/s"
+          }
+        },
+        "valid_from": {
+          "type": "integer"
+        },
+        "valid_until": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "version": {
+          "$ref": "#/$defs/s"
+        },
+        "issuer_institution_id": {
+          "$ref": "#/$defs/s"
+        },
+        "approval_ref": {
+          "$ref": "#/$defs/s"
+        }
+      }
+    },
+    "trustedIssuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "issuer_institution_id",
+        "status",
+        "trust_basis_ref",
+        "valid_from",
+        "valid_until"
+      ],
+      "properties": {
+        "tenant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "issuer_institution_id": {
+          "$ref": "#/$defs/s"
+        },
+        "status": {
+          "enum": [
+            "ACTIVE",
+            "REVOKED"
+          ]
+        },
+        "trust_basis_ref": {
+          "$ref": "#/$defs/s"
+        },
+        "valid_from": {
+          "type": "integer"
+        },
+        "valid_until": {
+          "type": "integer"
+        }
+      }
+    },
+    "institutionalTrustKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "issuer_institution_id",
+        "key_id",
+        "algorithm",
+        "public_key_ref",
+        "status",
+        "valid_from",
+        "valid_until"
+      ],
+      "properties": {
+        "tenant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "issuer_institution_id": {
+          "$ref": "#/$defs/s"
+        },
+        "key_id": {
+          "$ref": "#/$defs/s"
+        },
+        "algorithm": {
+          "enum": [
+            "Ed25519",
+            "HMAC-SHA256"
+          ]
+        },
+        "public_key_ref": {
+          "$ref": "#/$defs/s"
+        },
+        "status": {
+          "enum": [
+            "ACTIVE",
+            "SUSPENDED",
+            "REVOKED"
+          ]
+        },
+        "valid_from": {
+          "type": "integer"
+        },
+        "valid_until": {
+          "type": "integer"
         }
       }
     }
