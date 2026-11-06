@@ -9,7 +9,7 @@ from unittest.mock import patch
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from institutional_identity import IdentityResolutionError
+from institutional_identity import IdentityResolutionError, InstitutionalIdentityResolver
 from institutional_identity_provider_registry import (
     IdentityProviderRegistryConflict, IdentityProviderRegistryError,
     InstitutionalIdentityProviderRegistry,
@@ -343,14 +343,27 @@ class IdentityProviderRegistryTests(unittest.TestCase):
                 claims, private_key, algorithm="RS256",
                 headers={"kid": "provider-key-1"},
             )
-            assertion = adapter.verify_credential(
-                token, tenant_id="tenant-bank-ug",
+            identity_resolver = InstitutionalIdentityResolver(
+                adapter_loader=factory,
+                issuer_policy_loader=self.registry.resolve_active_issuer_policy,
+                subject_binding_loader=lambda tenant, iss, subject: {
+                    "actor_ref": "actor:alice", "status": "ACTIVE",
+                    "binding_version": "subject-binding-v1",
+                } if tenant == "tenant-bank-ug" and subject == "opaque-subject-01" else None,
+                consume_nonce=lambda tenant, nonce, *, expires_at: True,
+                clock=lambda: self.now,
+            )
+            principal = identity_resolver.authenticate(
+                token, tenant_id="tenant-bank-ug", provider_id="national-idp",
                 expected_audience=self.config["client_id"],
                 expected_nonce="nonce-live-flow-0001",
             )
-        self.assertEqual(assertion.issuer, issuer)
-        self.assertEqual(assertion.subject, "opaque-subject-01")
-        self.assertEqual(assertion.amr, ("pwd", "otp"))
+        self.assertTrue(principal["authenticated"])
+        self.assertEqual(principal["actor_ref"], "actor:alice")
+        self.assertEqual(principal["identity_issuer"], issuer)
+        self.assertEqual(principal["identity_subject"], "opaque-subject-01")
+        self.assertEqual(principal["identity_binding_version"], "subject-binding-v1")
+        self.assertTrue(principal["authority_grant_required"])
         self.assertEqual(len(transports[0].requests), 2)
         self.assertEqual(
             transports[0].allowed_hosts,
