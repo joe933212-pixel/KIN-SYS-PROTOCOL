@@ -189,6 +189,42 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
                 assertion, tenant_id="tenant-a",
                 resource_type="institution", resource_id="BANK-UG-01")
 
+    def test_expired_issuer_trust_relationship_fails_closed(self):
+        self.create()
+        self.registry.register_trusted_issuer(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            trust_basis_ref="trust-agreement:expired", valid_from=10, valid_until=149,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:trust-approval")
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            key_id="expired-root-key", algorithm="Ed25519",
+            public_key_ref="vault://public/expired-root-key",
+            valid_from=100, valid_until=2000,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:key-approval")
+        private_key = Ed25519PrivateKey.generate()
+        public_bytes = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw)
+        resolver = InstitutionalAuthorityResolver(
+            grant_loader=self.registry.load_grant,
+            consume_nonce=InMemoryNonceGuard().consume,
+            trust_key_loader=self.registry.load_trust_key,
+            public_key_loader=lambda ref: public_bytes,
+            clock=lambda: 150)
+        claims = {
+            "key_id": "expired-root-key", "tenant_id": "tenant-a",
+            "actor_ref": "actor:registrar", "grant_id": "GRANT-01",
+            "grant_version": "1", "issued_at": 140, "expires_at": 160,
+            "nonce": "expired-root-nonce-001",
+            "issuer_institution_id": "NATIONAL-REGISTRY",
+        }
+        assertion = {"claims": claims,
+                     "signature": sign_federated_actor_claims(claims, private_key)}
+        with self.assertRaisesRegex(ValueError, "ISSUER_TRUST_OUTSIDE_VALIDITY"):
+            resolver.resolve(
+                assertion, tenant_id="tenant-a",
+                resource_type="institution", resource_id="BANK-UG-01")
+
     def test_revoking_issuer_trust_disables_all_its_registered_keys(self):
         self.create()
         self.registry.register_trusted_issuer(
