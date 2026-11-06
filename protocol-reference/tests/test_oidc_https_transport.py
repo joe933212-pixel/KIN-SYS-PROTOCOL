@@ -1,6 +1,7 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 import json
 import socket
+import ssl
 import unittest
 
 from oidc_https_transport import OIDCHTTPSJSONTransport, OIDCTransportError
@@ -153,6 +154,71 @@ class OIDCHTTPSJSONTransportTests(unittest.TestCase):
         self.fetch()
         self.assertLessEqual(self.connections[0].timeout, 5)
         self.assertEqual(self.connections[0].sock.timeout, 5)
+
+
+    def test_rejects_unverified_tls_context(self):
+        context = ssl._create_unverified_context()
+        with self.assertRaises(OIDCTransportError) as caught:
+            OIDCHTTPSJSONTransport(
+                allowed_hosts=("id.example",), ssl_context=context,
+                resolver=resolver_for(["93.184.216.34"]),
+            )
+        self.assertEqual(str(caught.exception), "OIDC_TLS_VERIFICATION_REQUIRED")
+
+    def test_tls_certificate_failure_is_fail_closed(self):
+        def tls_failure(*args, **kwargs):
+            raise ssl.SSLCertVerificationError("certificate mismatch")
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",),
+            resolver=resolver_for(["93.184.216.34"]),
+            connection_factory=tls_failure,
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_PROVIDER_CONNECTION_FAILED")
+
+    def test_dns_rebinding_is_checked_again_and_connection_is_ip_pinned(self):
+        answers = [["93.184.216.34"], ["10.0.0.7"]]
+        calls = []
+        def changing_resolver(host, port, type):
+            addresses = answers[min(len(calls), 1)]
+            calls.append(addresses)
+            return resolver_for(addresses)(host, port, type)
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",),
+            resolver=changing_resolver,
+            connection_factory=lambda *a, **kw: self.connections.append(
+                FakeConnection(*a, **kw)
+            ) or self.connections[-1],
+        )
+        transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(self.connections[0].pinned_ip, "93.184.216.34")
+        with self.assertRaises(OIDCTransportError):
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(len(self.connections), 1)
+
+    def test_dns_resolution_failure_is_fail_closed(self):
+        def broken_resolver(*args, **kwargs):
+            raise TimeoutError("DNS timed out")
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",), resolver=broken_resolver,
+            connection_factory=lambda *a, **kw: self.fail("must not connect"),
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_DNS_RESOLUTION_FAILED")
+
+    def test_connection_timeout_is_fail_closed(self):
+        def timed_out(*args, **kwargs):
+            raise TimeoutError("connection timed out")
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",),
+            resolver=resolver_for(["93.184.216.34"]),
+            connection_factory=timed_out,
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_PROVIDER_CONNECTION_FAILED")
 
 
 if __name__ == "__main__":
