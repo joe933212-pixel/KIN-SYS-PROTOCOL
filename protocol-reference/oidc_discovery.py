@@ -7,6 +7,7 @@ response-size limits, DNS/IP egress policy and JSON content-type validation.
 """
 from __future__ import annotations
 
+import copy
 import threading
 import time
 from typing import Any, Callable
@@ -49,7 +50,8 @@ class OIDCDiscoveryJWKSLoader:
         allowed_algorithms: tuple[str, ...] = ("RS256", "ES256", "EdDSA"),
         cache_ttl_seconds: int = 300, timeout_seconds: int = 5,
         max_response_bytes: int = 1_048_576, max_jwks_keys: int = 100,
-        clock: Callable[[], float] = time.time,
+        force_refresh_min_interval_seconds: int = 15,
+        clock: Callable[[], float] = time.monotonic,
     ):
         issuer_host = _https_url_host(issuer, "OIDC_ISSUER_CONFIGURATION_INVALID")
         if not callable(fetch_json) or not callable(clock):
@@ -74,6 +76,9 @@ class OIDCDiscoveryJWKSLoader:
             raise IdentityResolutionError("OIDC_DISCOVERY_RESPONSE_LIMIT_INVALID")
         if type(max_jwks_keys) is not int or not 1 <= max_jwks_keys <= 500:
             raise IdentityResolutionError("OIDC_JWKS_KEY_LIMIT_INVALID")
+        if (type(force_refresh_min_interval_seconds) is not int
+                or not 1 <= force_refresh_min_interval_seconds <= 300):
+            raise IdentityResolutionError("OIDC_FORCE_REFRESH_POLICY_INVALID")
         self.issuer = issuer
         self.discovery_url = issuer.rstrip("/") + "/.well-known/openid-configuration"
         self.allowed_hosts = hosts
@@ -83,9 +88,11 @@ class OIDCDiscoveryJWKSLoader:
         self._timeout = timeout_seconds
         self._max_bytes = max_response_bytes
         self._max_keys = max_jwks_keys
+        self._force_refresh_interval = force_refresh_min_interval_seconds
         self._clock = clock
         self._lock = threading.RLock()
         self._expires_at = 0.0
+        self._last_forced_refresh_at = float("-inf")
         self._jwks: dict[str, Any] | None = None
 
     def _fetch(self, url: str) -> dict[str, Any]:
@@ -132,15 +139,20 @@ class OIDCDiscoveryJWKSLoader:
     def __call__(self, *, force_refresh: bool = False) -> dict[str, Any]:
         with self._lock:
             now = self._clock()
-            if not force_refresh and self._jwks is not None and now < self._expires_at:
-                return self._jwks
+            if self._jwks is not None and now < self._expires_at:
+                if (not force_refresh or now - self._last_forced_refresh_at
+                        < self._force_refresh_interval):
+                    return copy.deepcopy(self._jwks)
+            if force_refresh:
+                self._last_forced_refresh_at = now
             jwks = self._load()
-            self._jwks = jwks
+            self._jwks = copy.deepcopy(jwks)
             self._expires_at = now + self._ttl
-            return jwks
+            return copy.deepcopy(self._jwks)
 
     def invalidate(self) -> None:
         """Drop cached metadata/JWKS after an administrative trust-policy change."""
         with self._lock:
             self._jwks = None
             self._expires_at = 0.0
+            self._last_forced_refresh_at = float("-inf")
