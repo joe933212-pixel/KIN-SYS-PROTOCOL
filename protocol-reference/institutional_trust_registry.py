@@ -365,7 +365,9 @@ class InstitutionalTrustRegistry:
         _required_identifier(key_id, "INVALID_KEY_ID")
         row = self.db.execute(
             """SELECT k.tenant_id,k.issuer_institution_id,k.key_id,k.algorithm,
-                      k.public_key_ref,k.status,k.valid_from,k.valid_until
+                      k.public_key_ref,k.status,k.valid_from,k.valid_until,
+                      i.valid_from AS issuer_valid_from,
+                      i.valid_until AS issuer_valid_until
                FROM institutional_trust_keys k
                JOIN trusted_issuer_relationships i
                  ON i.tenant_id=k.tenant_id
