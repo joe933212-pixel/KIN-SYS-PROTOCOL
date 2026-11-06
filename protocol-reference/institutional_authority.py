@@ -12,7 +12,9 @@ import hashlib
 import hmac
 import json
 import re
+import sqlite3
 import threading
+from datetime import datetime, timezone
 import time
 from typing import Any, Callable
 
@@ -81,13 +83,65 @@ class InMemoryNonceGuard:
         self._seen: set[tuple[str, str]] = set()
         self._lock = threading.Lock()
 
-    def consume(self, tenant_id: str, nonce: str) -> bool:
+    def consume(self, tenant_id: str, nonce: str, expires_at: int | None = None) -> bool:
         with self._lock:
             key = (tenant_id, nonce)
             if key in self._seen:
                 return False
             self._seen.add(key)
             return True
+
+
+class SQLiteNonceGuard:
+    """Atomic nonce-consumption adapter for local/multi-process SQLite use.
+
+    A unique (tenant, nonce) key is enforced by SQLite, including across
+    separate processes sharing this database file. This is not a distributed
+    replay service for multiple hosts; production deployments should provide
+    the same consume(tenant_id, nonce, expires_at) contract over shared storage.
+    """
+    def __init__(self, database: str, *, clock: Callable[[], float] = time.time):
+        self._db = sqlite3.connect(database, timeout=10.0, isolation_level=None)
+        self._db.execute("PRAGMA busy_timeout=10000")
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS consumed_assertion_nonces (
+              tenant_id TEXT NOT NULL, nonce TEXT NOT NULL,
+              expires_at INTEGER NOT NULL, consumed_at INTEGER NOT NULL,
+              PRIMARY KEY (tenant_id, nonce)
+            )
+        """)
+        self._clock = clock
+        self._lock = threading.Lock()
+
+    def consume(self, tenant_id: str, nonce: str, expires_at: int | None = None) -> bool:
+        if (not isinstance(tenant_id, str) or not tenant_id.strip()
+                or not isinstance(nonce, str) or not nonce.strip()):
+            return False
+        expiry = expires_at if type(expires_at) is int else int(self._clock()) + MAX_ASSERTION_TTL_SECONDS
+        now = int(self._clock())
+        if expiry <= now:
+            return False
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                self._db.execute(
+                    "DELETE FROM consumed_assertion_nonces WHERE expires_at<=?", (now,))
+                try:
+                    self._db.execute(
+                        "INSERT INTO consumed_assertion_nonces VALUES(?,?,?,?)",
+                        (tenant_id, nonce, expiry, now))
+                except sqlite3.IntegrityError:
+                    self._db.execute("ROLLBACK")
+                    return False
+                self._db.execute("COMMIT")
+                return True
+            except Exception:
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
+                raise
+
+    def close(self) -> None:
+        self._db.close()
 
 
 class InstitutionalAuthorityResolver:
@@ -233,7 +287,14 @@ class InstitutionalAuthorityResolver:
             raise AuthorityResolutionError("AUTHORITY_RESOURCE_TYPE_OUT_OF_SCOPE")
         if "*" not in grant["resource_ids"] and resource_id not in grant["resource_ids"]:
             raise AuthorityResolutionError("AUTHORITY_RESOURCE_ID_OUT_OF_SCOPE")
-        if not self._consume_nonce(tenant_id, claims["nonce"]):
+        try:
+            nonce_consumed = self._consume_nonce(
+                tenant_id, claims["nonce"], expires_at=expires)
+        except TypeError:
+            # Backward-compatible two-argument adapters remain usable, but
+            # cannot perform expiry-aware retention without their own policy.
+            nonce_consumed = self._consume_nonce(tenant_id, claims["nonce"])
+        if nonce_consumed is not True:
             raise AuthorityResolutionError("ASSERTION_REPLAY_DETECTED")
         return {
             "actor_ref": grant["actor_ref"], "institution_id": grant["institution_id"],
