@@ -265,5 +265,18 @@ class OIDCHTTPSJSONTransportTests(unittest.TestCase):
         self.assertEqual(len(connections), 2)
 
 
+    def test_read_timeout_is_fail_closed(self):
+        class TimedOutResponse(FakeResponse):
+            def read(self, amount):
+                raise TimeoutError("response read timed out")
+        self.connections.clear()
+        self.transport._connection_factory = lambda *a, **kw: FakeConnection(
+            *a, **kw, response=TimedOutResponse()
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            self.transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_PROVIDER_CONNECTION_FAILED")
+
+
 if __name__ == "__main__":
     unittest.main()
