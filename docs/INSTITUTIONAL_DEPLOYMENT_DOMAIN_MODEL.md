@@ -82,7 +82,7 @@ The registry deliberately accepts a `tenant_id` from its caller; it does not aut
 
 The first lifecycle policy slice is implemented in `protocol-reference/institutional_lifecycle_service.py`. It defines allowed state transitions and distinct authority roles for verification, review, approval, activation, suspension and revocation. It requires authenticated/verified actor assertions, an authority reference and transition evidence; selected approval transitions also require an approval reference. Institution-owned records cannot be self-approved by an actor belonging to that same institution. The service returns a proposed next snapshot and audit-event payload without mutating the input record. The caller must perform authentication and authority resolution, enforce the expected-version/optimistic concurrency check, and persist the snapshot and event atomically. Role assertions and evidence references are not themselves cryptographically verified by this reference module.
 
-The reference tests cover tenant-scoped visibility, immutable version conflicts, event idempotency and conflict detection, cross-tenant event attachment rejection, missing tenant context, unsupported resource types and non-canonical payloads.
+The reference tests cover tenant-scoped visibility, immutable version conflicts, event idempotency and conflict detection, cross-tenant event attachment rejection, missing tenant context, unsupported resource types, non-canonical payloads, atomic lifecycle snapshot/event persistence, stale-version rejection and idempotent transition retries.
 
 ## Implementation sequence
 
