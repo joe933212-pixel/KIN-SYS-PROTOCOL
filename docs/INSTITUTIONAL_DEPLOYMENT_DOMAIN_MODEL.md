@@ -84,11 +84,30 @@ The lifecycle policy is implemented in `protocol-reference/institutional_lifecyc
 
 The reference tests cover tenant-scoped visibility, immutable version conflicts, event idempotency and conflict detection, cross-tenant event attachment rejection, missing tenant context, unsupported resource types, non-canonical payloads, atomic lifecycle snapshot/event persistence, stale-version rejection and idempotent transition retries. Coordinator tests verify policy-to-registry integration, signed assertion verification, tamper rejection, expiry, replay rejection, exact grant-version pinning, grant status and resource-scope checks, failed-authority non-persistence, cross-tenant read rejection, stale-version handling and the binding activation-context gate.
 
+
+## Federated institutional signatures and trust roots
+
+The authority resolver now supports two deliberately distinct assertion profiles:
+
+- **HMAC-SHA256** remains available for local/internal reference use where both sides are already inside one explicitly trusted administrative boundary. It is symmetric: every verifier holding the key can also create signatures. It is not the inter-institution federation mechanism.
+- **Ed25519** is available for federated assertions. The issuer signs the canonical claim set with its private key; the receiving institution verifies using a public key obtained through a trusted key-reference adapter. The implementation uses the vetted `cryptography` package rather than custom cryptographic code. Federated claims bind the issuer institution ID, key ID, tenant, actor, exact grant ID/version, issue/expiry times and nonce. The resolver also requires the signed issuer to match the issuer recorded on the current authority grant.
+
+The trust registry now records an explicit receiver-tenant-to-issuer trust relationship with status, trust-basis reference and validity window. Trust-key records are associated with an issuer institution, key ID, algorithm, public-key reference, validity and status. The resolver's `load_trust_key` adapter returns a key only while the issuer trust relationship remains active. Key validity and key revocation are independently checked. Multiple key IDs may overlap during rotation; retiring the old key is an explicit revocation action. Revoking the issuer relationship disables every key registered beneath that issuer for that receiving tenant.
+
+The public-key reference is resolved by an injected `public_key_loader`; the SQLite registry does not store private keys and does not itself retrieve secrets or public key bytes from a vault. Trust establishment is tenant-specific and must be governed by an authenticated, auditable institutional process. A record in this local reference database is not, by itself, proof that the issuer is legally recognised or that a trust agreement is valid.
+
+The Ed25519 test dependency is declared in `protocol-reference/requirements-trust.txt` and installed by the conformance workflow. The portable USB sandbox's current MINAH → CEE → Final Decision demonstrator continues to use its standard-library-only synthetic path; the federation resolver is not yet exposed through the sandbox UI/API. The portable packaging work must preserve that offline, self-contained test path unless and until a separately packaged cryptographic dependency and its supply-chain verification are deliberately introduced.
+
+### Federation limitations
+
+This increment verifies a signed assertion against an explicitly trusted issuer key and a current authority grant. It does not yet implement a complete signed authority-grant issuance/acceptance protocol, certificate or institutional identity discovery, legal trust-agreement adjudication, key custody/HSM integration, automated rotation distribution, identity-provider authentication, or a distributed atomic replay store. The SQLite trust catalogue and in-memory nonce guard remain local reference components. Cross-tenant and cross-border trust must be established independently by each receiving institution; there is no universal KIN-SYS root that overrides institutional sovereignty.
+
+
 ## Implementation sequence
 
 1. Implement and test domain validators and activation eligibility.
 2. Add the SQLite reference registry with immutable versions and tenant-scoped access.
-3. Implement the signed authority assertion verifier and connect it to lifecycle transitions (reference HMAC verifier implemented; trusted key/grant/replay-store adapters remain outstanding).
+3. Implement local signed authority assertions and Ed25519 federated assertion verification against receiver-controlled issuer trust roots (reference verifier and SQLite trust metadata implemented; production key custody, issuer governance, identity and distributed replay adapters remain outstanding).
 4. Add authenticated institution registration and authority verification.
 5. Add jurisdiction source ingestion, provenance and approval workflow.
 6. Add MINAH adapter registration, secret references, connectivity and conformance checks.
