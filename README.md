@@ -112,7 +112,7 @@ The local case coordinator is an additional integration milestone, but not produ
 
 ## Portable local test sandbox
 
-A removable-drive test dashboard is available in [`sandbox/`](sandbox/README.md). It wraps the existing governed MINAH-first reference path, runs on loopback only, persists synthetic records locally, and provides instruction submission, authority-rejection and operation-inspection scenarios. It requires Python 3.11+ and no third-party packages. It is a controlled test harness, not a production or security-certified sandbox.
+A removable-drive test dashboard is available in [`sandbox/`](sandbox/README.md). It wraps the existing governed MINAH-first reference path, runs on loopback only, persists synthetic records locally, and provides instruction submission, authority-rejection and operation-inspection scenarios. The Windows x64 portable bundle builder in [`sandbox/PORTABLE_BUILD.md`](sandbox/PORTABLE_BUILD.md) packages the application with the official CPython 3.14.10 embeddable runtime, so test computers do not need Python installed. The bundle is built by the [portable Windows workflow](.github/workflows/build-portable-windows.yml). It is a controlled application-level test harness, not a hardened VM/container or production security boundary.
 
 ## Engineering principle
 
