@@ -6,6 +6,9 @@ import unittest
 from institutional_trust_registry import (
     InstitutionalTrustRegistry, TrustRegistryConflict, TrustRegistryError,
 )
+from institutional_authority import (
+    InMemoryNonceGuard, InstitutionalAuthorityResolver, sign_actor_claims,
+)
 
 
 class InstitutionalTrustRegistryTests(unittest.TestCase):
@@ -68,6 +71,37 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
         self.assertNotEqual(current["version"], "1")
         self.assertEqual(self.registry.list_grant_events(
             tenant_id="tenant-a", grant_id="GRANT-01")[-1]["event_type"], "GRANT_REVOKED")
+
+    def test_persistent_grant_loader_integrates_with_signed_authority_resolver(self):
+        self.create()
+        key = b"reference-test-signing-key-32-bytes-minimum"
+        resolver = InstitutionalAuthorityResolver(
+            verification_keys={"issuer-key-1": key},
+            grant_loader=self.registry.load_grant,
+            consume_nonce=InMemoryNonceGuard().consume,
+            clock=lambda: 150,
+        )
+        claims = {
+            "key_id": "issuer-key-1", "tenant_id": "tenant-a",
+            "actor_ref": "actor:registrar", "grant_id": "GRANT-01",
+            "grant_version": "1", "issued_at": 140, "expires_at": 160,
+            "nonce": "nonce-persistent-000001",
+        }
+        assertion = {"claims": claims, "signature": sign_actor_claims(claims, key)}
+        resolved = resolver.resolve(
+            assertion, tenant_id="tenant-a",
+            resource_type="institution", resource_id="BANK-UG-01")
+        self.assertEqual(resolved["grant_ref"], "GRANT-01@1")
+        self.registry.revoke_grant(
+            tenant_id="tenant-a", grant_id="GRANT-01", expected_version="1",
+            new_version="2", event_id="grant-revoked-1",
+            actor_ref="actor:authority-admin", evidence_ref="approval:revoke-1")
+        claims["nonce"] = "nonce-persistent-000002"
+        assertion = {"claims": claims, "signature": sign_actor_claims(claims, key)}
+        with self.assertRaisesRegex(ValueError, "AUTHORITY_GRANT_SCOPE_MISMATCH"):
+            resolver.resolve(
+                assertion, tenant_id="tenant-a",
+                resource_type="institution", resource_id="BANK-UG-01")
 
     def test_tenant_context_and_grant_scope_are_enforced(self):
         with self.assertRaisesRegex(TrustRegistryError, "TENANT_CONTEXT_REQUIRED"):
