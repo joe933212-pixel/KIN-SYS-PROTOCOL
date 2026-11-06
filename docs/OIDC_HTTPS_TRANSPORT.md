@@ -34,13 +34,13 @@ The adapter and loader must be configured from institution-controlled settings. 
 - DNS answers are resolved for each request and every answer must be globally routable. Mixed public/private answers fail closed.
 - The selected validated IP address is passed directly to the socket connection. TLS SNI and certificate hostname validation continue to use the configured DNS hostname. This avoids a second DNS lookup between validation and connection (the common DNS-rebinding gap).
 - Redirects are never followed. Every response must be HTTP 200 with JSON or a `+json` media type.
-- Connect and read timeouts are separately bounded. The read is streamed with a `max_bytes + 1` cap; an oversized body is rejected even if `Content-Length` is absent or false.
+- Connect and read timeouts are separately bounded, with a shared absolute request deadline (the lesser of the caller's timeout and the configured total timeout). All validated-address attempts consume the same budget. A deadline timer closes the active connection to interrupt stalled request, header or body I/O; elapsed time is checked again after each blocking stage. The read is streamed with a `max_bytes + 1` cap; an oversized body is rejected even if `Content-Length` is absent or false.
 - Duplicate JSON object keys and non-finite JSON constants are rejected. The decoded top-level value must be an object.
 - Connections are closed on success and failure. Raw token material is not handled by this transport.
 
 ## Security boundary and deployment requirements
 
-The resolver uses the host operating system's DNS resolver by default. Python's standard `getaddrinfo` does not provide a portable per-query deadline; production deployments should use a bounded resolver and enforce outbound network egress policy at the host/container/network layer as defense in depth. The transport pins the actual socket destination to the validated address, but cannot compensate for a compromised host, trust store, resolver, kernel or network path.
+The resolver uses the host operating system's DNS resolver by default. Python's standard `getaddrinfo` does not provide a portable way to interrupt an in-progress lookup. DNS elapsed time is charged against the overall request budget and an over-budget result is rejected, but a resolver that never returns can still block the calling thread; production deployments must use a bounded resolver and enforce outbound network egress policy at the host/container/network layer as defense in depth. The transport pins the actual socket destination to the validated address, but cannot compensate for a compromised host, trust store, resolver, kernel or network path.
 
 `ipaddress.is_global` is used as a conservative destination check. Environments with unusual public address allocations should review this policy rather than weakening it ad hoc. The institution must allowlist both the issuer metadata host and a separate JWKS host when applicable.
 
@@ -48,6 +48,6 @@ The loader's bounded cache and rate-limited unknown-key refresh remain in force.
 
 ## Verification
 
-`tests/test_oidc_https_transport.py` exercises public-IP pinning, hostname allowlisting, private/loopback/link-local/reserved address rejection, mixed DNS answers, DNS rebinding between requests, redirects, response-size limits, content types, malformed and duplicate-key JSON, TLS verification configuration, TLS failures, DNS failures, connection timeouts, and end-to-end wiring into discovery/JWKS loading.
+`tests/test_oidc_https_transport.py` exercises public-IP pinning, hostname allowlisting, private/loopback/link-local/reserved address rejection, mixed DNS answers, DNS rebinding between requests, redirects, response-size limits, content types, malformed and duplicate-key JSON, TLS verification configuration, TLS failures, DNS failures, connection timeouts, absolute-deadline expiry during DNS, slow response headers/body, shared deadlines across multiple address attempts, and end-to-end wiring into discovery/JWKS loading.
 
 These deterministic tests do not constitute a live connection to an institutional identity provider. Before production use, run integration tests against a controlled test IdP and verify its real certificate chain, discovery metadata, JWKS rotation, outage behavior and emergency key-revocation procedure.
