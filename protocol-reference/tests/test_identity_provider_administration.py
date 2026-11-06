@@ -8,7 +8,10 @@ from institutional_identity_provider_administration import (
     IdentityProviderAdministrationError,
     InstitutionalIdentityProviderAdministration,
 )
-from institutional_identity_provider_registry import InstitutionalIdentityProviderRegistry
+from institutional_identity_provider_registry import (
+    IdentityProviderRegistryError,
+    InstitutionalIdentityProviderRegistry,
+)
 
 
 class StubAuthorityResolver:
@@ -125,8 +128,10 @@ class IdentityProviderAdministrationTests(unittest.TestCase):
             actor_assertion={"signed": "assertion"},
             event_id="revoke-event-1", evidence_ref="revocation-evidence-1")
         self.authority.principal["roles"] = ["identity_provider_approver"]
+        # The actor has activation authority, but revocation is terminal. The
+        # registry must reject the lifecycle transition independently of role checks.
         with self.assertRaisesRegex(
-            IdentityProviderAdministrationError, "PROVIDER_ADMIN_ROLE_INSUFFICIENT"):
+            IdentityProviderRegistryError, "PROVIDER_TRANSITION_NOT_ALLOWED"):
             self.admin.transition_provider(
                 tenant_id="tenant-bank-ug", provider_id="national-idp",
                 expected_version="2", new_version="3", new_status="ACTIVE",
