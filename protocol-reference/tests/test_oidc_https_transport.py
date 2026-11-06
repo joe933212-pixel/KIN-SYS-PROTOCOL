@@ -5,6 +5,7 @@ import ssl
 import unittest
 
 from oidc_https_transport import OIDCHTTPSJSONTransport, OIDCTransportError
+from oidc_discovery import OIDCDiscoveryJWKSLoader
 
 
 def resolver_for(addresses):
@@ -219,6 +220,49 @@ class OIDCHTTPSJSONTransportTests(unittest.TestCase):
         with self.assertRaises(OIDCTransportError) as caught:
             transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
         self.assertEqual(str(caught.exception), "OIDC_PROVIDER_CONNECTION_FAILED")
+
+
+    def test_transport_wires_into_discovery_and_jwks_loader(self):
+        issuer = "https://id.example/tenant-a"
+        discovery_url = issuer + "/.well-known/openid-configuration"
+        jwks_url = "https://keys.example/tenant-a/jwks"
+        documents = {
+            discovery_url: {
+                "issuer": issuer,
+                "jwks_uri": jwks_url,
+                "id_token_signing_alg_values_supported": ["RS256"],
+            },
+            jwks_url: {"keys": [
+                {"kty": "RSA", "kid": "rotating-key-1", "use": "sig",
+                 "alg": "RS256", "n": "AQAB", "e": "AQAB"}
+            ]},
+        }
+        connections = []
+        def factory(host, port, *, pinned_ip, timeout, context):
+            class URLResponse(FakeResponse):
+                def __init__(self):
+                    super().__init__(body=json.dumps(documents[
+                        "https://" + host + ("/tenant-a/.well-known/openid-configuration"
+                         if host == "id.example" else "/tenant-a/jwks")
+                    ]).encode("utf-8"))
+            connection = FakeConnection(
+                host, port, pinned_ip=pinned_ip, timeout=timeout,
+                context=context, response=URLResponse(),
+            )
+            connections.append(connection)
+            return connection
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example", "keys.example"),
+            resolver=resolver_for(["93.184.216.34"]),
+            connection_factory=factory,
+        )
+        loader = OIDCDiscoveryJWKSLoader(
+            issuer=issuer, allowed_hosts=("id.example", "keys.example"),
+            fetch_json=transport, allowed_algorithms=("RS256",),
+        )
+        jwks = loader()
+        self.assertEqual(jwks["keys"][0]["kid"], "rotating-key-1")
+        self.assertEqual(len(connections), 2)
 
 
 if __name__ == "__main__":
