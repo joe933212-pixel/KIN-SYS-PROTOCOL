@@ -77,6 +77,11 @@ class OIDCIdentityProviderAdapter:
             jwk = matches[0]
             if jwk.get("use", "sig") != "sig" or jwk.get("alg", alg) != alg:
                 raise IdentityResolutionError("OIDC_SIGNING_KEY_POLICY_MISMATCH")
+            key_ops = jwk.get("key_ops")
+            if key_ops is not None and (not isinstance(key_ops, list) or "verify" not in key_ops):
+                raise IdentityResolutionError("OIDC_SIGNING_KEY_POLICY_MISMATCH")
+            if any(name in jwk for name in ("d", "p", "q", "dp", "dq", "qi", "oth", "k")):
+                raise IdentityResolutionError("OIDC_PRIVATE_JWK_MATERIAL_REJECTED")
             try:
                 return jwt.PyJWK.from_dict(jwk, algorithm=alg).key
             except Exception as exc:
@@ -98,6 +103,12 @@ class OIDCIdentityProviderAdapter:
         except Exception as exc:
             raise IdentityResolutionError("OIDC_ID_TOKEN_INVALID") from exc
 
+        # Never follow token-controlled key URLs or accept unsupported critical
+        # JOSE extensions; the only key source is the receiver-pinned JWKS loader.
+        if (header.get("jku") is not None or header.get("x5u") is not None
+                or header.get("crit") not in (None, []) or header.get("b64") is False
+                or header.get("typ") not in (None, "JWT")):
+            raise IdentityResolutionError("OIDC_SIGNING_HEADER_REJECTED")
         alg, kid = header.get("alg"), header.get("kid")
         if alg not in self._algorithms or not isinstance(kid, str) or not kid or len(kid) > 256:
             raise IdentityResolutionError("OIDC_SIGNING_HEADER_REJECTED")
