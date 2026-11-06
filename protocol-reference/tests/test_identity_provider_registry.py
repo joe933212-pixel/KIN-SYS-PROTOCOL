@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 
+from institutional_identity import IdentityResolutionError
 from institutional_identity_provider_registry import (
     IdentityProviderRegistryConflict, IdentityProviderRegistryError,
     InstitutionalIdentityProviderRegistry,
@@ -147,10 +148,10 @@ class IdentityProviderRegistryTests(unittest.TestCase):
             registry=self.registry, clock=lambda: self.now
         )
         adapter = factory("tenant-bank-ug", "national-idp")
-        self.assertIsInstance(adapter, OIDCIdentityProviderAdapter)
-        self.assertEqual(adapter.issuer, self.config["issuer"])
-        self.assertEqual(adapter.client_id, self.config["client_id"])
-        self.assertEqual(adapter._algorithms, ("RS256",))
+        self.assertIsInstance(adapter._delegate, OIDCIdentityProviderAdapter)
+        self.assertEqual(adapter._delegate.issuer, self.config["issuer"])
+        self.assertEqual(adapter._delegate.client_id, self.config["client_id"])
+        self.assertEqual(adapter._delegate._algorithms, ("RS256",))
         self.assertIsNone(factory("tenant-other", "national-idp"))
         self.assertIsNone(factory("tenant-bank-ug", "unknown-idp"))
 
@@ -166,6 +167,12 @@ class IdentityProviderRegistryTests(unittest.TestCase):
             event_id="event-suspend-1", actor_ref="actor-admin",
             evidence_ref="approval-ref-3",
         )
+        with self.assertRaisesRegex(IdentityResolutionError,
+                                    "OIDC_PROVIDER_CONFIGURATION_NO_LONGER_ACTIVE"):
+            adapter.verify_credential(
+                "invalid-token", tenant_id="tenant-bank-ug",
+                expected_audience="kin-sys-api", expected_nonce="nonce",
+            )
         self.assertIsNone(factory("tenant-bank-ug", "national-idp"))
 
 
@@ -270,6 +277,12 @@ class IdentityProviderRegistryTests(unittest.TestCase):
             actor_ref="actor-admin", evidence_ref="approval-ref-3",
         )
         self.assertIsNone(factory("tenant-bank-ug", "national-idp"))
+        with self.assertRaisesRegex(IdentityResolutionError,
+                                    "OIDC_PROVIDER_CONFIGURATION_NO_LONGER_ACTIVE"):
+            first.verify_credential(
+                "invalid-token", tenant_id="tenant-bank-ug",
+                expected_audience="kin-sys-api", expected_nonce="nonce",
+            )
         self.registry.transition_provider(
             tenant_id="tenant-bank-ug", provider_id="national-idp",
             expected_version="3", new_version="4", new_status="ACTIVE",
@@ -278,7 +291,7 @@ class IdentityProviderRegistryTests(unittest.TestCase):
         )
         second = factory("tenant-bank-ug", "national-idp")
         self.assertIsNot(first, second)
-        self.assertEqual(second._algorithms, ("RS256", "ES256"))
+        self.assertEqual(second._delegate._algorithms, ("RS256", "ES256"))
 
 
 if __name__ == "__main__":
