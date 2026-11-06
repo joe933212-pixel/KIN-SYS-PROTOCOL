@@ -278,5 +278,27 @@ class OIDCHTTPSJSONTransportTests(unittest.TestCase):
         self.assertEqual(str(caught.exception), "OIDC_PROVIDER_CONNECTION_FAILED")
 
 
+    def test_rejects_excessive_dns_answer_sets(self):
+        addresses = [f"93.184.216.{index}" for index in range(1, 10)]
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",),
+            resolver=resolver_for(addresses),
+            connection_factory=lambda *a, **kw: self.fail("must not connect"),
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_DNS_ANSWER_SET_TOO_LARGE")
+
+    def test_rejects_tls_context_below_tls_1_2(self):
+        context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1
+        with self.assertRaises(OIDCTransportError) as caught:
+            OIDCHTTPSJSONTransport(
+                allowed_hosts=("id.example",), ssl_context=context,
+                resolver=resolver_for(["93.184.216.34"]),
+            )
+        self.assertEqual(str(caught.exception), "OIDC_TLS_VERIFICATION_REQUIRED")
+
+
 if __name__ == "__main__":
     unittest.main()
