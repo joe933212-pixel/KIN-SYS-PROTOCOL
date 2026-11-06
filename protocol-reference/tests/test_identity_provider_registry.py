@@ -336,7 +336,7 @@ class IdentityProviderRegistryTests(unittest.TestCase):
                 "iss": issuer, "sub": "opaque-subject-01",
                 "aud": self.config["client_id"],
                 "iat": self.now - 10, "exp": self.now + 180,
-                "auth_time": self.now - 5, "nonce": "nonce-live-flow-0001",
+                "auth_time": self.now - 15, "nonce": "nonce-live-flow-0001",
                 "acr": "urn:loa:2", "amr": ["pwd", "otp"],
             }
             token = jwt.encode(
