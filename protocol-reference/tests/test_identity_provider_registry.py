@@ -148,6 +148,9 @@ class IdentityProviderRegistryTests(unittest.TestCase):
         )
         adapter = factory("tenant-bank-ug", "national-idp")
         self.assertIsInstance(adapter, OIDCIdentityProviderAdapter)
+        self.assertEqual(adapter.issuer, self.config["issuer"])
+        self.assertEqual(adapter.client_id, self.config["client_id"])
+        self.assertEqual(adapter._algorithms, ("RS256",))
         self.assertIsNone(factory("tenant-other", "national-idp"))
         self.assertIsNone(factory("tenant-bank-ug", "unknown-idp"))
 
@@ -250,6 +253,32 @@ class IdentityProviderRegistryTests(unittest.TestCase):
                 evidence_ref="approval-ref",
             )
 
+
+
+    def test_factory_evicts_old_adapter_after_config_version_changes(self):
+        self.activate()
+        factory = OIDCInstitutionalAdapterFactory(
+            registry=self.registry, clock=lambda: self.now
+        )
+        first = factory("tenant-bank-ug", "national-idp")
+        revised = dict(self.config)
+        revised.update({"version": "3", "status": "PENDING",
+                        "allowed_algorithms": ["RS256", "ES256"]})
+        self.registry.revise_provider_config(
+            tenant_id="tenant-bank-ug", provider_id="national-idp",
+            expected_version="2", config=revised, event_id="event-revise-factory",
+            actor_ref="actor-admin", evidence_ref="approval-ref-3",
+        )
+        self.assertIsNone(factory("tenant-bank-ug", "national-idp"))
+        self.registry.transition_provider(
+            tenant_id="tenant-bank-ug", provider_id="national-idp",
+            expected_version="3", new_version="4", new_status="ACTIVE",
+            event_id="event-reactivate-factory", actor_ref="actor-admin",
+            evidence_ref="approval-ref-4",
+        )
+        second = factory("tenant-bank-ug", "national-idp")
+        self.assertIsNot(first, second)
+        self.assertEqual(second._algorithms, ("RS256", "ES256"))
 
 
 if __name__ == "__main__":
