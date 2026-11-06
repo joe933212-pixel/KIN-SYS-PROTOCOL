@@ -26,6 +26,12 @@
     },
     {
       "$ref": "#/$defs/acceptedGrantProvenance"
+    },
+    {
+      "$ref": "#/$defs/identityProviderPolicy"
+    },
+    {
+      "$ref": "#/$defs/identitySubjectBinding"
     }
   ],
   "$defs": {
@@ -550,6 +556,124 @@
         },
         "receiver_approval": {
           "type": "object"
+        }
+      }
+    },
+    "identityProviderPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "provider_id",
+        "issuer",
+        "status",
+        "audiences",
+        "allowed_acr",
+        "required_amr",
+        "valid_from",
+        "valid_until",
+        "configuration_ref"
+      ],
+      "properties": {
+        "tenant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "provider_id": {
+          "$ref": "#/$defs/s"
+        },
+        "issuer": {
+          "$ref": "#/$defs/s"
+        },
+        "status": {
+          "enum": [
+            "ACTIVE",
+            "SUSPENDED",
+            "REVOKED"
+          ]
+        },
+        "audiences": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/s"
+          }
+        },
+        "allowed_acr": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/s"
+          }
+        },
+        "required_amr": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "pwd",
+              "otp",
+              "hwk",
+              "swk",
+              "mfa",
+              "fido",
+              "x509",
+              "sms",
+              "face",
+              "iris"
+            ]
+          }
+        },
+        "valid_from": {
+          "type": "integer"
+        },
+        "valid_until": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "configuration_ref": {
+          "$ref": "#/$defs/s"
+        }
+      }
+    },
+    "identitySubjectBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "issuer",
+        "subject_ref",
+        "actor_ref",
+        "status",
+        "binding_version",
+        "evidence_ref"
+      ],
+      "properties": {
+        "tenant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "issuer": {
+          "$ref": "#/$defs/s"
+        },
+        "subject_ref": {
+          "$ref": "#/$defs/s"
+        },
+        "actor_ref": {
+          "$ref": "#/$defs/s"
+        },
+        "status": {
+          "enum": [
+            "ACTIVE",
+            "SUSPENDED",
+            "REVOKED"
+          ]
+        },
+        "binding_version": {
+          "$ref": "#/$defs/s"
+        },
+        "evidence_ref": {
+          "$ref": "#/$defs/s"
         }
       }
     }
