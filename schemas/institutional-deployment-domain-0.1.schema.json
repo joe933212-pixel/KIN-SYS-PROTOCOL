@@ -23,6 +23,9 @@
     },
     {
       "$ref": "#/$defs/institutionalTrustKey"
+    },
+    {
+      "$ref": "#/$defs/acceptedGrantProvenance"
     }
   ],
   "$defs": {
@@ -451,6 +454,102 @@
         },
         "valid_until": {
           "type": "integer"
+        }
+      }
+    },
+    "acceptedGrantProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "grant_id",
+        "grant_version",
+        "grant_digest",
+        "issuer_envelope",
+        "acceptance"
+      ],
+      "properties": {
+        "tenant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_version": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "issuer_envelope": {
+          "$ref": "#/$defs/issuerGrantEnvelope"
+        },
+        "acceptance": {
+          "$ref": "#/$defs/receiverGrantAcceptance"
+        }
+      }
+    },
+    "issuerGrantEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claims",
+        "signature"
+      ],
+      "properties": {
+        "claims": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "grant",
+            "key_id",
+            "issuer_institution_id"
+          ],
+          "properties": {
+            "grant": {
+              "$ref": "#/$defs/authorityGrant"
+            },
+            "key_id": {
+              "$ref": "#/$defs/s"
+            },
+            "issuer_institution_id": {
+              "$ref": "#/$defs/s"
+            }
+          }
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      }
+    },
+    "receiverGrantAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "receiver_institution_id",
+        "grant_id",
+        "grant_version",
+        "grant_digest",
+        "receiver_approval"
+      ],
+      "properties": {
+        "receiver_institution_id": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_version": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "receiver_approval": {
+          "type": "object"
         }
       }
     }
