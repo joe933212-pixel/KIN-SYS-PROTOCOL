@@ -181,6 +181,52 @@ class InstitutionalIdentityProviderRegistry:
             raise
         return {"created": True, "version": config["version"]}
 
+
+    def revise_provider_config(self, *, tenant_id: str, provider_id: str,
+                               expected_version: str, config: dict[str, Any],
+                               event_id: str, actor_ref: str,
+                               evidence_ref: str) -> dict[str, Any]:
+        """Install a new pending config version; it is not usable until re-approved."""
+        tenant_id = _id(tenant_id, "TENANT_CONTEXT_REQUIRED")
+        provider_id = _id(provider_id, "PROVIDER_ID_INVALID")
+        expected_version = _id(expected_version, "PROVIDER_VERSION_INVALID")
+        _validate(config)
+        if (config["tenant_id"] != tenant_id or config["provider_id"] != provider_id
+                or config["status"] != "PENDING"):
+            raise IdentityProviderRegistryError("PROVIDER_REVISION_SCOPE_INVALID")
+        event_id = _id(event_id, "PROVIDER_EVENT_ID_INVALID")
+        actor_ref = _id(actor_ref, "PROVIDER_EVENT_ACTOR_INVALID")
+        evidence_ref = _id(evidence_ref, "PROVIDER_EVIDENCE_REQUIRED")
+        body = _canonical(config)
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            head = self.db.execute(
+                "SELECT current_version FROM identity_provider_heads WHERE tenant_id=? AND provider_id=?",
+                (tenant_id, provider_id)).fetchone()
+            if head is None:
+                raise IdentityProviderRegistryError("PROVIDER_NOT_FOUND")
+            if head["current_version"] != expected_version:
+                raise IdentityProviderRegistryConflict("STALE_PROVIDER_VERSION")
+            self.db.execute(
+                "INSERT INTO identity_provider_versions VALUES(?,?,?,?,?,?)",
+                (tenant_id, provider_id, config["version"], "PENDING", body, now))
+            self.db.execute(
+                "UPDATE identity_provider_heads SET current_version=? WHERE tenant_id=? AND provider_id=? AND current_version=?",
+                (config["version"], tenant_id, provider_id, expected_version))
+            self.db.execute(
+                "INSERT INTO identity_provider_events VALUES(?,?,?,?,?,?,?,?,?)",
+                (tenant_id, event_id, provider_id, config["version"],
+                 "PROVIDER_CONFIGURATION_REVISED", actor_ref, evidence_ref,
+                 _canonical({"from_version": expected_version,
+                             "to_version": config["version"]}), now))
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+        return {"created": True, "version": config["version"], "status": "PENDING"}
+
     def transition_provider(self, *, tenant_id: str, provider_id: str,
                             expected_version: str, new_version: str,
                             new_status: str, event_id: str, actor_ref: str,
@@ -271,6 +317,37 @@ class InstitutionalIdentityProviderRegistry:
         if not config["valid_from"] <= instant < config["valid_until"]:
             return None
         return config
+
+
+    def resolve_active_issuer_policy(self, tenant_id: str, issuer: str,
+                                     *, now: int | None = None) -> dict[str, Any] | None:
+        """Return receiver policy only when exactly one active provider matches issuer."""
+        tenant_id = _id(tenant_id, "TENANT_CONTEXT_REQUIRED")
+        if not isinstance(issuer, str) or not issuer:
+            raise IdentityProviderRegistryError("PROVIDER_ISSUER_INVALID")
+        instant = int(__import__("time").time()) if now is None else now
+        rows = self.db.execute(
+            """SELECT v.config_json FROM identity_provider_heads h
+               JOIN identity_provider_versions v
+               ON v.tenant_id=h.tenant_id AND v.provider_id=h.provider_id
+               AND v.version=h.current_version
+               WHERE h.tenant_id=? AND v.status='ACTIVE'""",
+            (tenant_id,)).fetchall()
+        matches = [json.loads(row["config_json"]) for row in rows
+                   if json.loads(row["config_json"]).get("issuer") == issuer]
+        if len(matches) != 1:
+            return None
+        config = matches[0]
+        if not config["valid_from"] <= instant < config["valid_until"]:
+            return None
+        return {
+            "issuer": config["issuer"], "status": config["status"],
+            "audiences": list(config["audiences"]),
+            "allowed_acr": list(config["allowed_acr"]),
+            "required_amr": list(config["required_amr"]),
+            "valid_from": config["valid_from"],
+            "valid_until": config["valid_until"],
+        }
 
     def list_events(self, *, tenant_id: str, provider_id: str) -> list[dict[str, Any]]:
         tenant_id = _id(tenant_id, "TENANT_CONTEXT_REQUIRED")
