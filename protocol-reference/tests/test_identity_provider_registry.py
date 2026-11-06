@@ -160,7 +160,8 @@ class IdentityProviderRegistryTests(unittest.TestCase):
         factory = OIDCInstitutionalAdapterFactory(
             registry=self.registry, clock=lambda: self.now
         )
-        self.assertIsNotNone(factory("tenant-bank-ug", "national-idp"))
+        adapter = factory("tenant-bank-ug", "national-idp")
+        self.assertIsNotNone(adapter)
         self.registry.transition_provider(
             tenant_id="tenant-bank-ug", provider_id="national-idp",
             expected_version="2", new_version="3", new_status="SUSPENDED",
