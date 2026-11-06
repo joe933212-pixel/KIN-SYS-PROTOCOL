@@ -8,6 +8,7 @@ by the institution-controlled jwks_loader. Raw tokens and claims are never logge
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from typing import Any, Callable
 
@@ -119,8 +120,8 @@ class OIDCIdentityProviderAdapter:
                 audience=self.client_id, leeway=self._leeway,
                 options={"require": ["iss", "sub", "aud", "exp", "iat", "nonce",
                                      "auth_time", "acr", "amr"],
-                         "verify_signature": True, "verify_exp": True,
-                         "verify_iat": True, "verify_nbf": True,
+                         "verify_signature": True, "verify_exp": False,
+                         "verify_iat": False, "verify_nbf": False,
                          "verify_iss": True, "verify_aud": True},
             )
         except Exception as exc:
@@ -133,14 +134,24 @@ class OIDCIdentityProviderAdapter:
             raise IdentityResolutionError("OIDC_AUTHORIZED_PARTY_MISMATCH")
         if "azp" in claims and claims["azp"] != self.client_id:
             raise IdentityResolutionError("OIDC_AUTHORIZED_PARTY_MISMATCH")
-        now = int(self._clock())
+        now = self._clock()
         issued_at, expires_at, auth_time = (
             claims.get("iat"), claims.get("exp"), claims.get("auth_time")
         )
-        if any(type(value) is not int for value in (issued_at, expires_at, auth_time)):
+        numeric_dates = (issued_at, expires_at, auth_time)
+        if (isinstance(now, bool) or not isinstance(now, (int, float))
+                or not math.isfinite(now)
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not math.isfinite(value) for value in numeric_dates)):
             raise IdentityResolutionError("OIDC_TIME_CLAIMS_INVALID")
-        if (issued_at > now + self._leeway or expires_at <= issued_at
-                or expires_at - issued_at > self._max_ttl or auth_time > now + self._leeway):
+        not_before = claims.get("nbf")
+        if (not_before is not None and
+                (isinstance(not_before, bool) or not isinstance(not_before, (int, float))
+                 or not math.isfinite(not_before) or not_before > now + self._leeway)):
+            raise IdentityResolutionError("OIDC_TIME_CLAIMS_INVALID")
+        if (issued_at > now + self._leeway or expires_at <= now - self._leeway
+                or expires_at <= issued_at or expires_at - issued_at > self._max_ttl
+                or auth_time > now + self._leeway or auth_time > issued_at + self._leeway):
             raise IdentityResolutionError("OIDC_TIME_CLAIMS_INVALID")
         subject = claims.get("sub")
         acr = claims.get("acr")
