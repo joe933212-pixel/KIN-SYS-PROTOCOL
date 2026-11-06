@@ -64,6 +64,21 @@ class OIDCDiscoveryLoaderTests(unittest.TestCase):
         self.loader(force_refresh=True)
         self.assertEqual(len(self.calls), 4)
 
+    def test_unknown_key_refresh_is_rate_limited(self):
+        self.loader()
+        before = len(self.calls)
+        self.loader(force_refresh=True)
+        self.loader(force_refresh=True)
+        self.assertEqual(len(self.calls), before + 2)
+        self.now += 16
+        self.loader(force_refresh=True)
+        self.assertEqual(len(self.calls), before + 4)
+
+    def test_returned_jwks_cannot_mutate_internal_cache(self):
+        result = self.loader()
+        result["keys"][0]["kid"] = "attacker-mutated"
+        self.assertEqual(self.loader()["keys"][0]["kid"], "key-1")
+
     def test_invalidate_drops_cached_jwks(self):
         self.loader()
         self.loader.invalidate()
