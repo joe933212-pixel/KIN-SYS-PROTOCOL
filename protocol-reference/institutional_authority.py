@@ -160,6 +160,10 @@ class InstitutionalAuthorityResolver:
             raise AuthorityResolutionError("UNSUPPORTED_ASSERTION_ALGORITHM")
         if record.get("status") != "ACTIVE":
             raise AuthorityResolutionError("TRUST_KEY_NOT_ACTIVE")
+        if (type(record.get("issuer_valid_from")) is not int
+                or type(record.get("issuer_valid_until")) is not int
+                or not record["issuer_valid_from"] <= now < record["issuer_valid_until"]):
+            raise AuthorityResolutionError("ISSUER_TRUST_OUTSIDE_VALIDITY")
         if (type(record.get("valid_from")) is not int
                 or type(record.get("valid_until")) is not int
                 or not record["valid_from"] <= now < record["valid_until"]):
