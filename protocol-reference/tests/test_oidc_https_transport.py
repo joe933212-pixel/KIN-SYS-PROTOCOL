@@ -2,6 +2,7 @@
 import json
 import socket
 import ssl
+import time
 import unittest
 
 from oidc_https_transport import OIDCHTTPSJSONTransport, OIDCTransportError
@@ -298,6 +299,53 @@ class OIDCHTTPSJSONTransportTests(unittest.TestCase):
                 resolver=resolver_for(["93.184.216.34"]),
             )
         self.assertEqual(str(caught.exception), "OIDC_TLS_VERIFICATION_REQUIRED")
+
+
+    def test_absolute_deadline_covers_response_processing_and_closes_connection(self):
+        class SlowConnection(FakeConnection):
+            def getresponse(self):
+                time.sleep(0.15)
+                return self.response
+
+        connections = []
+        def factory(*args, **kwargs):
+            connection = SlowConnection(*args, **kwargs)
+            connections.append(connection)
+            return connection
+
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",),
+            resolver=resolver_for(["93.184.216.34"]),
+            connection_factory=factory,
+            total_timeout_seconds=0.1,
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_REQUEST_DEADLINE_EXCEEDED")
+        self.assertTrue(connections[0].closed)
+
+    def test_absolute_deadline_includes_dns_resolution_time(self):
+        def slow_resolver(host, port, type):
+            time.sleep(0.12)
+            return resolver_for(["93.184.216.34"])(host, port, type)
+
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",),
+            resolver=slow_resolver,
+            connection_factory=lambda *a, **kw: self.fail("deadline must expire before connect"),
+            total_timeout_seconds=0.1,
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_REQUEST_DEADLINE_EXCEEDED")
+
+    def test_rejects_invalid_total_request_timeout(self):
+        for value in (True, 0, 0.01, 121, "5"):
+            with self.subTest(value=value), self.assertRaises(OIDCTransportError):
+                OIDCHTTPSJSONTransport(
+                    allowed_hosts=("id.example",),
+                    total_timeout_seconds=value,
+                )
 
 
 if __name__ == "__main__":
