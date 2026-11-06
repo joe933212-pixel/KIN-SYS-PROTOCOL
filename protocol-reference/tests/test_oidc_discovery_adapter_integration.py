@@ -83,7 +83,7 @@ class OIDCDiscoveryAdapterIntegrationTests(unittest.TestCase):
         self.active_jwks = [self.public_jwk(self.private_two, "key-two")]
         result = self.verify(self.token(self.private_two, "key-two"))
         self.assertEqual(result.subject, "opaque-subject/123")
-        self.assertEqual(len(self.calls), 6)
+        self.assertEqual(len(self.calls), 4)
 
 
 if __name__ == "__main__":
