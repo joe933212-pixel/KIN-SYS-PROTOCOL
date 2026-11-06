@@ -6,12 +6,44 @@ import threading
 import time
 from typing import Callable
 
-from institutional_identity import IdentityProviderAdapter
+from institutional_identity import IdentityProviderAdapter, IdentityResolutionError
 from institutional_identity_provider_registry import InstitutionalIdentityProviderRegistry
 from oidc_discovery import OIDCDiscoveryJWKSLoader
 from oidc_https_transport import OIDCHTTPSJSONTransport
 from oidc_identity_adapter import OIDCIdentityProviderAdapter
 
+
+
+class _RegistryBoundOIDCAdapter:
+    """Re-check current provider version around every credential verification."""
+
+    def __init__(self, *, registry, tenant_id: str, provider_id: str,
+                 version: str, delegate: OIDCIdentityProviderAdapter,
+                 clock: Callable[[], float]):
+        self._registry = registry
+        self._tenant_id = tenant_id
+        self._provider_id = provider_id
+        self._version = version
+        self._delegate = delegate
+        self._clock = clock
+
+    def verify_credential(self, credential, *, tenant_id: str,
+                          expected_audience: str, expected_nonce: str):
+        def still_active() -> bool:
+            current = self._registry.resolve_active_provider(
+                self._tenant_id, self._provider_id, now=int(self._clock())
+            )
+            return bool(current and current["version"] == self._version
+                        and tenant_id == self._tenant_id)
+        if not still_active():
+            raise IdentityResolutionError("OIDC_PROVIDER_CONFIGURATION_NO_LONGER_ACTIVE")
+        assertion = self._delegate.verify_credential(
+            credential, tenant_id=tenant_id,
+            expected_audience=expected_audience, expected_nonce=expected_nonce,
+        )
+        if not still_active():
+            raise IdentityResolutionError("OIDC_PROVIDER_CONFIGURATION_NO_LONGER_ACTIVE")
+        return assertion
 
 class OIDCInstitutionalAdapterFactory:
     """Resolve provider configuration only from the receiver's tenant registry.
@@ -65,5 +97,10 @@ class OIDCInstitutionalAdapterFactory:
                 allowed_algorithms=tuple(config["allowed_algorithms"]),
                 clock=self._clock,
             )
-            self._adapters[key] = adapter
-            return adapter
+            bound = _RegistryBoundOIDCAdapter(
+                registry=self._registry, tenant_id=tenant_id,
+                provider_id=provider_id, version=config["version"],
+                delegate=adapter, clock=self._clock,
+            )
+            self._adapters[key] = bound
+            return bound
