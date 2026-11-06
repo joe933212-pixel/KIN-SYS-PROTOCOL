@@ -154,8 +154,12 @@ class OIDCHTTPSJSONTransportTests(unittest.TestCase):
 
     def test_bounds_timeouts(self):
         self.fetch()
+        self.assertGreater(self.connections[0].timeout, 0)
         self.assertLessEqual(self.connections[0].timeout, 5)
-        self.assertEqual(self.connections[0].sock.timeout, 5)
+        # The read timeout is capped by the remaining absolute request budget;
+        # a small elapsed-time reduction below five seconds is expected.
+        self.assertGreater(self.connections[0].sock.timeout, 0)
+        self.assertLessEqual(self.connections[0].sock.timeout, 5)
 
 
     def test_rejects_unverified_tls_context(self):
