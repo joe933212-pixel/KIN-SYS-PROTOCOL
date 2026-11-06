@@ -112,3 +112,16 @@ The reference tests cover tenant-scoped visibility, immutable version conflicts,
 ## Explicit non-claims
 
 This increment is not an onboarding UI, live identity verification, production-grade registry, legal-source authenticity service, model upload/runtime service, cryptographic approval implementation or production tenant isolation. The SQLite reference registry is implemented, but must not be represented as a production registry. Those require separate implementations and tests.
+
+
+## Institutional trust and delegated authority registry
+
+The next persistence increment is implemented in `protocol-reference/institutional_trust_registry.py`. It introduces a separate SQLite reference store for authority grants and institutional trust-key metadata rather than mixing these records into institution/deployment aggregates.
+
+Authority grants are tenant-scoped and immutable by (grant ID, version). A current-version head is advanced with an expected-version check; every creation, revision and revocation writes an audit event in the same transaction. The resolver-compatible `load_grant(tenant_id, grant_id)` returns only the current head. Consequently, when a grant is revised or revoked, an assertion pinned to an older grant version no longer resolves as current. The grant snapshot carries actor binding, institution, issuer institution, authority reference, role/resource scope, validity window, status, version and approval reference.
+
+The trust-key catalogue records tenant, issuer institution, key ID, algorithm, public-key reference, validity window and status. It supports overlapping key registration for rotation and audited revocation. The registry stores a public-key reference (or public material supplied through an appropriately designed adapter), never private signing keys. The current HMAC assertion resolver has not yet been replaced or wired to this trust-key catalogue: key metadata persistence is not equivalent to signature verification or issuer trust federation. The Ed25519 label is an algorithm identifier only; this increment does not implement Ed25519 cryptographic verification.
+
+This remains a local SQLite reference implementation. Tenant IDs are caller-supplied and must be derived from authenticated principals at the API boundary. Grant creation/revision and trust-key registration/revocation accept actor and evidence references but do not independently authenticate those actors, validate legal authority, or verify the underlying approval evidence. The registry does not yet implement issuer-signed grant envelopes, a federation trust policy, public-key verification, identity-provider integration, key lifecycle policy beyond recorded validity/status and revocation, or distributed concurrency/replay guarantees. Production deployment requires an independently governed trust-root process, vetted cryptographic libraries, secure key custody, authenticated issuer/actor adapters, authoritative evidence verification and a hardened shared persistence/replay service.
+
+The new tests cover resolver-compatible grant loading, tenant isolation, immutable grant versions, expected-version revisions, revocation invalidating stale version pins, trust-key rotation metadata, key revocation audit events, duplicate key IDs and unsupported algorithms. These are reference-store tests, not a certification of the trust model.
