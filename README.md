@@ -110,6 +110,10 @@ The local case coordinator is an additional integration milestone, but not produ
 18. [Implementation status](IMPLEMENTATION_STATUS.md)
 19. [Initial architecture decision](DECISIONS/0001-protocol-scope.md)
 
+## Portable local test sandbox
+
+A removable-drive test dashboard is available in [`sandbox/`](sandbox/README.md). It wraps the existing governed MINAH-first reference path, runs on loopback only, persists synthetic records locally, and provides instruction submission, authority-rejection and operation-inspection scenarios. It requires Python 3.11+ and no third-party packages. It is a controlled test harness, not a production or security-certified sandbox.
+
 ## Engineering principle
 
 Every important guarantee must name its assumptions, failure conditions, and verification method. A diagram, proposal, pseudocode function, mock, or cryptographic label is not evidence of a working guarantee. Evidence must distinguish documented intention, an implemented prototype, a reproduced test result, independent evaluation, and production deployment.
