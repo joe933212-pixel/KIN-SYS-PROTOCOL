@@ -8,7 +8,10 @@ from institutional_trust_registry import (
 )
 from institutional_authority import (
     InMemoryNonceGuard, InstitutionalAuthorityResolver, sign_actor_claims,
+    sign_federated_actor_claims,
 )
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 class InstitutionalTrustRegistryTests(unittest.TestCase):
@@ -136,6 +139,86 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
             tenant_id="tenant-a", key_id="issuer-key-1")), 2)
         self.assertIsNone(self.registry.get_trust_key(
             tenant_id="tenant-b", key_id="issuer-key-1"))
+
+    def test_ed25519_federation_requires_trusted_issuer_and_valid_key(self):
+        self.create()
+        self.registry.register_trusted_issuer(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            trust_basis_ref="trust-agreement:ug-01", valid_from=100, valid_until=2000,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:trust-approval")
+        private_key = Ed25519PrivateKey.generate()
+        public_bytes = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw)
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            key_id="ed25519-issuer-key-1", algorithm="Ed25519",
+            public_key_ref="vault://public/ed25519-issuer-key-1",
+            valid_from=100, valid_until=2000,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:key-approval")
+        resolver = InstitutionalAuthorityResolver(
+            grant_loader=self.registry.load_grant,
+            consume_nonce=InMemoryNonceGuard().consume,
+            trust_key_loader=self.registry.load_trust_key,
+            public_key_loader=lambda ref: public_bytes if ref == "vault://public/ed25519-issuer-key-1" else None,
+            clock=lambda: 150)
+        claims = {
+            "key_id": "ed25519-issuer-key-1", "tenant_id": "tenant-a",
+            "actor_ref": "actor:registrar", "grant_id": "GRANT-01",
+            "grant_version": "1", "issued_at": 140, "expires_at": 160,
+            "nonce": "federated-nonce-000001",
+            "issuer_institution_id": "NATIONAL-REGISTRY",
+        }
+        assertion = {"claims": claims,
+                     "signature": sign_federated_actor_claims(claims, private_key)}
+        result = resolver.resolve(
+            assertion, tenant_id="tenant-a",
+            resource_type="institution", resource_id="BANK-UG-01")
+        self.assertEqual(result["assertion_algorithm"], "Ed25519")
+        self.assertEqual(result["assertion_issuer_institution_id"], "NATIONAL-REGISTRY")
+
+        self.registry.revoke_trust_key(
+            tenant_id="tenant-a", key_id="ed25519-issuer-key-1",
+            actor_ref="actor:trust-admin", evidence_ref="evidence:key-revocation",
+            event_id="ed25519-key-revoked")
+        claims["nonce"] = "federated-nonce-000002"
+        assertion = {"claims": claims,
+                     "signature": sign_federated_actor_claims(claims, private_key)}
+        with self.assertRaisesRegex(ValueError, "TRUST_KEY_NOT_ACTIVE"):
+            resolver.resolve(
+                assertion, tenant_id="tenant-a",
+                resource_type="institution", resource_id="BANK-UG-01")
+
+    def test_ed25519_key_is_not_accepted_without_explicit_issuer_trust(self):
+        self.create()
+        private_key = Ed25519PrivateKey.generate()
+        public_bytes = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw)
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            key_id="untrusted-issuer-key", algorithm="Ed25519",
+            public_key_ref="vault://public/untrusted", valid_from=100, valid_until=2000,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:key-registration")
+        resolver = InstitutionalAuthorityResolver(
+            grant_loader=self.registry.load_grant,
+            consume_nonce=InMemoryNonceGuard().consume,
+            trust_key_loader=self.registry.load_trust_key,
+            public_key_loader=lambda ref: public_bytes,
+            clock=lambda: 150)
+        claims = {
+            "key_id": "untrusted-issuer-key", "tenant_id": "tenant-a",
+            "actor_ref": "actor:registrar", "grant_id": "GRANT-01",
+            "grant_version": "1", "issued_at": 140, "expires_at": 160,
+            "nonce": "untrusted-nonce-000001",
+            "issuer_institution_id": "NATIONAL-REGISTRY",
+        }
+        assertion = {"claims": claims,
+                     "signature": sign_federated_actor_claims(claims, private_key)}
+        with self.assertRaisesRegex(ValueError, "UNTRUSTED_SIGNING_KEY"):
+            resolver.resolve(
+                assertion, tenant_id="tenant-a",
+                resource_type="institution", resource_id="BANK-UG-01")
 
     def test_duplicate_key_id_and_unknown_algorithm_fail_closed(self):
         args = dict(tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
