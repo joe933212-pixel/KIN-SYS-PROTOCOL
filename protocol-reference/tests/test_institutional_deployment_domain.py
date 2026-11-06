@@ -5,6 +5,8 @@ from institutional_deployment_domain import (
     validate_activation,
     validate_jurisdiction_package,
     validate_minah_deployment,
+    validate_source,
+    validate_institution,
 )
 
 def source(status="APPROVED", approval_ref="approval:source-1"):
@@ -75,6 +77,18 @@ class InstitutionalDomainTests(unittest.TestCase):
         item["api_key"] = "must-not-be-here"
         with self.assertRaisesRegex(DomainModelViolation, "SENSITIVE_MATERIAL_MUST_NOT_BE_STORED"):
             validate_minah_deployment(item)
+
+    def test_python_validator_rejects_unknown_fields(self):
+        item = records()[0]
+        item["skip_verification"] = True
+        with self.assertRaisesRegex(DomainModelViolation, "UNSUPPORTED_INSTITUTION_FIELDS"):
+            validate_institution(item)
+
+    def test_source_digest_requires_full_sha256(self):
+        item = source()
+        item["content_digest"] = "sha256:abcd"
+        with self.assertRaisesRegex(DomainModelViolation, "SOURCE_REQUIRES_SHA256_CONTENT_DIGEST"):
+            validate_source(item)
 
     def test_activation_requires_conformance_evidence(self):
         with self.assertRaisesRegex(DomainModelViolation, "CONFORMANCE_EVIDENCE_REQUIRED"):
