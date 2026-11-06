@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kin-sys.org/schemas/identity-provider-configuration-0.1.schema.json",
+  "title": "KIN-SYS institutional identity-provider configuration",
+  "description": "Institution-controlled, versioned OIDC provider policy. No secret or private-key fields are permitted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tenant_id",
+    "provider_id",
+    "version",
+    "protocol",
+    "issuer",
+    "client_id",
+    "status",
+    "allowed_hosts",
+    "allowed_algorithms",
+    "audiences",
+    "allowed_acr",
+    "required_amr",
+    "valid_from",
+    "valid_until",
+    "cache_ttl_seconds"
+  ],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "provider_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "protocol": {
+      "const": "OIDC"
+    },
+    "issuer": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://",
+      "maxLength": 2048
+    },
+    "client_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "status": {
+      "enum": [
+        "PENDING",
+        "ACTIVE",
+        "SUSPENDED",
+        "REVOKED"
+      ]
+    },
+    "allowed_hosts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9.-]+$"
+      }
+    },
+    "allowed_algorithms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "RS256",
+          "RS384",
+          "RS512",
+          "ES256",
+          "ES384",
+          "EdDSA"
+        ]
+      }
+    },
+    "audiences": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    "allowed_acr": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    },
+    "required_amr": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "pwd",
+          "otp",
+          "hwk",
+          "swk",
+          "mfa",
+          "fido",
+          "x509",
+          "sms",
+          "face",
+          "iris"
+        ]
+      }
+    },
+    "valid_from": {
+      "type": "integer"
+    },
+    "valid_until": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "cache_ttl_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "PENDING"
+          }
+        }
+      },
+      "then": {}
+    }
+  ]
+}
