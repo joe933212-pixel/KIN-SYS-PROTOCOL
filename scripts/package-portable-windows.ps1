@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$PythonVersion = "3.13.17",
+    [string]$PythonVersion = "3.14.10",
     [string]$OutputDirectory = "dist"
 )
 
@@ -28,6 +28,11 @@ $RuntimeUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVe
 
 Write-Host "Downloading official CPython $PythonVersion Windows x64 embeddable distribution..."
 Invoke-WebRequest -Uri $RuntimeUrl -OutFile $RuntimeArchive
+$ExpectedRuntimeSha256 = "90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159"
+$ActualRuntimeSha256 = (Get-FileHash -LiteralPath $RuntimeArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($ActualRuntimeSha256 -ne $ExpectedRuntimeSha256) {
+    throw "The CPython archive SHA-256 does not match the official Python.org release checksum."
+}
 Expand-Archive -LiteralPath $RuntimeArchive -DestinationPath $RuntimeDirectory -Force
 
 $EmbeddedPython = Join-Path $RuntimeDirectory "python.exe"
