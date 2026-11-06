@@ -34,10 +34,16 @@ class OIDCInstitutionalAdapterFactory:
         config = self._registry.resolve_active_provider(
             tenant_id, provider_id, now=int(self._clock())
         )
-        if config is None:
-            return None
-        key = (tenant_id, provider_id, config["version"])
         with self._lock:
+            if config is None:
+                for cached_key in tuple(self._adapters):
+                    if cached_key[:2] == (tenant_id, provider_id):
+                        del self._adapters[cached_key]
+                return None
+            key = (tenant_id, provider_id, config["version"])
+            for cached_key in tuple(self._adapters):
+                if cached_key[:2] == (tenant_id, provider_id) and cached_key != key:
+                    del self._adapters[cached_key]
             existing = self._adapters.get(key)
             if existing is not None:
                 return existing
