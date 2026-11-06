@@ -83,6 +83,19 @@ class OIDCAdapterTests(unittest.TestCase):
                 with self.assertRaises(IdentityResolutionError):
                     self.verify(self.token(claims))
 
+    def test_validation_uses_injected_clock_not_host_clock(self):
+        self.now = int(time.time()) + 3600
+        self.assertEqual(self.verify().subject, "opaque|subject/01")
+
+    def test_future_not_before_and_authentication_after_issue_are_rejected(self):
+        for claims in (
+            self.claims(nbf=self.now + 60),
+            self.claims(auth_time=self.now - 20, iat=self.now - 30),
+        ):
+            with self.subTest(claims=claims):
+                with self.assertRaisesRegex(IdentityResolutionError, "OIDC_TIME_CLAIMS_INVALID"):
+                    self.verify(self.token(claims))
+
     def test_token_lifetime_is_bounded(self):
         with self.assertRaisesRegex(IdentityResolutionError, "OIDC_TIME_CLAIMS_INVALID"):
             self.verify(self.token(self.claims(exp=self.now + 1000)))
