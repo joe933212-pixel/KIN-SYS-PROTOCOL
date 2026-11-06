@@ -1,0 +1,3 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+# Vetted Ed25519 implementation used by institutional federation tests/adapters.
+cryptography>=44,<47
