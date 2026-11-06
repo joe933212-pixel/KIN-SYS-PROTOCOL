@@ -35,6 +35,31 @@ jobs:
         shell: pwsh
         run: .\scripts\package-portable-windows.ps1
 
+      - name: Smoke-test the bundled local server
+        shell: pwsh
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP "kin-sys-portable-build/KIN-SYS-Portable-Windows-x64"
+          $env:KIN_SYS_SANDBOX_DATA_DIR = Join-Path $env:RUNNER_TEMP "kin-sys-portable-smoke-data"
+          $env:KIN_SYS_SANDBOX_PORT = "18765"
+          $python = Join-Path $bundle "runtime/python.exe"
+          $server = Start-Process -FilePath $python -ArgumentList @("-I", "sandbox/portable_server.py") -WorkingDirectory $bundle -PassThru
+          $healthy = $false
+          try {
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              if ($server.HasExited) { throw "Bundled sandbox process exited before becoming healthy." }
+              try {
+                $response = Invoke-RestMethod -Uri "http://127.0.0.1:18765/system/health" -TimeoutSec 2
+                if ($response) { $healthy = $true; break }
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+            if (-not $healthy) { throw "Bundled sandbox did not pass its local health check." }
+            Write-Host "Bundled CPython launched the KIN-SYS sandbox and health endpoint successfully."
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
       - name: Verify bundle archive and checksum
         shell: pwsh
         run: |
