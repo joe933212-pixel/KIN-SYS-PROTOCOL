@@ -81,6 +81,14 @@ class InstitutionalTrustRegistry:
           FOREIGN KEY (tenant_id, grant_id, version)
             REFERENCES authority_grant_versions(tenant_id, grant_id, version)
         );
+        CREATE TABLE IF NOT EXISTS accepted_grant_provenance (
+          tenant_id TEXT NOT NULL, grant_id TEXT NOT NULL, version TEXT NOT NULL,
+          grant_digest TEXT NOT NULL, issuer_envelope_json TEXT NOT NULL,
+          acceptance_json TEXT NOT NULL, created_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, grant_id, version),
+          FOREIGN KEY (tenant_id, grant_id, version)
+            REFERENCES authority_grant_versions(tenant_id, grant_id, version)
+        );
         CREATE TABLE IF NOT EXISTS trusted_issuer_relationships (
           tenant_id TEXT NOT NULL, issuer_institution_id TEXT NOT NULL,
           status TEXT NOT NULL, trust_basis_ref TEXT NOT NULL,
@@ -290,6 +298,107 @@ class InstitutionalTrustRegistry:
                  "event_type": r["event_type"], "actor_ref": r["actor_ref"],
                  "evidence_ref": r["evidence_ref"], "payload": json.loads(r["payload_json"]),
                  "created_at": r["created_at"]} for r in rows]
+
+
+    def accept_signed_grant(self, *, tenant_id: str, envelope: dict[str, Any],
+                            receiver_institution_id: str,
+                            receiver_approval: dict[str, Any],
+                            verify_receiver_approval: Any,
+                            public_key_loader: Any, event_id: str,
+                            actor_ref: str, evidence_ref: str,
+                            clock: Any = None) -> dict[str, Any]:
+        """Verify, accept and persist a federated grant in one SQLite transaction.
+
+        The receiver approval adapter must authenticate the receiver-side actor
+        and enforce its current authority policy. The caller must derive
+        tenant_id and actor_ref from authenticated request context. This method
+        stores the original issuer envelope and receiver acceptance evidence
+        alongside the immutable ACTIVE grant snapshot.
+        """
+        from institutional_grant_provenance import accept_authority_grant
+        self._tenant(tenant_id)
+        for value, code in ((receiver_institution_id, "INVALID_RECEIVER_INSTITUTION"),
+                            (event_id, "INVALID_EVENT_ID"),
+                            (actor_ref, "INVALID_EVENT_ACTOR"),
+                            (evidence_ref, "GRANT_EVIDENCE_REQUIRED")):
+            _required_identifier(value, code)
+        if not isinstance(receiver_approval, dict):
+            raise TrustRegistryError("RECEIVER_APPROVAL_REQUIRED")
+        if (receiver_approval.get("actor_ref") != actor_ref
+                or receiver_approval.get("approval_ref") != evidence_ref):
+            raise TrustRegistryError("RECEIVER_APPROVAL_AUDIT_CONTEXT_MISMATCH")
+        kwargs = {
+            "envelope": envelope, "tenant_id": tenant_id,
+            "receiver_institution_id": receiver_institution_id,
+            "trust_key_loader": self.load_trust_key,
+            "public_key_loader": public_key_loader,
+            "verify_receiver_approval": verify_receiver_approval,
+            "receiver_approval": receiver_approval,
+        }
+        if clock is not None:
+            kwargs["clock"] = clock
+        try:
+            accepted = accept_authority_grant(**kwargs)
+        except Exception as exc:
+            raise TrustRegistryError("SIGNED_GRANT_ACCEPTANCE_REJECTED:" + str(exc)) from exc
+        grant = accepted["grant"]
+        self._validate_grant(grant)
+        if grant["tenant_id"] != tenant_id or grant["status"] != "ACTIVE":
+            raise TrustRegistryError("ACCEPTED_GRANT_SCOPE_INVALID")
+        body = _canonical(grant)
+        envelope_json = _canonical(accepted["issuer_envelope"])
+        acceptance_json = _canonical(accepted["acceptance"])
+        digest = accepted["acceptance"]["grant_digest"]
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            head = self.db.execute(
+                "SELECT current_version FROM authority_grant_heads WHERE tenant_id=? AND grant_id=?",
+                (tenant_id, grant["grant_id"])).fetchone()
+            if head is not None:
+                raise TrustRegistryConflict("AUTHORITY_GRANT_ALREADY_EXISTS")
+            self.db.execute(
+                "INSERT INTO authority_grant_versions VALUES(?,?,?,?,?,?)",
+                (tenant_id, grant["grant_id"], grant["version"], grant["status"], body, now))
+            self.db.execute(
+                "INSERT INTO authority_grant_heads VALUES(?,?,?)",
+                (tenant_id, grant["grant_id"], grant["version"]))
+            self.db.execute(
+                "INSERT INTO accepted_grant_provenance VALUES(?,?,?,?,?,?,?)",
+                (tenant_id, grant["grant_id"], grant["version"], digest,
+                 envelope_json, acceptance_json, now))
+            self.db.execute(
+                "INSERT INTO authority_grant_events VALUES(?,?,?,?,?,?,?,?,?)",
+                (tenant_id, event_id, grant["grant_id"], grant["version"],
+                 "FEDERATED_GRANT_ACCEPTED", actor_ref, evidence_ref,
+                 _canonical({"grant_digest": digest,
+                             "issuer_envelope": accepted["issuer_envelope"],
+                             "acceptance": accepted["acceptance"]}), now))
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+        return {"accepted": True, "grant": grant, "grant_digest": digest,
+                "version": grant["version"]}
+
+    def load_grant_provenance(self, *, tenant_id: str, grant_id: str,
+                              version: str) -> dict[str, Any] | None:
+        """Return the retained issuer envelope and receiver acceptance record."""
+        self._tenant(tenant_id)
+        _required_identifier(grant_id, "INVALID_GRANT_ID")
+        _required_identifier(version, "INVALID_GRANT_VERSION")
+        row = self.db.execute(
+            """SELECT grant_digest,issuer_envelope_json,acceptance_json,created_at
+               FROM accepted_grant_provenance
+               WHERE tenant_id=? AND grant_id=? AND version=?""",
+            (tenant_id, grant_id, version)).fetchone()
+        if row is None:
+            return None
+        return {"grant_digest": row["grant_digest"],
+                "issuer_envelope": json.loads(row["issuer_envelope_json"]),
+                "acceptance": json.loads(row["acceptance_json"]),
+                "created_at": row["created_at"]}
 
     def register_trusted_issuer(self, *, tenant_id: str, issuer_institution_id: str,
                                 trust_basis_ref: str, valid_from: int, valid_until: int,
