@@ -9,3 +9,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Portable sandbox runtime data and local secrets
+sandbox-data/
+.env
+.env.*

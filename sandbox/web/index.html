@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>KIN-SYS | Local Test Sandbox</title>
+<style>
+:root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#17212b;background:#f3f6f8;font-synthesis:none}
+*{box-sizing:border-box}body{margin:0}.top{background:#102b3b;color:#fff;padding:26px max(22px,calc((100vw - 1120px)/2))}
+.top small{letter-spacing:.14em;text-transform:uppercase;color:#a9c3d0;font-weight:700}.top h1{margin:8px 0 5px;font-size:clamp(25px,4vw,36px)}.top p{margin:0;color:#d1e0e6;max-width:850px;line-height:1.55}
+.wrap{max-width:1120px;margin:24px auto;padding:0 18px 48px}.banner{border:1px solid #e4c77b;background:#fff8e4;border-radius:10px;padding:14px 16px;line-height:1.5;margin-bottom:18px}.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,.9fr);gap:18px}.card{background:#fff;border:1px solid #e1e7eb;border-radius:12px;padding:20px;box-shadow:0 3px 12px #1734470a}.card h2{font-size:18px;margin:0 0 16px}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}label{display:block;font-size:13px;font-weight:700;margin:12px 0 6px;color:#40515d}input,select,textarea{width:100%;padding:10px 11px;border:1px solid #cbd5dc;border-radius:7px;font:inherit;background:#fff;color:#17212b}textarea{min-height:74px;resize:vertical}.hint{font-size:12px;color:#71808a;line-height:1.45;margin-top:5px}.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:18px}button{border:0;border-radius:7px;padding:11px 15px;font-weight:700;cursor:pointer;background:#126b79;color:#fff}button.secondary{background:#e8eef1;color:#233b49}button:disabled{opacity:.55;cursor:wait}.status{border-radius:8px;padding:12px;margin:12px 0;font-weight:700;background:#eef3f5}.status.pass{background:#e8f6ee;color:#17643a}.status.fail{background:#fff0ed;color:#a13b2a}.status.pending{background:#fff7e6;color:#7c5a12}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#10212b;color:#d7e6ec;padding:14px;border-radius:8px;font-size:12px;line-height:1.5;max-height:520px;overflow:auto}.checks{display:grid;gap:8px}.check{display:flex;justify-content:space-between;border-bottom:1px solid #edf0f2;padding:8px 0;font-size:13px}.muted{color:#71808a;font-size:13px;line-height:1.5}.footer{margin-top:18px;color:#75828a;font-size:12px;text-align:center}@media(max-width:800px){.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="top">
+  <small>Joel Kagoro · KIN-SYS Protocol · v0.1 reference</small>
+  <h1>Local Test Sandbox</h1>
+  <p>Submit a governed instruction through the synthetic MINAH-first ingress and observe the CEE/IVM reference execution and final protocol decision.</p>
+</header>
+<main class="wrap">
+  <div class="banner"><strong>Sandbox boundary.</strong> This is a local synthetic test environment, not a production deployment. Identity and authority checks are simulated, MINAH is deterministic/mock, and no bank, payment rail, government registry, legal source, external AI model or remote institution is contacted. A PASSED decision is not a real-world approval or proof that an external effect occurred.</div>
+  <div class="grid">
+    <section class="card">
+      <h2>Governed instruction</h2>
+      <div class="row">
+        <div><label for="origin">Origin institution</label><input id="origin" value="UGANDA-DEMO-EXPORTER"></div>
+        <div><label for="destination">Destination institution</label><input id="destination" value="KENYA-DEMO-IMPORTER"></div>
+      </div>
+      <div class="row">
+        <div><label for="consignment">Consignment reference</label><input id="consignment" value="EAC-MAIZE-0001"></div>
+        <div><label for="commodity">Commodity</label><input id="commodity" value="MAIZE"></div>
+      </div>
+      <div class="row">
+        <div><label for="actor">Submitting principal reference</label><input id="actor" value="AUTHORITY-001"></div>
+        <div><label for="authority">Authority reference</label><input id="authority" value="AUTHORITY-REF-DEMO-01"></div>
+      </div>
+      <div class="row">
+        <div><label for="value">Declared value (UGX)</label><input id="value" type="number" min="0" step="1" value="2500000"></div>
+        <div><label for="jurisdiction">Active rule jurisdiction</label><select id="jurisdiction"><option value="UG-DEMO">UG-DEMO (synthetic)</option></select></div>
+      </div>
+      <label for="purpose">Purpose</label><input id="purpose" value="Synthetic cross-border trade instruction test">
+      <label for="evidence">Evidence reference</label><input id="evidence" value="evidence:demo-consignment-0001">
+      <p class="hint">The origin and destination labels are scenario data only. This v0.1 sandbox executes one synthetic jurisdiction profile; it does not yet run two independently deployed national MINAH environments or obtain customs approvals.</p>
+      <div class="actions">
+        <button id="submit">Submit instruction</button>
+        <button class="secondary" id="deny">Test authority rejection</button>
+        <button class="secondary" id="inspect" disabled>Inspect operation</button>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Runtime and decision</h2>
+      <div id="status" class="status pending">Checking local sandbox…</div>
+      <div class="checks">
+        <div class="check"><span>Service health</span><strong id="health">Checking</strong></div>
+        <div class="check"><span>Execution path</span><strong>MINAH → CEE / IVM</strong></div>
+        <div class="check"><span>Persistence</span><strong>Local SQLite</strong></div>
+        <div class="check"><span>External effects</span><strong>Disabled</strong></div>
+        <div class="check"><span>Production readiness</span><strong>Not production-ready</strong></div>
+      </div>
+      <p class="muted">The decision returned by the reference pipeline is the protocol's outcome for this synthetic test request. Use the operation ID to inspect the durable operation record.</p>
+      <label for="operation">Operation ID</label><input id="operation" readonly placeholder="Generated when an instruction is submitted">
+      <label for="decision">Decision and execution trace</label><pre id="output">No instruction submitted yet.</pre>
+    </section>
+  </div>
+  <div class="footer">Copyright © 2026 Joel Kagoro · Apache-2.0 · Portable sandbox runs on this computer only.</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let lastPayload=null;
+function setStatus(text,kind="pending"){$("status").textContent=text;$("status").className="status "+kind}
+function sorted(value){if(Array.isArray(value))return value.map(sorted);if(value&&typeof value==="object"){return Object.fromEntries(Object.keys(value).sort().map(k=>[k,sorted(value[k])]));}return value}
+async function digest(obj){const canonical=JSON.stringify(sorted(Object.fromEntries(Object.entries(obj).filter(([k])=>k!=="payload_digest"))));const bytes=new TextEncoder().encode(canonical);const hash=await crypto.subtle.digest("SHA-256",bytes);return "sha256:"+Array.from(new Uint8Array(hash)).map(x=>x.toString(16).padStart(2,"0")).join("")}
+function newId(prefix){return prefix+"-"+crypto.randomUUID()}
+function buildInstruction(deny=false){
+ const operationId=newId("KS-OP");
+ const target=$("consignment").value.trim();
+ const principal=deny?"UNAUTHORISED-TEST-PRINCIPAL":$("actor").value.trim();
+ const instruction={
+  contract_version:"kin-sys-governed-contract-0.1",
+  request_id:newId("KS-REQ"),
+  operation_id:operationId,
+  idempotency_key:newId("KS-IDEM"),
+  principal_ref:principal,
+  authority_ref:$("authority").value.trim(),
+  action:"ACTIVATE",
+  target_ref:target,
+  purpose:$("purpose").value.trim(),
+  jurisdiction:$("jurisdiction").value,
+  submitted_at:new Date().toISOString(),
+  payload_digest:"",
+  rule_pack_version:"KIN-SYS-DEMO-RULES:1.0",
+  evidence_refs:[$("evidence").value.trim()],
+  constraints:[],
+  evidence:{
+   consignment_id:target,
+   commodity:$("commodity").value.trim(),
+   origin:$("origin").value.trim(),
+   destination:$("destination").value.trim(),
+   declared_value_ugx:Number($("value").value),
+   rule_refs:["SYNTHETIC-TRADE-RULE-1"],
+   evidence_ref:$("evidence").value.trim()
+  }
+ };
+ return instruction;
+}
+async function request(path,method="GET",body=null){
+ const options={method,headers:{}};
+ if(body!==null){options.headers["Content-Type"]="application/json";options.body=JSON.stringify(body)}
+ const response=await fetch(path,options);let data={};try{data=await response.json()}catch{}
+ if(!response.ok)throw new Error("HTTP "+response.status+": "+JSON.stringify(data));
+ return data;
+}
+async function submit(deny=false){
+ $("submit").disabled=true;$("deny").disabled=true;setStatus("Submitting through MINAH-first ingress…");
+ try{
+  const payload=buildInstruction(deny);payload.payload_digest=await digest(payload);lastPayload=payload;
+  $("operation").value=payload.operation_id;
+  const result=await request("/protocol/instructions","POST",payload);
+  const decision=result.decision||{};
+  const pass=decision.protocol_decision==="PASSED";
+  setStatus("Final protocol decision: "+(decision.protocol_decision||result.status),pass?"pass":"fail");
+  $("output").textContent=JSON.stringify({decision,execution:result.result,protocol_boundary:result.protocol_boundary},null,2);
+  $("inspect").disabled=false;
+  $("health").textContent="ALIVE";
+ }catch(error){setStatus("Request did not complete: "+error.message,"fail");$("output").textContent=error.stack||String(error)}
+ finally{$("submit").disabled=false;$("deny").disabled=false}
+}
+async function inspect(){
+ const id=$("operation").value.trim();if(!id)return;
+ try{const result=await request("/protocol/operations/"+encodeURIComponent(id));$("output").textContent=JSON.stringify(result,null,2);setStatus("Operation record loaded","pass")}
+ catch(error){setStatus("Inspection failed: "+error.message,"fail")}
+}
+$("submit").addEventListener("click",()=>submit(false));
+$("deny").addEventListener("click",()=>submit(true));
+$("inspect").addEventListener("click",inspect);
+(async()=>{try{const health=await request("/system/health");$("health").textContent=health.status||"ALIVE";setStatus("Sandbox ready · synthetic mode","pass")}catch(e){$("health").textContent="Unavailable";setStatus("Sandbox health check failed: "+e.message,"fail")}})();
+</script>
+</body>
+</html>
