@@ -108,6 +108,86 @@ class InstitutionalRegistry:
             raise
         return {"created": True, "payload_digest": digest}
 
+    def transition_record(self, *, tenant_id: str, resource_type: str,
+                          resource_id: str, expected_version: str,
+                          new_version: str, event_id: str,
+                          transition: dict[str, Any]) -> dict[str, Any]:
+        """Atomically persist a lifecycle snapshot and its audit event.
+
+        The caller must first obtain the transition from the lifecycle policy
+        using a trusted actor assertion. This method enforces tenant scope,
+        expected-current-version concurrency and snapshot/event atomicity; it
+        does not authenticate actors or authorise the transition itself.
+        """
+        self._check(tenant_id, resource_type, resource_id, expected_version,
+                    new_version, event_id)
+        if not isinstance(transition, dict) or not isinstance(transition.get("record"), dict) or not isinstance(transition.get("event"), dict):
+            raise RegistryError("INVALID_TRANSITION_RESULT")
+        snapshot = transition["record"]
+        event = transition["event"]
+        if event.get("resource_type") != resource_type or event.get("resource_id") != resource_id:
+            raise RegistryError("TRANSITION_RESOURCE_MISMATCH")
+        if event.get("from_status") is None or event.get("to_status") != snapshot.get("status"):
+            raise RegistryError("TRANSITION_STATUS_MISMATCH")
+        if event.get("expected_version") not in (None, expected_version):
+            raise RegistryError("TRANSITION_EXPECTED_VERSION_MISMATCH")
+        event_type, actor_ref = event.get("event_type"), event.get("actor_ref")
+        evidence_ref = event.get("evidence_ref")
+        if not all(isinstance(x, str) and x.strip() for x in (event_type, actor_ref, evidence_ref)):
+            raise RegistryError("TRANSITION_AUDIT_FIELDS_REQUIRED")
+        body, digest = _json(snapshot), _digest(snapshot)
+        event_body = _json(event)
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self.db.execute(
+                """SELECT resource_type,resource_id,version,event_type,actor_ref,
+                          evidence_ref,payload_json FROM institutional_events
+                   WHERE tenant_id=? AND event_id=?""", (tenant_id, event_id)).fetchone()
+            if existing:
+                prior_record = self.db.execute(
+                    """SELECT status,payload_digest FROM institutional_records
+                       WHERE tenant_id=? AND resource_type=? AND resource_id=? AND version=?""",
+                    (tenant_id, resource_type, resource_id, new_version)).fetchone()
+                expected_event = (resource_type, resource_id, new_version, event_type,
+                                  actor_ref, evidence_ref, event_body)
+                actual_event = tuple(existing[k] for k in ("resource_type","resource_id",
+                                "version","event_type","actor_ref","evidence_ref","payload_json"))
+                if actual_event == expected_event and prior_record and prior_record["status"] == snapshot["status"] and prior_record["payload_digest"] == digest:
+                    self.db.execute("COMMIT")
+                    return {"created": False, "event_id": event_id, "version": new_version}
+                raise RegistryConflict("EVENT_ID_REUSE_CONFLICT")
+            current = self.db.execute(
+                """SELECT version,status FROM institutional_records
+                   WHERE tenant_id=? AND resource_type=? AND resource_id=?
+                   ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+                (tenant_id, resource_type, resource_id)).fetchone()
+            if current is None:
+                raise RegistryError("TRANSITION_PARENT_NOT_FOUND")
+            if current["version"] != expected_version:
+                raise RegistryConflict("STALE_EXPECTED_VERSION")
+            if current["status"] != event["from_status"]:
+                raise RegistryConflict("STALE_EXPECTED_STATUS")
+            if self.db.execute(
+                """SELECT 1 FROM institutional_records WHERE tenant_id=? AND resource_type=?
+                   AND resource_id=? AND version=?""",
+                (tenant_id, resource_type, resource_id, new_version)).fetchone():
+                raise RegistryConflict("IMMUTABLE_VERSION_CONFLICT")
+            self.db.execute(
+                """INSERT INTO institutional_records VALUES(?,?,?,?,?,?,?,?)""",
+                (tenant_id, resource_type, resource_id, new_version,
+                 snapshot["status"], body, digest, now))
+            self.db.execute(
+                """INSERT INTO institutional_events VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (tenant_id, event_id, resource_type, resource_id, new_version,
+                 event_type, actor_ref, evidence_ref, event_body, now))
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+        return {"created": True, "event_id": event_id, "version": new_version}
+
     def get_record(self, *, tenant_id: str, resource_type: str,
                    resource_id: str, version: str) -> dict[str, Any] | None:
         self._check(tenant_id, resource_type, resource_id, version)
