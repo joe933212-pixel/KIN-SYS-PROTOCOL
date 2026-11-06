@@ -49,7 +49,7 @@ identity_resolver = InstitutionalIdentityResolver(
 )
 ```
 
-The application selects `provider_id` from trusted receiver-side configuration for the route or institution. It must not select it from token claims. The factory resolves only the current active version for the supplied tenant/provider pair, then creates the HTTPS transport, discovery/JWKS loader and OIDC ID-token adapter from the stored policy.
+The application selects `provider_id` from trusted receiver-side configuration for the route or institution. It must not select it from token claims. The factory resolves only the current active version for the supplied tenant/provider pair, then creates the HTTPS transport, discovery/JWKS loader and OIDC ID-token adapter from the stored policy. It returns a registry-bound adapter that rechecks the active provider version before and after each credential verification; an adapter reference obtained before suspension, revocation or replacement cannot continue authenticating with the old version.
 
 Issuer-policy resolution is separately tenant-scoped and fails closed unless exactly one active provider configuration matches the issuer. This avoids ambiguous policy selection where multiple active provider registrations share an issuer. The audience passed to authentication must still be the expected audience for the selected application.
 
@@ -64,3 +64,7 @@ For emergency incident response, the institution should also invalidate any in-p
 This is a SQLite reference registry, not a distributed production control plane. Production deployment still requires an authenticated administration API, policy-authorised lifecycle coordinator, shared durable storage, secret-manager integration where client credentials are required, operational key/revocation procedures, provider-specific conformance tests, audit retention and independent security review.
 
 The current adapter supports OIDC ID-token verification. It does not implement SAML, SCIM provisioning, passkeys as a direct KIN-SYS credential protocol, identity proofing, or legal verification of the institution's right to use the external identity provider. Those remain separate provider integrations and governance responsibilities.
+
+## Verification boundary
+
+The end-to-end provider-registry test uses an in-process deterministic JSON transport fixture to exercise registration, activation, adapter construction, discovery metadata, JWKS loading, RSA-signed ID-token verification, issuer/audience/assurance policy, subject binding and principal resolution. It is not a live external identity-provider test and does not exercise public DNS, TLS certificates or a provider's real key-rotation endpoint. A controlled test IdP integration remains a separate milestone.
