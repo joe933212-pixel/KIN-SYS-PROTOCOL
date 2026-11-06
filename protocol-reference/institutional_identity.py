@@ -94,6 +94,14 @@ class InstitutionalIdentityResolver:
         self._max_auth_age = max_authentication_age_seconds
 
     @staticmethod
+    def _opaque(value: Any, code: str, *, maximum: int = 2048) -> str:
+        """Validate an opaque protocol value without imposing an ID alphabet."""
+        if (not isinstance(value, str) or not value or len(value) > maximum
+                or any(ord(ch) < 0x20 for ch in value)):
+            raise IdentityResolutionError(code)
+        return value
+
+    @staticmethod
     def _identifier(value: Any, code: str) -> str:
         if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
             raise IdentityResolutionError(code)
@@ -127,16 +135,16 @@ class InstitutionalIdentityResolver:
         if not isinstance(assertion, VerifiedIdentityAssertion):
             raise IdentityResolutionError("UNVERIFIED_IDENTITY_ADAPTER_RESULT")
 
-        issuer = self._identifier(assertion.issuer, "IDENTITY_ISSUER_INVALID")
-        subject = self._identifier(assertion.subject, "IDENTITY_SUBJECT_INVALID")
+        issuer = self._opaque(assertion.issuer, "IDENTITY_ISSUER_INVALID")
+        subject = self._opaque(assertion.subject, "IDENTITY_SUBJECT_INVALID")
         if assertion.tenant_id != tenant_id:
             raise IdentityResolutionError("IDENTITY_TENANT_MISMATCH")
         if assertion.audience != expected_audience:
             raise IdentityResolutionError("IDENTITY_AUDIENCE_MISMATCH")
         if assertion.nonce != expected_nonce:
             raise IdentityResolutionError("IDENTITY_NONCE_MISMATCH")
-        self._identifier(assertion.credential_ref, "IDENTITY_CREDENTIAL_REFERENCE_INVALID")
-        self._identifier(assertion.acr, "IDENTITY_ASSURANCE_LEVEL_INVALID")
+        self._opaque(assertion.credential_ref, "IDENTITY_CREDENTIAL_REFERENCE_INVALID")
+        self._opaque(assertion.acr, "IDENTITY_ASSURANCE_LEVEL_INVALID")
 
         now = int(self._clock())
         for field in ("issued_at", "expires_at", "auth_time"):
