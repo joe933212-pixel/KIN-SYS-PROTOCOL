@@ -52,9 +52,6 @@ class OIDCDiscoveryJWKSLoader:
         clock: Callable[[], float] = time.time,
     ):
         issuer_host = _https_url_host(issuer, "OIDC_ISSUER_CONFIGURATION_INVALID")
-        issuer_parts = urlsplit(issuer)
-        if issuer_parts.path.endswith("/"):
-            issuer = issuer[:-1]
         if not callable(fetch_json) or not callable(clock):
             raise IdentityResolutionError("OIDC_DISCOVERY_CONFIGURATION_INVALID")
         if (not isinstance(allowed_hosts, tuple) or not allowed_hosts
@@ -78,7 +75,7 @@ class OIDCDiscoveryJWKSLoader:
         if type(max_jwks_keys) is not int or not 1 <= max_jwks_keys <= 500:
             raise IdentityResolutionError("OIDC_JWKS_KEY_LIMIT_INVALID")
         self.issuer = issuer
-        self.discovery_url = issuer + "/.well-known/openid-configuration"
+        self.discovery_url = issuer.rstrip("/") + "/.well-known/openid-configuration"
         self.allowed_hosts = hosts
         self.allowed_algorithms = frozenset(allowed_algorithms)
         self._fetch_json = fetch_json
@@ -90,7 +87,6 @@ class OIDCDiscoveryJWKSLoader:
         self._lock = threading.RLock()
         self._expires_at = 0.0
         self._jwks: dict[str, Any] | None = None
-        self._metadata: dict[str, Any] | None = None
 
     def _fetch(self, url: str) -> dict[str, Any]:
         host = _https_url_host(url, "OIDC_PROVIDER_URL_INVALID")
@@ -117,9 +113,6 @@ class OIDCDiscoveryJWKSLoader:
                 or any(not isinstance(x, str) for x in advertised)
                 or not (self.allowed_algorithms & set(advertised))):
             raise IdentityResolutionError("OIDC_DISCOVERY_ALGORITHM_UNSUPPORTED")
-        response_types = metadata.get("response_types_supported")
-        if not isinstance(response_types, list) or "id_token" not in response_types:
-            raise IdentityResolutionError("OIDC_DISCOVERY_ID_TOKEN_UNSUPPORTED")
         jwks = self._fetch(jwks_uri)
         keys = jwks.get("keys")
         if not isinstance(keys, list) or not keys or len(keys) > self._max_keys:
@@ -150,5 +143,4 @@ class OIDCDiscoveryJWKSLoader:
         """Drop cached metadata/JWKS after an administrative trust-policy change."""
         with self._lock:
             self._jwks = None
-            self._metadata = None
             self._expires_at = 0.0
