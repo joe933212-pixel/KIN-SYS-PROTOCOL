@@ -58,7 +58,7 @@ class OIDCDiscoveryAdapterIntegrationTests(unittest.TestCase):
         claims = {
             "iss": ISSUER, "sub": "opaque-subject/123", "aud": CLIENT,
             "iat": self.now - 5, "exp": self.now + 180,
-            "auth_time": self.now - 3, "nonce": "nonce-integration-0001",
+            "auth_time": self.now - 10, "nonce": "nonce-integration-0001",
             "acr": "urn:loa:2", "amr": ["pwd", "otp"],
         }
         return jwt.encode(claims, private_key, algorithm="RS256",
