@@ -76,7 +76,8 @@ def _validate(config: Any) -> None:
     hosts = config["allowed_hosts"]
     if (not isinstance(hosts, list) or not hosts
             or any(not isinstance(h, str) or not h or h != h.lower()
-                   or h.endswith(".") or "/" in h or ":" in h for h in hosts)
+                   or h.endswith(".") or "/" in h or ":" in h
+                   or any(ord(ch) < 0x21 for ch in h) for h in hosts)
             or len(set(hosts)) != len(hosts)
             or parsed.hostname.lower() not in hosts):
         raise IdentityProviderRegistryError("PROVIDER_HOST_ALLOWLIST_INVALID")
@@ -247,7 +248,6 @@ class InstitutionalIdentityProviderRegistry:
             raise IdentityProviderRegistryError("PROVIDER_STATUS_INVALID")
         if new_version == expected_version:
             raise IdentityProviderRegistryConflict("PROVIDER_VERSION_MUST_ADVANCE")
-        now_epoch = int(__import__("time").time())
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
         try:
