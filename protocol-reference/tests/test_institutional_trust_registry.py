@@ -246,6 +246,42 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
         self.assertEqual(len(self.registry.list_trusted_issuer_events(
             tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY")), 2)
 
+    def test_federated_assertion_issuer_must_match_authority_grant_issuer(self):
+        self.create()
+        self.registry.register_trusted_issuer(
+            tenant_id="tenant-a", issuer_institution_id="OTHER-ISSUER",
+            trust_basis_ref="trust-agreement:other", valid_from=100, valid_until=2000,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:trust-approval")
+        private_key = Ed25519PrivateKey.generate()
+        public_bytes = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw)
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="OTHER-ISSUER",
+            key_id="other-issuer-key", algorithm="Ed25519",
+            public_key_ref="vault://public/other-issuer-key",
+            valid_from=100, valid_until=2000,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:key-approval")
+        resolver = InstitutionalAuthorityResolver(
+            grant_loader=self.registry.load_grant,
+            consume_nonce=InMemoryNonceGuard().consume,
+            trust_key_loader=self.registry.load_trust_key,
+            public_key_loader=lambda ref: public_bytes,
+            clock=lambda: 150)
+        claims = {
+            "key_id": "other-issuer-key", "tenant_id": "tenant-a",
+            "actor_ref": "actor:registrar", "grant_id": "GRANT-01",
+            "grant_version": "1", "issued_at": 140, "expires_at": 160,
+            "nonce": "issuer-mismatch-nonce-01",
+            "issuer_institution_id": "OTHER-ISSUER",
+        }
+        assertion = {"claims": claims,
+                     "signature": sign_federated_actor_claims(claims, private_key)}
+        with self.assertRaisesRegex(ValueError, "GRANT_ISSUER_MISMATCH"):
+            resolver.resolve(
+                assertion, tenant_id="tenant-a",
+                resource_type="institution", resource_id="BANK-UG-01")
+
     def test_ed25519_key_is_not_accepted_without_explicit_issuer_trust(self):
         self.create()
         private_key = Ed25519PrivateKey.generate()
