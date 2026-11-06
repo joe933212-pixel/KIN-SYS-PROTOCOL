@@ -70,6 +70,11 @@ class InstitutionalLifecycleCoordinator:
         if record.get("status") != current["status"]:
             raise LifecycleCoordinatorError("REGISTRY_RECORD_STATUS_MISMATCH")
 
+        actor = self.authority_resolver.resolve(
+            actor_assertion, tenant_id=tenant_id,
+            resource_type=resource_type, resource_id=resource_id,
+        )
+
         # Activation is gated against exact supplied records. The caller must
         # load them from this tenant and resolve their evidence references.
         if resource_type == "binding" and target_status == "ACTIVE":
@@ -91,10 +96,6 @@ class InstitutionalLifecycleCoordinator:
             if eligibility.get("activation_eligible") is not True:
                 raise LifecycleCoordinatorError("ACTIVATION_GATE_FAILED")
 
-        actor = self.authority_resolver.resolve(
-            actor_assertion, tenant_id=tenant_id,
-            resource_type=resource_type, resource_id=resource_id,
-        )
         proposed = apply_transition(
             resource_type, record, target_status, actor,
             evidence_ref=evidence_ref, approval_ref=approval_ref,
