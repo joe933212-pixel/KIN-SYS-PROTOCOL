@@ -126,6 +126,17 @@ class OIDCAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(IdentityResolutionError, "OIDC_SIGNING_KEY_POLICY_MISMATCH"):
             self.verify()
 
+    def test_token_controlled_key_urls_and_unsupported_jose_headers_fail(self):
+        token = jwt.encode(self.claims(), self.private, algorithm="RS256",
+                           headers={"kid": "key-1", "jku": "https://attacker.example/jwks"})
+        with self.assertRaisesRegex(IdentityResolutionError, "OIDC_SIGNING_HEADER_REJECTED"):
+            self.verify(token)
+
+    def test_private_jwk_material_is_rejected(self):
+        self.keys = [dict(self.jwk, d="not-public-material")]
+        with self.assertRaisesRegex(IdentityResolutionError, "OIDC_PRIVATE_JWK_MATERIAL_REJECTED"):
+            self.verify()
+
     def test_jwks_failure_and_invalid_token_fail_closed(self):
         def broken(*, force_refresh):
             raise OSError("network failure")
