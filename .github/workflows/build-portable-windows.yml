@@ -1,0 +1,80 @@
+name: Build portable Windows sandbox
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sandbox/**"
+      - "scripts/package-portable-windows.ps1"
+      - ".github/workflows/build-portable-windows.yml"
+      - "protocol-reference/**"
+      - "docs/**"
+      - "api/**"
+      - "README.md"
+      - "LICENSE"
+      - "NOTICE"
+      - "COPYRIGHT.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build self-contained Windows x64 bundle
+        shell: pwsh
+        run: .\scripts\package-portable-windows.ps1
+
+      - name: Smoke-test the bundled local server
+        shell: pwsh
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP "kin-sys-portable-build/KIN-SYS-Portable-Windows-x64"
+          $env:KIN_SYS_SANDBOX_DATA_DIR = Join-Path $env:RUNNER_TEMP "kin-sys-portable-smoke-data"
+          $env:KIN_SYS_SANDBOX_PORT = "18765"
+          $python = Join-Path $bundle "runtime/python.exe"
+          $server = Start-Process -FilePath $python -ArgumentList @("-I", "sandbox/portable_server.py") -WorkingDirectory $bundle -PassThru
+          $healthy = $false
+          try {
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              if ($server.HasExited) { throw "Bundled sandbox process exited before becoming healthy." }
+              try {
+                $response = Invoke-RestMethod -Uri "http://127.0.0.1:18765/system/health" -TimeoutSec 2
+                if ($response) { $healthy = $true; break }
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+            if (-not $healthy) { throw "Bundled sandbox did not pass its local health check." }
+            Write-Host "Bundled CPython launched the KIN-SYS sandbox and health endpoint successfully."
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
+      - name: Verify bundle archive and checksum
+        shell: pwsh
+        run: |
+          $archive = "dist/KIN-SYS-Portable-Windows-x64.zip"
+          $expected = (Get-Content "$archive.sha256" -Raw).Trim().Split(" ")[0]
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Bundle checksum verification failed." }
+          Write-Host "Verified SHA-256: $actual"
+
+      - name: Upload portable bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: KIN-SYS-Portable-Windows-x64
+          path: |
+            dist/KIN-SYS-Portable-Windows-x64.zip
+            dist/KIN-SYS-Portable-Windows-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
