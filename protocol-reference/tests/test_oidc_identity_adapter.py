@@ -1,6 +1,7 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 import json
 import unittest
+import time
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -11,7 +12,7 @@ from institutional_identity import IdentityResolutionError
 
 class OIDCAdapterTests(unittest.TestCase):
     def setUp(self):
-        self.now = 1800000000
+        self.now = int(time.time())
         self.private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         self.other_private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         self.jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.private.public_key()))
