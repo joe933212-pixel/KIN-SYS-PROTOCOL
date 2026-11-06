@@ -52,6 +52,11 @@ def _validated_public_addresses(host: str, port: int, resolver: Callable[..., An
 
     if not addresses:
         raise OIDCTransportError("OIDC_DNS_NO_ADDRESSES")
+    # Bound connection attempts even when a DNS provider returns an excessive
+    # answer set. Duplicate answers do not consume the attempt budget.
+    addresses = list(dict.fromkeys(addresses))
+    if len(addresses) > 8:
+        raise OIDCTransportError("OIDC_DNS_ANSWER_SET_TOO_LARGE")
     # Fail closed if any answer is non-global; do not pick a public answer from
     # a mixed public/private set.
     for address in addresses:
@@ -117,7 +122,8 @@ class OIDCHTTPSJSONTransport:
         self._connect_timeout = float(connect_timeout_seconds)
         self._read_timeout = float(read_timeout_seconds)
         context = ssl_context or ssl.create_default_context()
-        if context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname:
+        if (context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname
+                or context.minimum_version < ssl.TLSVersion.TLSv1_2):
             raise OIDCTransportError("OIDC_TLS_VERIFICATION_REQUIRED")
         self._resolver = resolver
         self._connection_factory = connection_factory or _PinnedHTTPSConnection
