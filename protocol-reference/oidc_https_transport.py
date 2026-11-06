@@ -116,9 +116,12 @@ class OIDCHTTPSJSONTransport:
         self._allowed_hosts = frozenset(allowed_hosts)
         self._connect_timeout = float(connect_timeout_seconds)
         self._read_timeout = float(read_timeout_seconds)
+        context = ssl_context or ssl.create_default_context()
+        if context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname:
+            raise OIDCTransportError("OIDC_TLS_VERIFICATION_REQUIRED")
         self._resolver = resolver
         self._connection_factory = connection_factory or _PinnedHTTPSConnection
-        self._ssl_context = ssl_context or ssl.create_default_context()
+        self._ssl_context = context
 
     def __call__(self, url: str, *, timeout_seconds: int, max_bytes: int) -> dict[str, Any]:
         if (not isinstance(url, str) or len(url) > 4096
