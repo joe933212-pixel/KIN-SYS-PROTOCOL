@@ -55,7 +55,7 @@ def _validate(config: Any) -> None:
         _id(config[field], "PROVIDER_" + field.upper() + "_INVALID")
     if config["protocol"] != "OIDC":
         raise IdentityProviderRegistryError("PROVIDER_PROTOCOL_UNSUPPORTED")
-    if config["status"] not in STATUSES:
+    if not isinstance(config["status"], str) or config["status"] not in STATUSES:
         raise IdentityProviderRegistryError("PROVIDER_STATUS_INVALID")
     issuer = config["issuer"]
     try:
@@ -82,7 +82,7 @@ def _validate(config: Any) -> None:
         raise IdentityProviderRegistryError("PROVIDER_HOST_ALLOWLIST_INVALID")
     algorithms = config["allowed_algorithms"]
     if (not isinstance(algorithms, list) or not algorithms
-            or any(a not in ALGORITHMS for a in algorithms)
+            or any(not isinstance(a, str) or a not in ALGORITHMS for a in algorithms)
             or len(set(algorithms)) != len(algorithms)):
         raise IdentityProviderRegistryError("PROVIDER_ALGORITHM_POLICY_INVALID")
     audiences = config["audiences"]
@@ -98,7 +98,7 @@ def _validate(config: Any) -> None:
         raise IdentityProviderRegistryError("PROVIDER_ACR_POLICY_INVALID")
     required_amr = config["required_amr"]
     if (not isinstance(required_amr, list)
-            or any(x not in AMR for x in required_amr)
+            or any(not isinstance(x, str) or x not in AMR for x in required_amr)
             or len(set(required_amr)) != len(required_amr)):
         raise IdentityProviderRegistryError("PROVIDER_AMR_POLICY_INVALID")
     if (type(config["valid_from"]) is not int or type(config["valid_until"]) is not int
@@ -192,7 +192,7 @@ class InstitutionalIdentityProviderRegistry:
         expected_version = _id(expected_version, "PROVIDER_VERSION_INVALID")
         _validate(config)
         if (config["tenant_id"] != tenant_id or config["provider_id"] != provider_id
-                or config["status"] != "PENDING"):
+                or config["status"] != "PENDING" or config["version"] == expected_version):
             raise IdentityProviderRegistryError("PROVIDER_REVISION_SCOPE_INVALID")
         event_id = _id(event_id, "PROVIDER_EVENT_ID_INVALID")
         actor_ref = _id(actor_ref, "PROVIDER_EVENT_ACTOR_INVALID")
@@ -239,8 +239,10 @@ class InstitutionalIdentityProviderRegistry:
         event_id = _id(event_id, "PROVIDER_EVENT_ID_INVALID")
         actor_ref = _id(actor_ref, "PROVIDER_EVENT_ACTOR_INVALID")
         evidence_ref = _id(evidence_ref, "PROVIDER_EVIDENCE_REQUIRED")
-        if new_status not in STATUSES:
+        if not isinstance(new_status, str) or new_status not in STATUSES:
             raise IdentityProviderRegistryError("PROVIDER_STATUS_INVALID")
+        if new_version == expected_version:
+            raise IdentityProviderRegistryConflict("PROVIDER_VERSION_MUST_ADVANCE")
         now_epoch = int(__import__("time").time())
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
@@ -314,6 +316,8 @@ class InstitutionalIdentityProviderRegistry:
         if not config or config["status"] != "ACTIVE":
             return None
         instant = int(__import__("time").time()) if now is None else now
+        if type(instant) is not int:
+            raise IdentityProviderRegistryError("PROVIDER_CLOCK_INVALID")
         if not config["valid_from"] <= instant < config["valid_until"]:
             return None
         return config
@@ -326,6 +330,8 @@ class InstitutionalIdentityProviderRegistry:
         if not isinstance(issuer, str) or not issuer:
             raise IdentityProviderRegistryError("PROVIDER_ISSUER_INVALID")
         instant = int(__import__("time").time()) if now is None else now
+        if type(instant) is not int:
+            raise IdentityProviderRegistryError("PROVIDER_CLOCK_INVALID")
         rows = self.db.execute(
             """SELECT v.config_json FROM identity_provider_heads h
                JOIN identity_provider_versions v
@@ -333,8 +339,8 @@ class InstitutionalIdentityProviderRegistry:
                AND v.version=h.current_version
                WHERE h.tenant_id=? AND v.status='ACTIVE'""",
             (tenant_id,)).fetchall()
-        matches = [json.loads(row["config_json"]) for row in rows
-                   if json.loads(row["config_json"]).get("issuer") == issuer]
+        configs = [json.loads(row["config_json"]) for row in rows]
+        matches = [config for config in configs if config.get("issuer") == issuer]
         if len(matches) != 1:
             return None
         config = matches[0]
