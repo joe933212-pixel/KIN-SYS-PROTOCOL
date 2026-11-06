@@ -89,7 +89,7 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
 
     def test_stale_expected_version_fails_without_partial_write(self):
         self.call_transition()
-        with self.assertRaisesRegex(ValueError, "CURRENT_RECORD_VERSION_NOT_FOUND"):
+        with self.assertRaisesRegex(ValueError, "STALE_EXPECTED_VERSION"):
             self.call_transition(new_version="3.0", event_id="evt-stale")
         self.assertIsNone(self.registry.get_record(
             tenant_id="tenant-a", resource_type="institution",
