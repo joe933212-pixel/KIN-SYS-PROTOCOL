@@ -348,5 +348,61 @@ class OIDCHTTPSJSONTransportTests(unittest.TestCase):
                 )
 
 
+    def test_absolute_deadline_covers_slow_body_stream(self):
+        class SlowBodyResponse(FakeResponse):
+            def read(self, amount):
+                time.sleep(0.15)
+                return super().read(amount)
+
+        connections = []
+        def factory(*args, **kwargs):
+            connection = FakeConnection(
+                *args, **kwargs, response=SlowBodyResponse()
+            )
+            connections.append(connection)
+            return connection
+
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",),
+            resolver=resolver_for(["93.184.216.34"]),
+            connection_factory=factory,
+            total_timeout_seconds=0.1,
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_REQUEST_DEADLINE_EXCEEDED")
+        self.assertTrue(connections[0].closed)
+
+    def test_all_dns_address_attempts_share_one_absolute_deadline(self):
+        connections = []
+        class FirstAttemptConnection(FakeConnection):
+            def request(self, method, path, headers):
+                time.sleep(0.06)
+                raise OSError("first address did not connect")
+
+        class SecondAttemptConnection(FakeConnection):
+            def getresponse(self):
+                time.sleep(0.06)
+                return self.response
+
+        def factory(*args, **kwargs):
+            cls = FirstAttemptConnection if not connections else SecondAttemptConnection
+            connection = cls(*args, **kwargs)
+            connections.append(connection)
+            return connection
+
+        transport = OIDCHTTPSJSONTransport(
+            allowed_hosts=("id.example",),
+            resolver=resolver_for(["93.184.216.34", "93.184.216.35"]),
+            connection_factory=factory,
+            total_timeout_seconds=0.1,
+        )
+        with self.assertRaises(OIDCTransportError) as caught:
+            transport("https://id.example/config", timeout_seconds=5, max_bytes=4096)
+        self.assertEqual(str(caught.exception), "OIDC_REQUEST_DEADLINE_EXCEEDED")
+        self.assertEqual(len(connections), 2)
+        self.assertTrue(all(connection.closed for connection in connections))
+
+
 if __name__ == "__main__":
     unittest.main()
