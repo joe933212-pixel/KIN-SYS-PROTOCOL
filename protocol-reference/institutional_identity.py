@@ -49,8 +49,8 @@ class IdentityProviderAdapter(Protocol):
     """Trusted adapter for one configured institutional identity provider."""
 
     def verify_credential(
-        self, credential: Any, *, tenant_id: str, expected_audience: str,
-        expected_nonce: str,
+        self, credential: Any, *, tenant_id: str, provider_id: str,
+        expected_audience: str, expected_nonce: str,
     ) -> VerifiedIdentityAssertion:
         """Verify native credential and return typed, verified identity claims."""
         ...
