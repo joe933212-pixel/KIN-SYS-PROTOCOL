@@ -14,7 +14,6 @@ import json
 import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
 import time
 from typing import Any, Callable
 
@@ -287,13 +286,8 @@ class InstitutionalAuthorityResolver:
             raise AuthorityResolutionError("AUTHORITY_RESOURCE_TYPE_OUT_OF_SCOPE")
         if "*" not in grant["resource_ids"] and resource_id not in grant["resource_ids"]:
             raise AuthorityResolutionError("AUTHORITY_RESOURCE_ID_OUT_OF_SCOPE")
-        try:
-            nonce_consumed = self._consume_nonce(
-                tenant_id, claims["nonce"], expires_at=expires)
-        except TypeError:
-            # Backward-compatible two-argument adapters remain usable, but
-            # cannot perform expiry-aware retention without their own policy.
-            nonce_consumed = self._consume_nonce(tenant_id, claims["nonce"])
+        nonce_consumed = self._consume_nonce(
+            tenant_id, claims["nonce"], expires_at=expires)
         if nonce_consumed is not True:
             raise AuthorityResolutionError("ASSERTION_REPLAY_DETECTED")
         return {
