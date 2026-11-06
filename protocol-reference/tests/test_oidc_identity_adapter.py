@@ -35,7 +35,7 @@ class OIDCAdapterTests(unittest.TestCase):
     def claims(self, **changes):
         value = {"iss": "https://identity.example.ug", "sub": "opaque|subject/01",
                  "aud": "kin-sys-api", "iat": self.now - 20,
-                 "exp": self.now + 180, "auth_time": self.now - 10,
+                 "exp": self.now + 180, "auth_time": self.now - 30,
                  "nonce": "nonce-oidc-000001", "acr": "urn:loa:2",
                  "amr": ["pwd", "otp"]}
         value.update(changes)
