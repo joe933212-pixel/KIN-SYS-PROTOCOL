@@ -166,5 +166,43 @@ class IdentityProviderRegistryTests(unittest.TestCase):
         self.assertIsNone(factory("tenant-bank-ug", "national-idp"))
 
 
+    def test_provider_config_revision_moves_head_to_pending_until_reapproved(self):
+        self.activate()
+        revised = dict(self.config)
+        revised["version"] = "3"
+        revised["status"] = "PENDING"
+        revised["allowed_algorithms"] = ["RS256", "ES256"]
+        self.registry.revise_provider_config(
+            tenant_id="tenant-bank-ug", provider_id="national-idp",
+            expected_version="2", config=revised, event_id="event-revise-1",
+            actor_ref="actor-admin", evidence_ref="approval-ref-3",
+        )
+        self.assertIsNone(self.registry.resolve_active_provider(
+            "tenant-bank-ug", "national-idp", now=self.now))
+        self.assertEqual(self.registry.get_provider(
+            tenant_id="tenant-bank-ug", provider_id="national-idp")["version"], "3")
+        self.registry.transition_provider(
+            tenant_id="tenant-bank-ug", provider_id="national-idp",
+            expected_version="3", new_version="4", new_status="ACTIVE",
+            event_id="event-reactivate-1", actor_ref="actor-admin",
+            evidence_ref="approval-ref-4",
+        )
+        active = self.registry.resolve_active_provider(
+            "tenant-bank-ug", "national-idp", now=self.now)
+        self.assertEqual(active["allowed_algorithms"], ["RS256", "ES256"])
+
+    def test_issuer_policy_resolution_is_tenant_scoped_and_unique(self):
+        self.activate()
+        policy = self.registry.resolve_active_issuer_policy(
+            "tenant-bank-ug", self.config["issuer"], now=self.now)
+        self.assertEqual(policy["audiences"], ["kin-sys-api"])
+        self.assertEqual(policy["required_amr"], ["otp"])
+        self.assertIsNone(self.registry.resolve_active_issuer_policy(
+            "tenant-other", self.config["issuer"], now=self.now))
+        self.assertIsNone(self.registry.resolve_active_issuer_policy(
+            "tenant-bank-ug", "https://other.example", now=self.now))
+
+
+
 if __name__ == "__main__":
     unittest.main()
