@@ -81,6 +81,22 @@ class InstitutionalTrustRegistry:
           FOREIGN KEY (tenant_id, grant_id, version)
             REFERENCES authority_grant_versions(tenant_id, grant_id, version)
         );
+        CREATE TABLE IF NOT EXISTS trusted_issuer_relationships (
+          tenant_id TEXT NOT NULL, issuer_institution_id TEXT NOT NULL,
+          status TEXT NOT NULL, trust_basis_ref TEXT NOT NULL,
+          valid_from INTEGER NOT NULL, valid_until INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, issuer_institution_id)
+        );
+        CREATE TABLE IF NOT EXISTS trusted_issuer_events (
+          tenant_id TEXT NOT NULL, event_id TEXT NOT NULL,
+          issuer_institution_id TEXT NOT NULL, event_type TEXT NOT NULL,
+          actor_ref TEXT NOT NULL, evidence_ref TEXT NOT NULL,
+          payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, event_id),
+          FOREIGN KEY (tenant_id, issuer_institution_id)
+            REFERENCES trusted_issuer_relationships(tenant_id, issuer_institution_id)
+        );
         CREATE TABLE IF NOT EXISTS institutional_trust_keys (
           tenant_id TEXT NOT NULL, issuer_institution_id TEXT NOT NULL,
           key_id TEXT NOT NULL, algorithm TEXT NOT NULL, public_key_ref TEXT NOT NULL,
@@ -274,6 +290,104 @@ class InstitutionalTrustRegistry:
                  "event_type": r["event_type"], "actor_ref": r["actor_ref"],
                  "evidence_ref": r["evidence_ref"], "payload": json.loads(r["payload_json"]),
                  "created_at": r["created_at"]} for r in rows]
+
+    def register_trusted_issuer(self, *, tenant_id: str, issuer_institution_id: str,
+                                trust_basis_ref: str, valid_from: int, valid_until: int,
+                                actor_ref: str, evidence_ref: str) -> dict[str, Any]:
+        """Establish this tenant's explicit trust relationship with an issuer."""
+        self._tenant(tenant_id)
+        for value, code in ((issuer_institution_id, "INVALID_ISSUER_ID"),
+                            (actor_ref, "INVALID_EVENT_ACTOR"),
+                            (evidence_ref, "TRUST_EVIDENCE_REQUIRED")):
+            _required_identifier(value, code)
+        if not isinstance(trust_basis_ref, str) or not trust_basis_ref.strip():
+            raise TrustRegistryError("TRUST_BASIS_REFERENCE_REQUIRED")
+        if type(valid_from) is not int or type(valid_until) is not int or valid_until <= valid_from:
+            raise TrustRegistryError("INVALID_TRUST_RELATIONSHIP_VALIDITY")
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            try:
+                self.db.execute(
+                    "INSERT INTO trusted_issuer_relationships VALUES(?,?,?,?,?,?,?)",
+                    (tenant_id, issuer_institution_id, "ACTIVE", trust_basis_ref,
+                     valid_from, valid_until, now))
+            except sqlite3.IntegrityError as exc:
+                raise TrustRegistryConflict("ISSUER_TRUST_RELATIONSHIP_ALREADY_EXISTS") from exc
+            self.db.execute(
+                "INSERT INTO trusted_issuer_events VALUES(?,?,?,?,?,?,?,?)",
+                (tenant_id, "issuer-trust:" + issuer_institution_id,
+                 issuer_institution_id, "ISSUER_TRUST_ESTABLISHED", actor_ref,
+                 evidence_ref, _canonical({"trust_basis_ref": trust_basis_ref}), now))
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+        return {"trusted": True, "issuer_institution_id": issuer_institution_id}
+
+    def revoke_trusted_issuer(self, *, tenant_id: str, issuer_institution_id: str,
+                              actor_ref: str, evidence_ref: str,
+                              event_id: str) -> dict[str, Any]:
+        self._tenant(tenant_id)
+        for value, code in ((issuer_institution_id, "INVALID_ISSUER_ID"),
+                            (actor_ref, "INVALID_EVENT_ACTOR"),
+                            (evidence_ref, "TRUST_EVIDENCE_REQUIRED"),
+                            (event_id, "INVALID_EVENT_ID")):
+            _required_identifier(value, code)
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute(
+                "SELECT status FROM trusted_issuer_relationships WHERE tenant_id=? AND issuer_institution_id=?",
+                (tenant_id, issuer_institution_id)).fetchone()
+            if row is None:
+                raise TrustRegistryError("TRUSTED_ISSUER_NOT_FOUND")
+            if row["status"] == "REVOKED":
+                raise TrustRegistryConflict("ISSUER_TRUST_ALREADY_REVOKED")
+            self.db.execute(
+                "UPDATE trusted_issuer_relationships SET status='REVOKED' WHERE tenant_id=? AND issuer_institution_id=?",
+                (tenant_id, issuer_institution_id))
+            self.db.execute(
+                "INSERT INTO trusted_issuer_events VALUES(?,?,?,?,?,?,?,?)",
+                (tenant_id, event_id, issuer_institution_id, "ISSUER_TRUST_REVOKED",
+                 actor_ref, evidence_ref, _canonical({"status": "REVOKED"}), now))
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+        return {"revoked": True, "issuer_institution_id": issuer_institution_id}
+
+    def load_trust_key(self, tenant_id: str, key_id: str) -> dict[str, Any] | None:
+        """Resolver adapter: return only keys under an active issuer trust root."""
+        self._tenant(tenant_id)
+        _required_identifier(key_id, "INVALID_KEY_ID")
+        row = self.db.execute(
+            """SELECT k.tenant_id,k.issuer_institution_id,k.key_id,k.algorithm,
+                      k.public_key_ref,k.status,k.valid_from,k.valid_until
+               FROM institutional_trust_keys k
+               JOIN trusted_issuer_relationships i
+                 ON i.tenant_id=k.tenant_id
+                AND i.issuer_institution_id=k.issuer_institution_id
+               WHERE k.tenant_id=? AND k.key_id=? AND i.status='ACTIVE'""",
+            (tenant_id, key_id)).fetchone()
+        return dict(row) if row else None
+
+    def list_trusted_issuer_events(self, *, tenant_id: str,
+                                  issuer_institution_id: str) -> list[dict[str, Any]]:
+        self._tenant(tenant_id)
+        _required_identifier(issuer_institution_id, "INVALID_ISSUER_ID")
+        rows = self.db.execute(
+            """SELECT event_id,event_type,actor_ref,evidence_ref,payload_json,created_at
+               FROM trusted_issuer_events
+               WHERE tenant_id=? AND issuer_institution_id=?
+               ORDER BY created_at,event_id""",
+            (tenant_id, issuer_institution_id)).fetchall()
+        return [{"event_id": r["event_id"], "event_type": r["event_type"],
+                 "actor_ref": r["actor_ref"], "evidence_ref": r["evidence_ref"],
+                 "payload": json.loads(r["payload_json"]), "created_at": r["created_at"]}
+                for r in rows]
 
     def register_trust_key(self, *, tenant_id: str, issuer_institution_id: str,
                            key_id: str, algorithm: str, public_key_ref: str,
