@@ -6,6 +6,7 @@ legal-source verification, cryptographic trust, or production isolation.
 """
 from __future__ import annotations
 from copy import deepcopy
+import re
 from typing import Any
 
 DOMAIN_VERSION = "kin-sys-institutional-domain-0.1"
@@ -15,6 +16,13 @@ MINAH_STATES = {"REGISTERED", "CONNECTIVITY_VERIFIED", "CONFORMANCE_PASSED", "AC
 ADAPTER_MODES = {"NATIVE", "EXTERNAL_SERVICE", "MANAGED_RUNTIME"}
 BINDING_STATES = {"DRAFT", "VALIDATED", "APPROVED", "ACTIVE", "SUSPENDED", "REVOKED"}
 SOURCE_TYPES = {"STATUTE", "REGULATION", "DIRECTIVE", "TREATY", "INSTITUTIONAL_POLICY", "PROCEDURE", "AUTHORITY_RULE", "IDENTITY_REQUIREMENT", "OTHER"}
+ALLOWED = {
+ "institution": {"institution_id","legal_name","jurisdiction_ref","status","verification_ref"},
+ "jurisdiction": {"package_id","version","owner_institution_id","jurisdiction_ref","status","sources","approval_ref"},
+ "source": {"source_ref","source_type","title","publisher_ref","content_digest","provenance_ref","effective_from","effective_to","status","approval_ref"},
+ "minah": {"deployment_id","owner_institution_id","adapter_mode","adapter_ref","model_ref","interface_version","status"},
+ "binding": {"binding_id","owner_institution_id","jurisdiction_package_id","jurisdiction_package_version","minah_deployment_id","policy_pack_version","source_pack_version","authority_profile_version","status","approval_ref"},
+}
 REQUIRED = {
  "institution": {"institution_id","legal_name","jurisdiction_ref","status","verification_ref"},
  "jurisdiction": {"package_id","version","owner_institution_id","jurisdiction_ref","status","sources","approval_ref"},
@@ -30,6 +38,9 @@ def _record(value: Any, kind: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise DomainModelViolation(kind.upper() + "_MUST_BE_OBJECT")
     missing = sorted(REQUIRED[kind] - set(value))
+    unexpected = sorted(set(value) - ALLOWED[kind])
+    if unexpected:
+        raise DomainModelViolation("UNSUPPORTED_" + kind.upper() + "_FIELDS:" + ",".join(unexpected))
     if missing:
         raise DomainModelViolation("MISSING_" + kind.upper() + "_FIELDS:" + ",".join(missing))
     return deepcopy(value)
@@ -53,7 +64,7 @@ def validate_source(value: Any) -> dict[str, Any]:
     _strings(r, ("source_ref","source_type","title","publisher_ref","content_digest","provenance_ref","effective_from","status"), "source")
     if r["source_type"] not in SOURCE_TYPES:
         raise DomainModelViolation("INVALID_SOURCE_TYPE")
-    if not r["content_digest"].startswith("sha256:"):
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", r["content_digest"]):
         raise DomainModelViolation("SOURCE_REQUIRES_SHA256_CONTENT_DIGEST")
     if r["status"] not in {"SUBMITTED","VALIDATED","APPROVED","REJECTED","SUPERSEDED"}:
         raise DomainModelViolation("INVALID_SOURCE_STATUS")
