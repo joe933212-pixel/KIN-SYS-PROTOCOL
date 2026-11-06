@@ -7,7 +7,9 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $OutputPath = Join-Path $RepoRoot $OutputDirectory
-$StageRoot = Join-Path $env:RUNNER_TEMP "kin-sys-portable-build"
+$TempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
+if (-not $TempRoot) { throw "Could not determine a temporary build directory." }
+$StageRoot = Join-Path $TempRoot "kin-sys-portable-build"
 $BundleRoot = Join-Path $StageRoot "KIN-SYS-Portable-Windows-x64"
 
 if (Test-Path $StageRoot) { Remove-Item $StageRoot -Recurse -Force }
@@ -23,7 +25,7 @@ if ($CopyCode -ge 8) { throw "Repository staging failed (robocopy exit code $Cop
 
 $RuntimeDirectory = Join-Path $BundleRoot "runtime"
 New-Item -ItemType Directory -Path $RuntimeDirectory -Force | Out-Null
-$RuntimeArchive = Join-Path $env:RUNNER_TEMP "python-$PythonVersion-embed-amd64.zip"
+$RuntimeArchive = Join-Path $TempRoot "python-$PythonVersion-embed-amd64.zip"
 $RuntimeUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
 
 Write-Host "Downloading official CPython $PythonVersion Windows x64 embeddable distribution..."
@@ -59,7 +61,7 @@ echo Dashboard: http://127.0.0.1:8765
 echo Local data: "%KIN_SYS_SANDBOX_DATA_DIR%"
 echo Use Ctrl+C in this window to stop the sandbox.
 echo.
-start "" http://127.0.0.1:8765
+start "" /B powershell.exe -NoProfile -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:8765'"
 "runtime\python.exe" -I "sandbox\portable_server.py"
 if errorlevel 1 (
   echo.
