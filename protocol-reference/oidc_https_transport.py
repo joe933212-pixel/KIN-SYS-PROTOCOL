@@ -13,6 +13,8 @@ import ipaddress
 import json
 import socket
 import ssl
+import threading
+import time
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
@@ -99,6 +101,7 @@ class OIDCHTTPSJSONTransport:
         self, *, allowed_hosts: tuple[str, ...],
         connect_timeout_seconds: float = 3.0,
         read_timeout_seconds: float = 5.0,
+        total_timeout_seconds: float = 10.0,
         resolver: Callable[..., Any] = socket.getaddrinfo,
         connection_factory: Callable[..., Any] | None = None,
         ssl_context: ssl.SSLContext | None = None,
@@ -114,13 +117,17 @@ class OIDCHTTPSJSONTransport:
                 or not 0.1 <= connect_timeout_seconds <= 30
                 or isinstance(read_timeout_seconds, bool)
                 or not isinstance(read_timeout_seconds, (int, float))
-                or not 0.1 <= read_timeout_seconds <= 60):
+                or not 0.1 <= read_timeout_seconds <= 60
+                or isinstance(total_timeout_seconds, bool)
+                or not isinstance(total_timeout_seconds, (int, float))
+                or not 0.1 <= total_timeout_seconds <= 120):
             raise OIDCTransportError("OIDC_TRANSPORT_TIMEOUT_INVALID")
         if not callable(resolver):
             raise OIDCTransportError("OIDC_TRANSPORT_RESOLVER_INVALID")
         self._allowed_hosts = frozenset(allowed_hosts)
         self._connect_timeout = float(connect_timeout_seconds)
         self._read_timeout = float(read_timeout_seconds)
+        self._total_timeout = float(total_timeout_seconds)
         context = ssl_context or ssl.create_default_context()
         if (context.verify_mode != ssl.CERT_REQUIRED or not context.check_hostname
                 or context.minimum_version < ssl.TLSVersion.TLSv1_2):
@@ -146,22 +153,38 @@ class OIDCHTTPSJSONTransport:
                 or "\\" in url or any(ord(ch) < 0x20 for ch in url)):
             raise OIDCTransportError("OIDC_PROVIDER_URL_REJECTED")
         port = port or 443
+        deadline = time.monotonic() + min(self._total_timeout, float(timeout_seconds))
+
+        def remaining_time() -> float:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise OIDCTransportError("OIDC_REQUEST_DEADLINE_EXCEEDED")
+            return remaining
+
+        # DNS resolution is synchronous; deployments must supply a resolver
+        # with its own bounded lookup timeout. Its elapsed time counts against
+        # the same end-to-end budget.
         addresses = _validated_public_addresses(host, port, self._resolver)
-        # The URL loader controls the request timeout; this transport never
-        # exceeds its own stricter configured connect/read bounds.
-        connect_timeout = min(self._connect_timeout, float(timeout_seconds))
-        read_timeout = min(self._read_timeout, float(timeout_seconds))
+        remaining_time()
         path = parts.path or "/"
         if parts.query:
             path += "?" + parts.query
         last_error: Exception | None = None
         for address in addresses:
             connection = None
+            deadline_timer = None
             try:
+                remaining = remaining_time()
                 connection = self._connection_factory(
                     host, port, pinned_ip=address,
-                    timeout=connect_timeout, context=self._ssl_context,
+                    timeout=min(self._connect_timeout, remaining),
+                    context=self._ssl_context,
                 )
+                # All address attempts share one deadline. Closing the active
+                # connection interrupts a stalled request/header/body read.
+                deadline_timer = threading.Timer(remaining_time(), connection.close)
+                deadline_timer.daemon = True
+                deadline_timer.start()
                 connection.request(
                     "GET", path,
                     headers={
@@ -172,9 +195,11 @@ class OIDCHTTPSJSONTransport:
                         "User-Agent": "KIN-SYS-OIDC-Discovery/1.0",
                     },
                 )
+                remaining = remaining_time()
                 if connection.sock is not None:
-                    connection.sock.settimeout(read_timeout)
+                    connection.sock.settimeout(min(self._read_timeout, remaining))
                 response = connection.getresponse()
+                remaining_time()
                 if 300 <= response.status < 400:
                     raise OIDCTransportError("OIDC_REDIRECT_REJECTED")
                 if response.status != 200:
@@ -193,6 +218,7 @@ class OIDCHTTPSJSONTransport:
                     except ValueError as exc:
                         raise OIDCTransportError("OIDC_PROVIDER_CONTENT_LENGTH_INVALID") from exc
                 body = response.read(max_bytes + 1)
+                remaining_time()
                 if len(body) > max_bytes:
                     raise OIDCTransportError("OIDC_PROVIDER_RESPONSE_TOO_LARGE")
                 try:
@@ -203,14 +229,20 @@ class OIDCHTTPSJSONTransport:
                     )
                 except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                     raise OIDCTransportError("OIDC_PROVIDER_JSON_INVALID") from exc
+                remaining_time()
                 if not isinstance(document, dict):
                     raise OIDCTransportError("OIDC_PROVIDER_DOCUMENT_INVALID")
                 return document
             except OIDCTransportError:
                 raise
             except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+                if time.monotonic() >= deadline:
+                    raise OIDCTransportError("OIDC_REQUEST_DEADLINE_EXCEEDED") from exc
                 last_error = exc
             finally:
+                if deadline_timer is not None:
+                    deadline_timer.cancel()
                 if connection is not None:
                     connection.close()
+        remaining_time()
         raise OIDCTransportError("OIDC_PROVIDER_CONNECTION_FAILED") from last_error
