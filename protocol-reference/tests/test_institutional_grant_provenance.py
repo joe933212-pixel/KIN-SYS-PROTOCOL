@@ -44,11 +44,11 @@ class IssuerSignedGrantTests(unittest.TestCase):
     def public_key(self, ref):
         return self.public_bytes if ref == "public:key-01" else None
 
-    def verify(self, envelope=None, tenant="tenant-receiver", key_loader=None):
+    def verify(self, envelope=None, tenant="tenant-receiver", key_loader=None, clock=None):
         return verify_authority_grant(
             envelope or self.envelope, tenant_id=tenant,
             trust_key_loader=key_loader or self.trust_key,
-            public_key_loader=self.public_key, clock=lambda: 150)
+            public_key_loader=self.public_key, clock=clock or (lambda: 150))
 
     def test_issuer_signature_verifies_against_receiver_trust_root(self):
         self.assertEqual(self.verify(), self.grant)
@@ -112,7 +112,7 @@ class IssuerSignedGrantTests(unittest.TestCase):
         with self.assertRaisesRegex(GrantProvenanceError, "GRANT_TENANT_MISMATCH"):
             self.verify(tenant="tenant-other")
         with self.assertRaisesRegex(GrantProvenanceError, "GRANT_OUTSIDE_VALIDITY"):
-            self.verify()
+            self.verify(clock=lambda: 350)
 
     def test_only_pending_grants_may_be_issued(self):
         with self.assertRaisesRegex(GrantProvenanceError, "ISSUED_GRANT_MUST_BE_PENDING"):
