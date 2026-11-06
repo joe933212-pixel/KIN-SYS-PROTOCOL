@@ -281,9 +281,13 @@ class InstitutionalTrustRegistry:
                            actor_ref: str, evidence_ref: str) -> dict[str, Any]:
         self._tenant(tenant_id)
         for value, code in ((issuer_institution_id, "INVALID_ISSUER_ID"),
-                            (key_id, "INVALID_KEY_ID"), (public_key_ref, "PUBLIC_KEY_REFERENCE_REQUIRED"),
-                            (actor_ref, "INVALID_EVENT_ACTOR"), (evidence_ref, "TRUST_EVIDENCE_REQUIRED")):
+                            (key_id, "INVALID_KEY_ID"),
+                            (actor_ref, "INVALID_EVENT_ACTOR"),
+                            (evidence_ref, "TRUST_EVIDENCE_REQUIRED")):
             _required_identifier(value, code)
+        if (not isinstance(public_key_ref, str) or not public_key_ref.strip()
+                or any(ord(ch) < 32 for ch in public_key_ref)):
+            raise TrustRegistryError("PUBLIC_KEY_REFERENCE_REQUIRED")
         if algorithm not in KEY_ALGORITHMS:
             raise TrustRegistryError("UNSUPPORTED_TRUST_KEY_ALGORITHM")
         if type(valid_from) is not int or type(valid_until) is not int or valid_until <= valid_from:
