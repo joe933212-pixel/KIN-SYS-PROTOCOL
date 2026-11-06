@@ -1,10 +1,10 @@
 [CmdletBinding()]
 param(
-    [string]$PythonVersion = "3.14.10",
     [string]$OutputDirectory = "dist"
 )
 
 $ErrorActionPreference = "Stop"
+$PythonVersion = "3.14.10"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $OutputPath = Join-Path $RepoRoot $OutputDirectory
 $TempRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
