@@ -208,6 +208,10 @@ class InstitutionalIdentityProviderRegistry:
                 raise IdentityProviderRegistryError("PROVIDER_NOT_FOUND")
             if head["current_version"] != expected_version:
                 raise IdentityProviderRegistryConflict("STALE_PROVIDER_VERSION")
+            if self.db.execute(
+                "SELECT 1 FROM identity_provider_versions WHERE tenant_id=? AND provider_id=? AND version=?",
+                (tenant_id, provider_id, config["version"])).fetchone():
+                raise IdentityProviderRegistryConflict("PROVIDER_VERSION_ALREADY_EXISTS")
             self.db.execute(
                 "INSERT INTO identity_provider_versions VALUES(?,?,?,?,?,?)",
                 (tenant_id, provider_id, config["version"], "PENDING", body, now))
@@ -259,6 +263,10 @@ class InstitutionalIdentityProviderRegistry:
                 (tenant_id, provider_id, expected_version)).fetchone()
             config = json.loads(current["config_json"])
             old_status = config["status"]
+            if self.db.execute(
+                "SELECT 1 FROM identity_provider_versions WHERE tenant_id=? AND provider_id=? AND version=?",
+                (tenant_id, provider_id, new_version)).fetchone():
+                raise IdentityProviderRegistryConflict("PROVIDER_VERSION_ALREADY_EXISTS")
             allowed = {
                 "PENDING": {"ACTIVE", "SUSPENDED", "REVOKED"},
                 "ACTIVE": {"SUSPENDED", "REVOKED"},
