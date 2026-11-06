@@ -49,8 +49,8 @@ class IdentityProviderAdapter(Protocol):
     """Trusted adapter for one configured institutional identity provider."""
 
     def verify_credential(
-        self, credential: Any, *, tenant_id: str, provider_id: str,
-        expected_audience: str, expected_nonce: str,
+        self, credential: Any, *, tenant_id: str, expected_audience: str,
+        expected_nonce: str,
     ) -> VerifiedIdentityAssertion:
         """Verify native credential and return typed, verified identity claims."""
         ...
@@ -100,8 +100,8 @@ class InstitutionalIdentityResolver:
         return value
 
     def authenticate(
-        self, credential: Any, *, tenant_id: str, expected_audience: str,
-        expected_nonce: str,
+        self, credential: Any, *, tenant_id: str, provider_id: str,
+        expected_audience: str, expected_nonce: str,
     ) -> dict[str, Any]:
         tenant_id = self._identifier(tenant_id, "TENANT_CONTEXT_REQUIRED")
         provider_id = self._identifier(provider_id, "IDENTITY_PROVIDER_ID_REQUIRED")
