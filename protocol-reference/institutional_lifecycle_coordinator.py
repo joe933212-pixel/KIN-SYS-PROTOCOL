@@ -14,6 +14,7 @@ from institutional_deployment_domain import (
     validate_jurisdiction_package, validate_minah_deployment,
 )
 from institutional_lifecycle_service import apply_transition
+from institutional_authority import InstitutionalAuthorityResolver
 from institutional_registry import InstitutionalRegistry
 
 VALIDATORS = {
@@ -37,13 +38,16 @@ class LifecycleCoordinatorError(ValueError):
 class InstitutionalLifecycleCoordinator:
     """Validate, propose and atomically persist a tenant-scoped transition."""
 
-    def __init__(self, registry: InstitutionalRegistry):
+    def __init__(self, registry: InstitutionalRegistry, authority_resolver: InstitutionalAuthorityResolver):
+        if not isinstance(authority_resolver, InstitutionalAuthorityResolver):
+            raise LifecycleCoordinatorError("TRUSTED_AUTHORITY_RESOLVER_REQUIRED")
         self.registry = registry
+        self.authority_resolver = authority_resolver
 
     def transition(
         self, *, tenant_id: str, resource_type: str, resource_id: str,
         expected_version: str, new_version: str, event_id: str,
-        target_status: str, actor: dict[str, Any], evidence_ref: str,
+        target_status: str, actor_assertion: dict[str, Any], evidence_ref: str,
         approval_ref: str | None = None,
         activation_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -87,6 +91,10 @@ class InstitutionalLifecycleCoordinator:
             if eligibility.get("activation_eligible") is not True:
                 raise LifecycleCoordinatorError("ACTIVATION_GATE_FAILED")
 
+        actor = self.authority_resolver.resolve(
+            actor_assertion, tenant_id=tenant_id,
+            resource_type=resource_type, resource_id=resource_id,
+        )
         proposed = apply_transition(
             resource_type, record, target_status, actor,
             evidence_ref=evidence_ref, approval_ref=approval_ref,
