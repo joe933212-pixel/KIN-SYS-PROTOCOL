@@ -56,7 +56,7 @@ the token in a committed file, workflow YAML, issue, log or shell history.
 Then run:
 
 ```sh
-python -m unittest protocol-reference.tests.test_oidc_live_provider -v
+cd protocol-reference && python -m unittest discover -s tests -p test_oidc_live_provider.py -v
 ```
 
 The normal conformance suite discovers this test too. When the environment is
