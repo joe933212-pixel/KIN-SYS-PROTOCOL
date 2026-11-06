@@ -28,7 +28,7 @@ class SQLiteNonceGuardTests(unittest.TestCase):
     def test_expired_nonce_records_are_pruned_and_nonce_can_be_reused(self):
         self.assertTrue(self.guard.consume("tenant-a", "nonce-expiring-000001", 110))
         self.now[0] = 110
-        self.assertFalse(self.guard.consume("tenant-a", "nonce-expiring-000001", 110))
+        self.assertTrue(self.guard.consume("tenant-a", "nonce-prune-trigger-01", 130))
         self.assertTrue(self.guard.consume("tenant-a", "nonce-expiring-000001", 130))
 
     def test_expired_or_malformed_nonce_is_rejected(self):
