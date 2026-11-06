@@ -204,5 +204,53 @@ class IdentityProviderRegistryTests(unittest.TestCase):
 
 
 
+    def test_issuer_policy_lookup_fails_closed_on_ambiguous_active_issuer(self):
+        self.activate()
+        second = dict(self.config)
+        second.update({"provider_id": "backup-idp", "version": "1"})
+        self.registry.register_provider(
+            tenant_id="tenant-bank-ug", config=second,
+            event_id="event-register-backup", actor_ref="actor-admin",
+            evidence_ref="approval-backup-1",
+        )
+        self.registry.transition_provider(
+            tenant_id="tenant-bank-ug", provider_id="backup-idp",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            event_id="event-activate-backup", actor_ref="actor-admin",
+            evidence_ref="approval-backup-2",
+        )
+        self.assertIsNone(self.registry.resolve_active_issuer_policy(
+            "tenant-bank-ug", self.config["issuer"], now=self.now))
+
+    def test_malformed_policy_collection_types_are_rejected_cleanly(self):
+        for field, value in (
+            ("allowed_algorithms", [["RS256"]]),
+            ("required_amr", [["otp"]]),
+            ("status", ["ACTIVE"]),
+            ("allowed_hosts", ["identity.example.ug", []]),
+        ):
+            config = dict(self.config)
+            config[field] = value
+            with self.subTest(field=field), self.assertRaises(IdentityProviderRegistryError):
+                self.registry.register_provider(
+                    tenant_id="tenant-bank-ug", config=config,
+                    event_id="event-malformed-" + field, actor_ref="actor-admin",
+                    evidence_ref="approval-malformed",
+                )
+
+    def test_provider_revision_requires_new_version_and_fresh_approval(self):
+        self.activate()
+        revised = dict(self.config)
+        revised.update({"version": "2", "status": "PENDING"})
+        with self.assertRaises(IdentityProviderRegistryError):
+            self.registry.revise_provider_config(
+                tenant_id="tenant-bank-ug", provider_id="national-idp",
+                expected_version="2", config=revised,
+                event_id="event-invalid-revision", actor_ref="actor-admin",
+                evidence_ref="approval-ref",
+            )
+
+
+
 if __name__ == "__main__":
     unittest.main()
