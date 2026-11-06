@@ -21,7 +21,7 @@ class AuthorityResolutionError(ValueError):
 
 
 CLAIM_FIELDS = {
-    "key_id", "tenant_id", "actor_ref", "grant_id",
+    "key_id", "tenant_id", "actor_ref", "grant_id", "grant_version",
     "issued_at", "expires_at", "nonce",
 }
 GRANT_FIELDS = {
@@ -133,7 +133,8 @@ class InstitutionalAuthorityResolver:
         grant = self._grant_loader(tenant_id, claims["grant_id"])
         if not isinstance(grant, dict) or set(grant) != GRANT_FIELDS:
             raise AuthorityResolutionError("AUTHORITY_GRANT_NOT_FOUND_OR_MALFORMED")
-        if grant["tenant_id"] != tenant_id or grant["grant_id"] != claims["grant_id"]:
+        if (grant["tenant_id"] != tenant_id or grant["grant_id"] != claims["grant_id"]
+                or grant["version"] != claims["grant_version"]):
             raise AuthorityResolutionError("AUTHORITY_GRANT_SCOPE_MISMATCH")
         if grant["status"] != "ACTIVE":
             raise AuthorityResolutionError("AUTHORITY_GRANT_NOT_ACTIVE")
