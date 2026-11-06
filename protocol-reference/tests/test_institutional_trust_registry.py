@@ -189,6 +189,27 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
                 assertion, tenant_id="tenant-a",
                 resource_type="institution", resource_id="BANK-UG-01")
 
+    def test_revoking_issuer_trust_disables_all_its_registered_keys(self):
+        self.create()
+        self.registry.register_trusted_issuer(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            trust_basis_ref="trust-agreement:ug-01", valid_from=100, valid_until=2000,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:trust-approval")
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            key_id="issuer-key-under-root", algorithm="Ed25519",
+            public_key_ref="vault://public/key-under-root",
+            valid_from=100, valid_until=2000,
+            actor_ref="actor:trust-admin", evidence_ref="evidence:key-approval")
+        self.assertIsNotNone(self.registry.load_trust_key("tenant-a", "issuer-key-under-root"))
+        self.registry.revoke_trusted_issuer(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            actor_ref="actor:trust-admin", evidence_ref="evidence:trust-revocation",
+            event_id="issuer-trust-revoked")
+        self.assertIsNone(self.registry.load_trust_key("tenant-a", "issuer-key-under-root"))
+        self.assertEqual(len(self.registry.list_trusted_issuer_events(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY")), 2)
+
     def test_ed25519_key_is_not_accepted_without_explicit_issuer_trust(self):
         self.create()
         private_key = Ed25519PrivateKey.generate()
