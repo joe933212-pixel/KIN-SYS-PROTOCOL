@@ -104,6 +104,7 @@ class InstitutionalIdentityResolver:
         expected_nonce: str,
     ) -> dict[str, Any]:
         tenant_id = self._identifier(tenant_id, "TENANT_CONTEXT_REQUIRED")
+        provider_id = self._identifier(provider_id, "IDENTITY_PROVIDER_ID_REQUIRED")
         expected_audience = self._identifier(expected_audience, "IDENTITY_AUDIENCE_REQUIRED")
         expected_nonce = self._identifier(expected_nonce, "IDENTITY_NONCE_REQUIRED")
         if credential is None:
@@ -111,9 +112,7 @@ class InstitutionalIdentityResolver:
 
         # Provider selection must come from receiver-controlled configuration,
         # not from an untrusted issuer field in the credential.
-        # The adapter loader is keyed by tenant and configured provider alias;
-        # this resolver's deployment wrapper supplies that alias as audience.
-        adapter = self._adapter_loader(tenant_id, expected_audience)
+        adapter = self._adapter_loader(tenant_id, provider_id)
         if not isinstance(adapter, IdentityProviderAdapter):
             raise IdentityResolutionError("IDENTITY_PROVIDER_NOT_CONFIGURED")
         try:
@@ -154,7 +153,7 @@ class InstitutionalIdentityResolver:
         policy = self._issuer_policy_loader(tenant_id, issuer)
         if not isinstance(policy, dict) or policy.get("status") != "ACTIVE":
             raise IdentityResolutionError("IDENTITY_ISSUER_NOT_TRUSTED")
-        if issuer not in (policy.get("issuer"), issuer):
+        if policy.get("issuer") != issuer:
             raise IdentityResolutionError("IDENTITY_ISSUER_POLICY_MISMATCH")
         if (type(policy.get("valid_from")) is not int
                 or type(policy.get("valid_until")) is not int
