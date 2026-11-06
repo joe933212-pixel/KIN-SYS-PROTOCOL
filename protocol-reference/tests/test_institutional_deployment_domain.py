@@ -75,7 +75,7 @@ class InstitutionalDomainTests(unittest.TestCase):
     def test_minah_domain_record_rejects_secret_material(self):
         item = records()[2]
         item["api_key"] = "must-not-be-here"
-        with self.assertRaisesRegex(DomainModelViolation, "SENSITIVE_MATERIAL_MUST_NOT_BE_STORED"):
+        with self.assertRaisesRegex(DomainModelViolation, "UNSUPPORTED_MINAH_FIELDS"):
             validate_minah_deployment(item)
 
     def test_python_validator_rejects_unknown_fields(self):
