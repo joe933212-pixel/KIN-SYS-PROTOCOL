@@ -10,7 +10,7 @@ From a Windows PowerShell session with internet access, run:
 .\scripts\package-portable-windows.ps1
 ```
 
-The build downloads the official CPython 3.13.17 Windows x64 embeddable distribution from python.org, checks that the runtime can import the standard-library modules required by KIN-SYS, stages the repository without local databases or Git history, and creates:
+The build downloads the official CPython 3.14.10 Windows x64 embeddable distribution from python.org, verifies the official Python.org archive SHA-256 against the release page, checks that the runtime can import the standard-library modules required by KIN-SYS, stages the repository without local databases or Git history, and creates:
 
 - `dist/KIN-SYS-Portable-Windows-x64.zip`
 - `dist/KIN-SYS-Portable-Windows-x64.zip.sha256`
