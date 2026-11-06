@@ -68,3 +68,37 @@ The current adapter supports OIDC ID-token verification. It does not implement S
 ## Verification boundary
 
 The end-to-end provider-registry test uses an in-process deterministic JSON transport fixture to exercise registration, activation, adapter construction, discovery metadata, JWKS loading, RSA-signed ID-token verification, issuer/audience/assurance policy, subject binding and principal resolution. It is not a live external identity-provider test and does not exercise public DNS, TLS certificates or a provider's real key-rotation endpoint. A controlled test IdP integration remains a separate milestone.
+
+
+## Authority-gated provider administration
+
+The SQLite provider registry is intentionally a persistence primitive; its
+mutation methods must not be exposed directly to an HTTP route, dashboard or
+operator-facing API. The application boundary is now implemented in
+`protocol-reference/institutional_identity_provider_administration.py`.
+Every registration, configuration revision, activation, suspension and
+revocation request passes a signed actor assertion to the institutional
+authority resolver before the registry is mutated. The audit actor is derived
+from the resolver's verified principal; callers cannot supply an arbitrary
+actor reference.
+
+The service enforces distinct roles:
+- `identity_provider_registrar` for initial pending registration;
+- `identity_provider_configurator` for a new pending configuration version;
+- `identity_provider_approver` for activation;
+- `identity_provider_suspension_authority` for suspension; and
+- `identity_provider_revocation_authority` for terminal revocation.
+
+The authority grant must also be scoped to the tenant, resource type
+`identity_provider`, and exact provider ID. The role check is performed by
+the application service after the resolver verifies the assertion signature,
+grant version/status/validity, resource scope and one-time nonce. A provider
+revision remains pending and requires fresh approval. Registry methods remain
+available for controlled internal/test use but are not an administrative
+security boundary.
+
+This service is a reference application boundary, not yet a deployed
+administrator API. Production wiring must derive tenant context from a
+verified institutional session, use a trusted grant store and key custody,
+provide a shared replay store, protect evidence references, and expose only
+the service—not raw registry mutations—to external callers.
