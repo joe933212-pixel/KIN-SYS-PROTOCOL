@@ -78,7 +78,9 @@ The two-institution demonstrator models each participant as an independent owner
 
 The first persistence slice is implemented in `protocol-reference/institutional_registry.py`. It uses SQLite and provides tenant-scoped record creation, retrieval and listing for the four domain resource types, immutable (resource ID, version) records, canonical JSON digests, and append-only lifecycle events with event-ID idempotency. Composite tenant/resource keys are used in the event foreign key so an event cannot attach to a record owned by another tenant.
 
-The registry deliberately accepts a `tenant_id` from its caller; it does not authenticate or authorise that caller. The production API must derive tenant context from a verified principal and never trust a tenant ID supplied in an untrusted request body. The SQLite reference store is a single-process/local persistence increment, not a distributed registry, production isolation boundary, approval engine, or legal verification service. It does not itself perform lifecycle transitions: it records versioned state snapshots and append-only events. A separately governed application service must validate permitted transitions before writing a new version and its event.
+The registry deliberately accepts a `tenant_id` from its caller; it does not authenticate or authorise that caller. The production API must derive tenant context from a verified principal and never trust a tenant ID supplied in an untrusted request body. The SQLite reference store is a single-process/local persistence increment, not a distributed registry, production isolation boundary, approval engine, or legal verification service. It records versioned state snapshots and append-only events.
+
+The first lifecycle policy slice is implemented in `protocol-reference/institutional_lifecycle_service.py`. It defines allowed state transitions and distinct authority roles for verification, review, approval, activation, suspension and revocation. It requires authenticated/verified actor assertions, an authority reference and transition evidence; selected approval transitions also require an approval reference. Institution-owned records cannot be self-approved by an actor belonging to that same institution. The service returns a proposed next snapshot and audit-event payload without mutating the input record. The caller must perform authentication and authority resolution, enforce the expected-version/optimistic concurrency check, and persist the snapshot and event atomically. Role assertions and evidence references are not themselves cryptographically verified by this reference module.
 
 The reference tests cover tenant-scoped visibility, immutable version conflicts, event idempotency and conflict detection, cross-tenant event attachment rejection, missing tenant context, unsupported resource types and non-canonical payloads.
 
@@ -86,7 +88,7 @@ The reference tests cover tenant-scoped visibility, immutable version conflicts,
 
 1. Implement and test domain validators and activation eligibility.
 2. Add the SQLite reference registry with immutable versions and tenant-scoped access.
-3. Add an application service that validates lifecycle transitions and binds records to authenticated institutional principals.
+3. Add authenticated institutional principal resolution and atomically persist lifecycle snapshots plus audit events; the initial transition policy is implemented, but the persistence/application boundary remains to be connected.
 4. Add authenticated institution registration and authority verification.
 5. Add jurisdiction source ingestion, provenance and approval workflow.
 6. Add MINAH adapter registration, secret references, connectivity and conformance checks.
@@ -103,6 +105,7 @@ The reference tests cover tenant-scoped visibility, immutable version conflicts,
 - A binding cannot point to another tenant's MINAH or jurisdiction package.
 - A binding pins an exact jurisdiction package version.
 - Activation eligibility fails unless every required lifecycle gate and evidence reference is present.
+- Lifecycle transitions reject illegal skips, missing authority roles, unverified actors, missing evidence, and self-approval for approval transitions.
 - Existing MINAH profile approval and operation-pinning behaviour remains intact.
 
 ## Explicit non-claims
