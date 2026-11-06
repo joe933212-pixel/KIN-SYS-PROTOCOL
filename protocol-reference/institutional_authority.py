@@ -155,7 +155,7 @@ class InstitutionalAuthorityResolver:
     def __init__(
         self, *,
         grant_loader: Callable[[str, str], dict[str, Any] | None],
-        consume_nonce: Callable[[str, str], bool],
+        consume_nonce: Callable[..., bool],
         verification_keys: dict[str, bytes] | None = None,
         trust_key_loader: Callable[[str, str], dict[str, Any] | None] | None = None,
         public_key_loader: Callable[[str], bytes] | None = None,
