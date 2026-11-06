@@ -74,16 +74,25 @@ Retries and recovery preserve this pinned context. A newly activated binding app
 
 The two-institution demonstrator models each participant as an independent owner and decision domain. Each institution's MINAH evaluates only its own mandate and jurisdictional responsibilities. One participant's approval is not a proxy for the other's. CEE coordinates the instruction through the governed path; IVM enforcement remains inside CEE. A cross-border case identifies which rules apply to which participant, the evidence each participant accepts, and the agreed coordination outcome.
 
+## Persistence increment: reference registry
+
+The first persistence slice is implemented in `protocol-reference/institutional_registry.py`. It uses SQLite and provides tenant-scoped record creation, retrieval and listing for the four domain resource types, immutable (resource ID, version) records, canonical JSON digests, and append-only lifecycle events with event-ID idempotency. Composite tenant/resource keys are used in the event foreign key so an event cannot attach to a record owned by another tenant.
+
+The registry deliberately accepts a `tenant_id` from its caller; it does not authenticate or authorise that caller. The production API must derive tenant context from a verified principal and never trust a tenant ID supplied in an untrusted request body. The SQLite reference store is a single-process/local persistence increment, not a distributed registry, production isolation boundary, approval engine, or legal verification service. It does not itself perform lifecycle transitions: it records versioned state snapshots and append-only events. A separately governed application service must validate permitted transitions before writing a new version and its event.
+
+The reference tests cover tenant-scoped visibility, immutable version conflicts, event idempotency and conflict detection, cross-tenant event attachment rejection, missing tenant context, unsupported resource types and non-canonical payloads.
+
 ## Implementation sequence
 
 1. Implement and test domain validators and activation eligibility.
-2. Add persistence with immutable version records and tenant-scoped queries.
-3. Add authenticated institution registration and authority verification.
-4. Add jurisdiction source ingestion, provenance and approval workflow.
-5. Add MINAH adapter registration, secret references, connectivity and conformance checks.
-6. Add binding approval and activation.
-7. Expose tenant-scoped APIs and onboarding dashboard.
-8. Demonstrate two independent institutions and cross-border coordination.
+2. Add the SQLite reference registry with immutable versions and tenant-scoped access.
+3. Add an application service that validates lifecycle transitions and binds records to authenticated institutional principals.
+4. Add authenticated institution registration and authority verification.
+5. Add jurisdiction source ingestion, provenance and approval workflow.
+6. Add MINAH adapter registration, secret references, connectivity and conformance checks.
+7. Add binding approval and activation.
+8. Expose tenant-scoped APIs and onboarding dashboard.
+9. Demonstrate two independent institutions and cross-border coordination.
 
 ## Acceptance criteria for this increment
 
@@ -98,4 +107,4 @@ The two-institution demonstrator models each participant as an independent owner
 
 ## Explicit non-claims
 
-This increment is not an onboarding UI, live identity verification, production registry, legal-source authenticity service, model upload/runtime service, cryptographic approval implementation or production tenant isolation. Those require separate implementations and tests.
+This increment is not an onboarding UI, live identity verification, production-grade registry, legal-source authenticity service, model upload/runtime service, cryptographic approval implementation or production tenant isolation. The SQLite reference registry is implemented, but must not be represented as a production registry. Those require separate implementations and tests.
