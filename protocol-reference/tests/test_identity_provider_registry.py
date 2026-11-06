@@ -1,8 +1,13 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+import json
 import os
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
+
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from institutional_identity import IdentityResolutionError
 from institutional_identity_provider_registry import (
@@ -293,6 +298,65 @@ class IdentityProviderRegistryTests(unittest.TestCase):
         second = factory("tenant-bank-ug", "national-idp")
         self.assertIsNot(first, second)
         self.assertEqual(second._delegate._algorithms, ("RS256", "ES256"))
+
+
+    def test_registry_factory_discovery_and_signed_token_end_to_end(self):
+        self.activate()
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+        jwk.update({"kid": "provider-key-1", "use": "sig", "alg": "RS256"})
+        issuer = self.config["issuer"]
+        jwks_uri = "https://keys.example.ug/tenant-a/jwks"
+        documents = {
+            issuer + "/.well-known/openid-configuration": {
+                "issuer": issuer, "jwks_uri": jwks_uri,
+                "id_token_signing_alg_values_supported": ["RS256"],
+            },
+            jwks_uri: {"keys": [jwk]},
+        }
+        class FakeJSONTransport:
+            def __init__(self, allowed_hosts):
+                self.allowed_hosts = allowed_hosts
+                self.requests = []
+            def __call__(self, url, *, timeout_seconds, max_bytes):
+                self.requests.append((url, timeout_seconds, max_bytes))
+                return documents[url]
+        transports = []
+        def transport_factory(*, allowed_hosts):
+            value = FakeJSONTransport(allowed_hosts)
+            transports.append(value)
+            return value
+        factory = OIDCInstitutionalAdapterFactory(
+            registry=self.registry, clock=lambda: self.now
+        )
+        with patch("oidc_institutional_adapter_factory.OIDCHTTPSJSONTransport",
+                   side_effect=transport_factory):
+            adapter = factory("tenant-bank-ug", "national-idp")
+            claims = {
+                "iss": issuer, "sub": "opaque-subject-01",
+                "aud": self.config["client_id"],
+                "iat": self.now - 10, "exp": self.now + 180,
+                "auth_time": self.now - 5, "nonce": "nonce-live-flow-0001",
+                "acr": "urn:loa:2", "amr": ["pwd", "otp"],
+            }
+            token = jwt.encode(
+                claims, private_key, algorithm="RS256",
+                headers={"kid": "provider-key-1"},
+            )
+            assertion = adapter.verify_credential(
+                token, tenant_id="tenant-bank-ug",
+                expected_audience=self.config["client_id"],
+                expected_nonce="nonce-live-flow-0001",
+            )
+        self.assertEqual(assertion.issuer, issuer)
+        self.assertEqual(assertion.subject, "opaque-subject-01")
+        self.assertEqual(assertion.amr, ("pwd", "otp"))
+        self.assertEqual(len(transports[0].requests), 2)
+        self.assertEqual(
+            transports[0].allowed_hosts,
+            ("identity.example.ug", "keys.example.ug"),
+        )
+
 
 
 if __name__ == "__main__":
