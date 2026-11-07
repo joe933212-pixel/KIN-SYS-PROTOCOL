@@ -50,6 +50,9 @@ from institutional_minah_deployment import (
     MinahDeploymentConflict,
     MinahDeploymentError,
 )
+from institutional_runtime_binding import (
+    InstitutionalRuntimeBindingResolver, InstitutionalRuntimeBindingError,
+)
 
 MAX_BODY_BYTES = 64 * 1024
 _ALLOWED_FIELDS = {
@@ -140,6 +143,7 @@ class KinSysPrototypeApplication:
         minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
         onboarding_administration: InstitutionalOnboardingAdministration | None = None,
         lifecycle_administration: InstitutionalLifecycleAdministration | None = None,
+        runtime_binding_resolver: InstitutionalRuntimeBindingResolver | None = None,
     ): 
         if pipeline is not None and any(
             adapter is not None
@@ -167,6 +171,7 @@ class KinSysPrototypeApplication:
         any_institutional_admin = (
             provider_administration is not None or minah_deployment_administration is not None
             or onboarding_administration is not None or lifecycle_administration is not None
+            or runtime_binding_resolver is not None
         )
         if any_institutional_admin and not callable(
             getattr(institutional_session_resolver, "resolve", None)
@@ -178,6 +183,7 @@ class KinSysPrototypeApplication:
         self.minah_deployment_administration = minah_deployment_administration
         self.onboarding_administration = onboarding_administration
         self.lifecycle_administration = lifecycle_administration
+        self.runtime_binding_resolver = runtime_binding_resolver
         self.institutional_session_resolver = institutional_session_resolver
 
     def close(self) -> None:
@@ -199,6 +205,11 @@ class KinSysPrototypeApplication:
             return "protocol:operation:read", operation_id
         if path.startswith("/cee/operations/"):
             return "cee:operation:read", path[len("/cee/operations/"):]
+        if path.startswith("/institutional/runtime/") and method == "GET":
+            parts = path.strip("/").split("/")
+            if (len(parts) == 5 and parts[1] == "runtime" and parts[3] == "bindings"
+                    and _ID_RE.fullmatch(parts[2]) and _ID_RE.fullmatch(parts[4])):
+                return "institutional-runtime:binding:resolve", parts[4]
         domain_routes = {"/institutional/domain/institutions":"institution",
                          "/institutional/domain/jurisdictions":"jurisdiction",
                          "/institutional/domain/minah-deployments":"minah",
@@ -291,6 +302,7 @@ class KinSysPrototypeApplication:
                         "GET /institutional/domain/{resource_type}",
                         "GET /institutional/domain/{resource_type}/{resource_id}",
                         "GET /institutional/domain/{resource_type}/{resource_id}/events",
+                        "GET /institutional/runtime/{institution_id}/bindings/{binding_id}",
                         "POST /institutional/identity-providers",
                         "POST /institutional/minah-deployments",
                         "GET /institutional/minah-deployments/{deployment_id}",
@@ -420,6 +432,38 @@ class KinSysPrototypeApplication:
                         {"error": {"code": "AUTHENTICATION_REQUIRED", "message": "An institutional authorizer is required for non-loopback access."}},
                         request_id,
                     )
+
+        runtime_prefix = "/institutional/runtime/"
+        if path.startswith(runtime_prefix):
+            if self.runtime_binding_resolver is None:
+                return _response(start_response,503,{"error":{"code":"INSTITUTIONAL_RUNTIME_RESOLVER_NOT_CONFIGURED","message":"Institutional runtime binding resolution is not configured."}},request_id)
+            parts = path.strip("/").split("/")
+            if method != "GET" or len(parts) != 5 or parts[1] != "runtime" or parts[3] != "bindings":
+                return _response(start_response,404,{"error":{"code":"ROUTE_NOT_FOUND","message":"No institutional runtime route matches this path."}},request_id)
+            institution_id, binding_id = parts[2], parts[4]
+            if not _ID_RE.fullmatch(institution_id) or not _ID_RE.fullmatch(binding_id):
+                return _response(start_response,404,{"error":{"code":"ROUTE_NOT_FOUND","message":"No institutional runtime route matches this path."}},request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if (not isinstance(session,dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"),str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])):
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                resolved = self.runtime_binding_resolver.resolve(
+                    tenant_id=session["tenant_id"], institution_id=institution_id,
+                    binding_id=binding_id)
+                # Never disclose endpoint or secret-manager references through this inspection API.
+                safe_context = {key:value for key,value in resolved.items() if key != "minah_config"}
+                return _response(start_response,200,{"runtime_context":safe_context},request_id)
+            except HttpServiceError as exc:
+                return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
+            except InstitutionalRuntimeBindingError as exc:
+                return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_RUNTIME_NOT_ADMISSIBLE","message":str(exc)[:240]}},request_id)
+            except Exception:
+                return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"Institutional runtime context could not be resolved."}},request_id)
 
         domain_prefix = "/institutional/domain/"
         if path.startswith(domain_prefix):
@@ -1301,6 +1345,7 @@ def create_app(
     minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
     onboarding_administration: InstitutionalOnboardingAdministration | None = None,
     lifecycle_administration: InstitutionalLifecycleAdministration | None = None,
+    runtime_binding_resolver: InstitutionalRuntimeBindingResolver | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -1321,6 +1366,7 @@ def create_app(
         minah_deployment_administration=minah_deployment_administration,
         onboarding_administration=onboarding_administration,
         lifecycle_administration=lifecycle_administration,
+        runtime_binding_resolver=runtime_binding_resolver,
     )
 
 
