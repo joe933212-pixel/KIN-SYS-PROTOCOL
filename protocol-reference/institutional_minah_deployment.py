@@ -110,6 +110,12 @@ def _validate(config: Any, tenant_id: str) -> dict[str, Any]:
             raise MinahDeploymentError("MINAH_" + field.upper() + "_INVALID")
     if set(config["permitted_operations"]) & set(config["prohibited_operations"]):
         raise MinahDeploymentError("MINAH_OPERATION_ALLOW_DENY_CONFLICT")
+    if "authority.grant" not in config["prohibited_operations"]:
+        raise MinahDeploymentError("MINAH_MUST_NOT_GRANT_INSTITUTIONAL_AUTHORITY")
+    if "bypass.cee" not in config["prohibited_operations"]:
+        raise MinahDeploymentError("MINAH_MUST_NOT_BYPASS_CEE")
+    if "CEE_FINAL_ADMISSION" not in config["decision_boundaries"]:
+        raise MinahDeploymentError("CEE_FINAL_ADMISSION_BOUNDARY_REQUIRED")
     for field in ("endpoint_ref", "secret_ref"):
         value = config[field]
         if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 512):
@@ -299,6 +305,21 @@ class InstitutionalMinahDeploymentRegistry:
                 "version": row["version"], "status": row["status"],
                 "config": json.loads(row["config_json"]), "digest": row["digest"],
                 "created_at": row["created_at"]}
+
+    def resolve_active(self, *, tenant_id: str, deployment_id: str) -> dict[str, Any] | None:
+        """Return an executable deployment only while its exact IdP pin is active.
+
+        Runtime callers must use this resolver before accepting an instruction;
+        a stale or suspended identity provider disables the deployment.
+        """
+        deployment = self.registry.get(tenant_id=tenant_id, deployment_id=deployment_id)
+        if deployment is None or deployment["status"] != "ACTIVE":
+            return None
+        try:
+            self._check_provider(tenant_id, deployment["config"])
+        except MinahDeploymentError:
+            return None
+        return deployment
 
     def list_events(self, *, tenant_id: str, deployment_id: str) -> list[dict[str, Any]]:
         _identifier(tenant_id, "tenant_id")
