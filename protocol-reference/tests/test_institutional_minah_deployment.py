@@ -123,8 +123,9 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
             self.register(deployment(owner_ref="tenant-other"))
 
     def test_namespaced_model_reference_accepts_path_segments_and_rejects_unsafe_values(self):
-        result = self.register(deployment(model_ref="model:institution/minah/v1"))
-        self.assertEqual(result["config"]["model_ref"], "model:institution/minah/v1")
+        self.register(deployment(model_ref="model:institution/minah/v1"))
+        stored = self.registry.get(tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        self.assertEqual(stored["config"]["model_ref"], "model:institution/minah/v1")
         with self.assertRaisesRegex(MinahDeploymentError, "MINAH_MODEL_REFERENCE_INVALID"):
             self.register(deployment(model_ref="model:institution/minah v1"))
 
