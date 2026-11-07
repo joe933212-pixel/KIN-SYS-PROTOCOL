@@ -384,6 +384,12 @@ class InstitutionalInstructionExecutionService:
             return None
         pipeline, operation = matches[0]
         pins, request = self._validate_stored_pins(operation, tenant_id, operation_id)
+        integrity_check = getattr(pipeline, "_assert_store_integrity", None)
+        if callable(integrity_check):
+            integrity_check()
+        cross_store_check = getattr(pipeline, "_assert_cross_store_consistent", None)
+        if callable(cross_store_check):
+            cross_store_check(operation)
         self._assert_original_pipeline(pipeline, request, pins)
         return pipeline, operation, pins, request
 
