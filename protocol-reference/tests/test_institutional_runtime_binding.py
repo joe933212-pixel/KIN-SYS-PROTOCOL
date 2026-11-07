@@ -108,6 +108,22 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
         self.assertEqual(result["binding_version"], "3")
         self.assertEqual(result["jurisdiction_package_version"], "4")
 
+    def test_suspended_binding_fails_closed(self):
+        self.registry.create_record(
+            tenant_id=self.tenant, resource_type="binding",
+            resource_id=self.binding_id, version="4", status="SUSPENDED", payload={
+                "binding_id": self.binding_id, "owner_institution_id": self.institution_id,
+                "jurisdiction_package_id": "UG-PACK-01",
+                "jurisdiction_package_version": "4",
+                "minah_deployment_id": "MINAH-UG-01",
+                "policy_pack_version": "policy-3", "source_pack_version": "sources-4",
+                "authority_profile_version": "authority-2",
+                "status": "SUSPENDED", "approval_ref": "approval:binding",
+            })
+        with self.assertRaisesRegex(
+            InstitutionalRuntimeBindingError, "RUNTIME_BINDING_NOT_ACTIVE"):
+            self.resolve()
+
     def test_suspended_minah_fails_closed(self):
         self.runtime.available = False
         with self.assertRaisesRegex(
