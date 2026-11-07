@@ -332,6 +332,10 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             outcome["runtime_pins"],
         )
         self.assertEqual(
+            operation["request_json"]["_minah_deployment_profile"],
+            profile,
+        )
+        self.assertEqual(
             operation["request_json"]["_institutional_runtime_binding"]["binding_version"],
             "3.0",
         )
