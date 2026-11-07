@@ -23,6 +23,7 @@ Deployment modes include self-hosted, on-premises, cloud, edge and managed. The 
 A deployment pins exact versions of:
 
 - the tenant-local identity provider;
+- an exact jurisdiction package ID and version;
 - the institution's mandate;
 - the jurisdiction set;
 - the policy pack and source pack;
