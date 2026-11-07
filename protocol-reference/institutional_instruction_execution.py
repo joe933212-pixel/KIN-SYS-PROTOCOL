@@ -153,6 +153,11 @@ class InstitutionalInstructionExecutionService:
                 if not callable(getattr(pipeline, "execute", None)):
                     raise InstitutionalInstructionExecutionError(
                         "INSTITUTIONAL_PIPELINE_EXECUTOR_INVALID")
+                if (getattr(pipeline, "SUPPORTS_INSTITUTIONAL_RUNTIME_PINS", False) is not True
+                        or tuple(getattr(pipeline, "EXECUTION_ORDER", ())) !=
+                        ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")):
+                    raise InstitutionalInstructionExecutionError(
+                        "INSTITUTIONAL_PIPELINE_GOVERNANCE_CONTRACT_UNSUPPORTED")
                 self._assert_pipeline_profile(pipeline, context)
                 self._pipelines[cache_key] = pipeline
 
