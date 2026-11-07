@@ -138,6 +138,19 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             )
         self.assertEqual(self.pipeline.requests, [])
 
+    def test_rejects_runtime_context_from_another_tenant(self):
+        self.resolver.context["tenant_id"] = "tenant-ke"
+        request = instruction()
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError, "RESOLVED_RUNTIME_IDENTITY_MISMATCH"
+        ):
+            self.service.execute(
+                tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                binding_id="BIND-UG-01", instruction=request,
+                evidence=request["evidence"],
+            )
+        self.assertEqual(self.pipeline.requests, [])
+
     def test_reference_pipeline_persists_institutional_pins_before_minah_review(self):
         context = dict(self.resolver.context)
         context.update({
