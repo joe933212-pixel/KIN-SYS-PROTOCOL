@@ -41,6 +41,11 @@ from institutional_identity_provider_registry import (
     IdentityProviderRegistryError,
 )
 
+from institutional_minah_deployment import (
+    InstitutionalMinahDeploymentAdministration,
+    MinahDeploymentConflict,
+    MinahDeploymentError,
+)
 
 MAX_BODY_BYTES = 64 * 1024
 _ALLOWED_FIELDS = {
@@ -128,6 +133,7 @@ class KinSysPrototypeApplication:
         allow_unauthenticated_loopback: bool = True,
         provider_administration: InstitutionalIdentityProviderAdministration | None = None,
         institutional_session_resolver: Any | None = None,
+        minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
     ):
         if pipeline is not None and any(
             adapter is not None
@@ -158,7 +164,10 @@ class KinSysPrototypeApplication:
             getattr(institutional_session_resolver, "resolve", None)
         ):
             raise ValueError("A verified institutional session resolver is required.")
+        if minah_deployment_administration is not None and institutional_session_resolver is None:
+            raise ValueError("MINAH deployment administration requires the verified institutional session resolver.")
         self.provider_administration = provider_administration
+        self.minah_deployment_administration = minah_deployment_administration
         self.institutional_session_resolver = institutional_session_resolver
 
     def close(self) -> None:
@@ -180,6 +189,19 @@ class KinSysPrototypeApplication:
             return "protocol:operation:read", operation_id
         if path.startswith("/cee/operations/"):
             return "cee:operation:read", path[len("/cee/operations/"):]
+        if path == "/institutional/minah-deployments" and method == "POST":
+            return "minah-deployment:register", None
+        if path.startswith("/institutional/minah-deployments/"):
+            parts = path.strip("/").split("/")
+            deployment_id = parts[2] if len(parts) >= 3 else None
+            if method == "GET" and len(parts) == 3:
+                return "minah-deployment:read", deployment_id
+            if method == "GET" and len(parts) == 4 and parts[3] == "events":
+                return "minah-deployment:audit", deployment_id
+            if method == "PUT" and len(parts) == 4 and parts[3] == "configuration":
+                return "minah-deployment:configure", deployment_id
+            if method == "POST" and len(parts) == 4 and parts[3] == "lifecycle":
+                return "minah-deployment:lifecycle", deployment_id
         if path == "/institutional/identity-providers":
             if method == "POST":
                 return "identity-provider:register", None
@@ -234,6 +256,11 @@ class KinSysPrototypeApplication:
                         "GET /system/readiness",
                         "GET /system/capabilities",
                         "POST /institutional/identity-providers",
+                        "POST /institutional/minah-deployments",
+                        "GET /institutional/minah-deployments/{deployment_id}",
+                        "GET /institutional/minah-deployments/{deployment_id}/events",
+                        "PUT /institutional/minah-deployments/{deployment_id}/configuration",
+                        "POST /institutional/minah-deployments/{deployment_id}/lifecycle",
                         "GET /institutional/identity-providers/{provider_id}",
                         "GET /institutional/identity-providers/{provider_id}/events",
                         "PUT /institutional/identity-providers/{provider_id}/configuration",
@@ -357,6 +384,102 @@ class KinSysPrototypeApplication:
                         {"error": {"code": "AUTHENTICATION_REQUIRED", "message": "An institutional authorizer is required for non-loopback access."}},
                         request_id,
                     )
+
+        if path == "/institutional/minah-deployments" or path.startswith("/institutional/minah-deployments/"):
+            if self.minah_deployment_administration is None:
+                return _response(start_response, 503, {
+                    "error": {"code": "MINAH_DEPLOYMENT_ADMINISTRATION_NOT_CONFIGURED",
+                              "message": "Institutional MINAH deployment administration is not configured."}
+                }, request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401, "INSTITUTIONAL_SESSION_INVALID",
+                        "A verified institutional session is required.")
+                if (not isinstance(session, dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"), str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])
+                        or not isinstance(session.get("actor_assertion"), dict)):
+                    raise HttpServiceError(401, "INSTITUTIONAL_SESSION_INVALID",
+                        "A verified institutional session with a signed authority assertion is required.")
+                tenant_id, assertion = session["tenant_id"], session["actor_assertion"]
+                if path == "/institutional/minah-deployments":
+                    if method != "POST":
+                        raise HttpServiceError(405, "METHOD_NOT_ALLOWED", "Use POST to register a MINAH deployment.")
+                    body = self._read_json(environ, allowed_fields={"config", "event_id", "evidence_ref"})
+                    config = body.get("config")
+                    if not isinstance(config, dict) or "tenant_id" in config or "owner_ref" in config:
+                        raise HttpServiceError(422, "MINAH_DEPLOYMENT_CONFIG_INVALID",
+                            "config must omit tenant_id and owner_ref; ownership is derived from the verified session.")
+                    result = self.minah_deployment_administration.register(
+                        tenant_id=tenant_id, config={**config, "owner_ref": tenant_id},
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"))
+                    return _response(start_response, 201, {"status": "PENDING",
+                        "deployment": result, "audit": {"event_id": body.get("event_id"),
+                        "evidence_ref": body.get("evidence_ref")}}, request_id)
+                parts = path.strip("/").split("/")
+                if len(parts) not in (3, 4) or parts[:2] != ["institutional", "minah-deployments"]:
+                    raise HttpServiceError(404, "ROUTE_NOT_FOUND", "No institutional MINAH deployment route matches this path.")
+                deployment_id = parts[2]
+                if not _ID_RE.fullmatch(deployment_id):
+                    raise HttpServiceError(400, "INVALID_DEPLOYMENT_ID", "Deployment ID has an invalid format.")
+                if method == "GET" and len(parts) == 3:
+                    deployment = self.minah_deployment_administration.get(
+                        tenant_id=tenant_id, deployment_id=deployment_id)
+                    if deployment is None:
+                        raise HttpServiceError(404, "MINAH_DEPLOYMENT_NOT_FOUND", "No MINAH deployment exists in this tenant.")
+                    return _response(start_response, 200, {"deployment": deployment}, request_id)
+                if method == "GET" and len(parts) == 4 and parts[3] == "events":
+                    events = self.minah_deployment_administration.list_events(
+                        tenant_id=tenant_id, deployment_id=deployment_id)
+                    if not events and self.minah_deployment_administration.get(
+                            tenant_id=tenant_id, deployment_id=deployment_id) is None:
+                        raise HttpServiceError(404, "MINAH_DEPLOYMENT_NOT_FOUND", "No MINAH deployment exists in this tenant.")
+                    return _response(start_response, 200, {"events": events}, request_id)
+                if method == "PUT" and len(parts) == 4 and parts[3] == "configuration":
+                    body = self._read_json(environ, allowed_fields={
+                        "expected_version", "config", "event_id", "evidence_ref"})
+                    config = body.get("config")
+                    if not isinstance(config, dict) or "tenant_id" in config or "owner_ref" in config:
+                        raise HttpServiceError(422, "MINAH_DEPLOYMENT_CONFIG_INVALID",
+                            "config must omit tenant_id and owner_ref; ownership is derived from the verified session.")
+                    result = self.minah_deployment_administration.revise(
+                        tenant_id=tenant_id, deployment_id=deployment_id,
+                        expected_version=body.get("expected_version"),
+                        config={**config, "owner_ref": tenant_id},
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"))
+                    return _response(start_response, 202, {"status": "PENDING",
+                        "deployment": result, "audit": {"event_id": body.get("event_id"),
+                        "evidence_ref": body.get("evidence_ref")}}, request_id)
+                if method == "POST" and len(parts) == 4 and parts[3] == "lifecycle":
+                    body = self._read_json(environ, allowed_fields={
+                        "expected_version", "new_version", "new_status", "event_id", "evidence_ref"})
+                    result = self.minah_deployment_administration.transition(
+                        tenant_id=tenant_id, deployment_id=deployment_id,
+                        expected_version=body.get("expected_version"),
+                        new_version=body.get("new_version"), new_status=body.get("new_status"),
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"))
+                    return _response(start_response, 200, {"status": result.get("status"),
+                        "deployment": result, "audit": {"event_id": body.get("event_id"),
+                        "evidence_ref": body.get("evidence_ref")}}, request_id)
+                raise HttpServiceError(405, "METHOD_NOT_ALLOWED", "The method is not supported for this MINAH deployment route.")
+            except HttpServiceError as exc:
+                return _response(start_response, exc.status, {"error": {"code": exc.code, "message": exc.message}}, request_id)
+            except MinahDeploymentConflict as exc:
+                return _response(start_response, 409, {"error": {"code": str(exc),
+                    "message": "The MINAH deployment version conflicts with the current registry state."}}, request_id)
+            except MinahDeploymentError as exc:
+                code = str(exc)
+                status = 404 if code == "MINAH_DEPLOYMENT_NOT_FOUND" else 403 if "AUTHORITY" in code or "INSUFFICIENT" in code else 422
+                return _response(start_response, status, {"error": {"code": code,
+                    "message": "The MINAH deployment request failed validation or institutional authority checks."}}, request_id)
+            except Exception:
+                return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR",
+                    "message": "The institutional MINAH deployment operation could not be completed."}}, request_id)
 
         if path == "/institutional/identity-providers" or path.startswith("/institutional/identity-providers/"):
             if self.provider_administration is None:
@@ -1073,6 +1196,7 @@ def create_app(
     allow_unauthenticated_loopback: bool = True,
     provider_administration: InstitutionalIdentityProviderAdministration | None = None,
     institutional_session_resolver: Any | None = None,
+    minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -1090,6 +1214,7 @@ def create_app(
         allow_unauthenticated_loopback=allow_unauthenticated_loopback,
         provider_administration=provider_administration,
         institutional_session_resolver=institutional_session_resolver,
+        minah_deployment_administration=minah_deployment_administration,
     )
 
 
