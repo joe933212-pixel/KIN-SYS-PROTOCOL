@@ -75,23 +75,45 @@ class InstitutionalLifecycleCoordinator:
             resource_type=resource_type, resource_id=resource_id,
         )
 
-        # Activation is gated against exact supplied records. The caller must
-        # load them from this tenant and resolve their evidence references.
+        # Activation inputs are references only. Never trust caller-supplied
+        # institution, jurisdiction or MINAH records: resolve the exact current
+        # snapshots from this tenant's registry before evaluating the binding.
         if resource_type == "binding" and target_status == "ACTIVE":
             if not isinstance(activation_context, dict):
                 raise LifecycleCoordinatorError("ACTIVATION_CONTEXT_REQUIRED")
-            required = {"institution", "jurisdiction", "minah", "conformance_evidence_ref"}
+            required = {"institution_version", "minah_version", "conformance_evidence_ref"}
             if set(activation_context) != required:
                 raise LifecycleCoordinatorError("INVALID_ACTIVATION_CONTEXT")
             try:
+                institution_record = self.registry.get_current_record(
+                    tenant_id=tenant_id, resource_type="institution",
+                    resource_id=record["owner_institution_id"],
+                )
+                jurisdiction_record = self.registry.get_current_record(
+                    tenant_id=tenant_id, resource_type="jurisdiction",
+                    resource_id=record["jurisdiction_package_id"],
+                )
+                minah_record = self.registry.get_current_record(
+                    tenant_id=tenant_id, resource_type="minah",
+                    resource_id=record["minah_deployment_id"],
+                )
+                if institution_record is None or institution_record["version"] != activation_context["institution_version"]:
+                    raise LifecycleCoordinatorError("ACTIVATION_INSTITUTION_VERSION_NOT_CURRENT")
+                if jurisdiction_record is None or jurisdiction_record["version"] != record["jurisdiction_package_version"]:
+                    raise LifecycleCoordinatorError("ACTIVATION_JURISDICTION_VERSION_NOT_CURRENT")
+                if minah_record is None or minah_record["version"] != activation_context["minah_version"]:
+                    raise LifecycleCoordinatorError("ACTIVATION_MINAH_VERSION_NOT_CURRENT")
+                for related in (institution_record, jurisdiction_record, minah_record):
+                    if related["payload"].get("status") != related["status"]:
+                        raise LifecycleCoordinatorError("ACTIVATION_REGISTRY_STATUS_MISMATCH")
                 eligibility = validate_activation(
-                    activation_context["institution"],
-                    activation_context["jurisdiction"],
-                    activation_context["minah"],
-                    record,
+                    institution_record["payload"], jurisdiction_record["payload"],
+                    minah_record["payload"], record,
                     conformance_evidence_ref=activation_context["conformance_evidence_ref"],
                 )
-            except (TypeError, ValueError) as exc:
+            except LifecycleCoordinatorError:
+                raise
+            except (KeyError, TypeError, ValueError) as exc:
                 raise LifecycleCoordinatorError("ACTIVATION_GATE_FAILED:" + str(exc)) from exc
             if eligibility.get("activation_eligible") is not True:
                 raise LifecycleCoordinatorError("ACTIVATION_GATE_FAILED")
