@@ -48,6 +48,12 @@ class Providers:
             return dict(self.config)
         return None
 
+    def resolve_active_provider(self, tenant_id, provider_id):
+        provider = self.get_provider(tenant_id=tenant_id, provider_id=provider_id)
+        if provider is None or provider["status"] != "ACTIVE":
+            return None
+        return provider
+
 
 def deployment(**changes):
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
