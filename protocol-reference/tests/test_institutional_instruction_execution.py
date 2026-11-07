@@ -1,4 +1,5 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+import hashlib
 import unittest
 
 from governed_contracts import CONTRACT_VERSION, compute_payload_digest
@@ -382,7 +383,7 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
                 self.assertEqual(operation["outcome"], expected_decision)
                 self.assertIsNone(operation["ivm_json"])
                 self.assertIsNone(pipeline.ivm.event(
-                    "EV-" + __import__("hashlib").sha256(
+                    "EV-" + hashlib.sha256(
                         request["idempotency_key"].encode("utf-8")
                     ).hexdigest()[:24]
                 ))
