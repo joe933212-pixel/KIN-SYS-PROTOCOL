@@ -36,7 +36,7 @@ def records(owner="UG-INST-001"):
     binding = {
         "binding_id": "UG-BINDING-1", "owner_institution_id": owner,
         "jurisdiction_package_id": "UG-PACK", "jurisdiction_package_version": "1.0.0",
-        "minah_deployment_id": "UG-MINAH-1", "policy_pack_version": "policy-1",
+        "minah_deployment_id": "UG-MINAH-1", "identity_provider_id": "IDP-UG-01", "identity_provider_version": "2", "policy_pack_version": "policy-1",
         "source_pack_version": "sources-1", "authority_profile_version": "authority-1",
         "status": "APPROVED", "approval_ref": "approval:binding-1",
     }
