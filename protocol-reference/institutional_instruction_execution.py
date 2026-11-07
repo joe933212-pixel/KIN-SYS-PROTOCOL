@@ -99,12 +99,17 @@ class InstitutionalInstructionExecutionService:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_PIPELINE_BINDING_MISMATCH:" + field)
         profile = getattr(pipeline, "minah_profile", None)
-        if profile is None:
-            return
+        if not isinstance(profile, dict):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_PIPELINE_MINAH_PROFILE_REQUIRED")
         config = context.get("minah_config")
         if not isinstance(config, dict):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_MINAH_CONFIGURATION_MISSING")
+
+        # Compare the executor's effective MINAH profile with the deployment
+        # resolved from the institution registry. A pipeline without an
+        # inspectable profile is not admissible for institutional execution.
         checks = {
             "deployment_id": context["minah_deployment_id"],
             "owner_ref": context["tenant_id"],
@@ -116,10 +121,33 @@ class InstitutionalInstructionExecutionService:
             if not isinstance(expected, str) or profile.get(field) != expected:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_PIPELINE_PROFILE_MISMATCH:" + field)
-        jurisdictions = profile.get("jurisdictions")
-        if not isinstance(jurisdictions, list) or context["jurisdiction_ref"] not in jurisdictions:
+
+        configured_jurisdictions = config.get("jurisdictions")
+        profile_jurisdictions = profile.get("jurisdictions")
+        if (not isinstance(configured_jurisdictions, list)
+                or not configured_jurisdictions
+                or any(not isinstance(item, str) or not item.strip()
+                       for item in configured_jurisdictions)
+                or len(set(configured_jurisdictions)) != len(configured_jurisdictions)
+                or not isinstance(profile_jurisdictions, list)
+                or profile_jurisdictions != configured_jurisdictions
+                or context["jurisdiction_ref"] not in profile_jurisdictions):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_PIPELINE_PROFILE_MISMATCH:jurisdictions")
+
+        # Where the registered deployment carries additional governance
+        # bindings, require the effective MINAH profile to preserve them too.
+        for field in (
+            "mandate_ref", "mandate_version", "interface_version",
+            "authority_profile_version",
+        ):
+            expected = config.get(field)
+            if expected is not None and profile.get(field) != expected:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_PIPELINE_PROFILE_MISMATCH:" + field)
+        if profile.get("may_authorise") is not False:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_PIPELINE_PROFILE_MISMATCH:may_authorise")
 
     def execute(self, *, tenant_id: str, institution_id: str, binding_id: str,
                 instruction: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
