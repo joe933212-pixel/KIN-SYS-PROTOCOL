@@ -79,7 +79,18 @@ class InstitutionalInstructionExecutionService:
 
     @staticmethod
     def _assert_pipeline_profile(pipeline: Any, context: dict[str, Any]) -> None:
-        """When using the reference pipeline, ensure its MINAH profile matches the binding."""
+        """Require the selected executor to match the exact institution runtime binding."""
+        bound_fields = {
+            "identity_provider_id": context["identity_provider_id"],
+            "identity_provider_version": context["identity_provider_version"],
+            "jurisdiction_package_id": context["jurisdiction_package_id"],
+            "jurisdiction_package_version": context["jurisdiction_package_version"],
+            "authority_profile_version": context["authority_profile_version"],
+        }
+        for field, expected in bound_fields.items():
+            if getattr(pipeline, field, None) != expected:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_PIPELINE_BINDING_MISMATCH:" + field)
         profile = getattr(pipeline, "minah_profile", None)
         if profile is None:
             return
