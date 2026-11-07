@@ -33,18 +33,29 @@ class InstitutionalDomainHttpTests(unittest.TestCase):
             "valid_from":900,"valid_until":1100,"version":"1",
             "issuer_institution_id":"REGISTRY-UG","approval_ref":"approval:grant",
         }
+        self.verifier_grant = {
+            **self.grant, "grant_id":"GRANT-VERIFIER", "actor_ref":"actor:verifier",
+            "institution_id":"REGISTRY-UG", "roles":["institution_verifier"],
+            "resource_types":["institution"], "resource_ids":["BANK-HTTP"],
+        }
         self.nonces=InMemoryNonceGuard()
         self.resolver=InstitutionalAuthorityResolver(
             verification_keys={"key-http":self.key},
-            grant_loader=lambda tenant, grant: self.grant if tenant=="tenant-http" and grant=="GRANT-HTTP" else None,
+            grant_loader=lambda tenant, grant: (
+                self.grant if tenant=="tenant-http" and grant=="GRANT-HTTP"
+                else self.verifier_grant if tenant=="tenant-http" and grant=="GRANT-VERIFIER"
+                else None),
             consume_nonce=self.nonces.consume,clock=lambda:1000)
         self.counter=0
         class Session:
             def __init__(inner, outer): inner.outer=outer
             def resolve(inner,environ):
                 inner.outer.counter+=1
-                claims={"key_id":"key-http","tenant_id":"tenant-http","actor_ref":"actor:registrar",
-                    "grant_id":"GRANT-HTTP","grant_version":"1","issued_at":990,"expires_at":1010,
+                lifecycle=environ.get("PATH_INFO","").endswith("/lifecycle")
+                grant_id="GRANT-VERIFIER" if lifecycle else "GRANT-HTTP"
+                actor_ref="actor:verifier" if lifecycle else "actor:registrar"
+                claims={"key_id":"key-http","tenant_id":"tenant-http","actor_ref":actor_ref,
+                    "grant_id":grant_id,"grant_version":"1","issued_at":990,"expires_at":1010,
                     "nonce":f"http-onboard-nonce-{inner.outer.counter:08d}"}
                 return {"authenticated":True,"tenant_id":"tenant-http",
                     "actor_assertion":{"claims":claims,"signature":sign_actor_claims(claims,inner.outer.key)}}
