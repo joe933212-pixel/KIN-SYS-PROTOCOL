@@ -289,9 +289,15 @@ class InstitutionalInstructionExecutionService:
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_OPERATION_TENANT_MISMATCH")
         checked = verify_instruction_payload_digest(request.get("_contract_envelope"))
+        rule_version = request.get("rule_version")
+        rule_set = request.get("rule_set")
         if (checked["operation_id"] != operation_id
                 or checked["jurisdiction"] != pins["jurisdiction_ref"]
-                or checked["rule_pack_version"] != pins["policy_pack_version"]):
+                or checked["rule_pack_version"] != pins["policy_pack_version"]
+                or request.get("jurisdiction") != checked["jurisdiction"]
+                or not isinstance(rule_set, str) or not isinstance(rule_version, str)
+                or rule_set + ":" + rule_version != checked["rule_pack_version"]
+                or request.get("_institutional_runtime_binding") != pins):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_OPERATION_PINNED_REQUEST_MISMATCH")
         return ({field: pins[field] for field in required}, request)
@@ -360,7 +366,10 @@ class InstitutionalInstructionExecutionService:
                 getter = getattr(journal, "get", None)
                 operation = getter(operation_id) if callable(getter) else None
                 if isinstance(operation, dict):
-                    matches.append((pipeline, operation))
+                    request = operation.get("request_json")
+                    pins = request.get("_institutional_runtime_binding") if isinstance(request, dict) else None
+                    if isinstance(pins, dict) and pins.get("tenant_id") == tenant_id:
+                        matches.append((pipeline, operation))
             except Exception as exc:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_ORIGINAL_PINNED_RUNTIME_UNAVAILABLE") from exc
@@ -460,6 +469,9 @@ class InstitutionalInstructionExecutionService:
             if not isinstance(recovered, dict):
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_RECOVERY_RESPONSE_INVALID")
+            if recovered.get("operation_id") != operation_id:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_RECOVERY_OPERATION_ID_MISMATCH")
             recovered_status = recovered.get("status", "UNKNOWN")
             reason = recovered.get("reason")
             completed_detail = dict(detail)
