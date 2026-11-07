@@ -58,6 +58,7 @@ class Pipeline:
             "reason": "SYNTHETIC_GATES_PASSED",
             "funds_moved": False,
             "ivm_decision": {"status": "ACCEPTED"},
+            "private_token": "must-not-leak",
         }
 
 
@@ -105,6 +106,7 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             "binding_id": "BIND-UG-01",
         }])
         self.assertEqual(result["decision"]["protocol_decision"], "PASSED")
+        self.assertNotIn("private_token", result["result"])
         self.assertEqual(result["runtime_pins"]["binding_version"], "3.0")
         self.assertEqual(result["runtime_pins"]["minah_runtime_version"], "9.0")
         pinned = self.pipeline.requests[0]["_institutional_runtime_binding"]
