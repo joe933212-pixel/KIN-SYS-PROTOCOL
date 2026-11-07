@@ -64,6 +64,14 @@ class InstitutionalIdentityProviderAdministration:
             raise IdentityProviderAdministrationError("PROVIDER_ADMIN_ACTOR_INVALID")
         return actor_ref
 
+    def get_provider(self, *, tenant_id: str, provider_id: str) -> dict[str, Any] | None:
+        """Read only the current provider snapshot within the verified tenant."""
+        return self._registry.get_provider(tenant_id=tenant_id, provider_id=provider_id)
+
+    def list_events(self, *, tenant_id: str, provider_id: str) -> list[dict[str, Any]]:
+        """Read the append-only lifecycle history within the verified tenant."""
+        return self._registry.list_events(tenant_id=tenant_id, provider_id=provider_id)
+
     def register_provider(self, *, tenant_id: str, config: dict[str, Any],
                           actor_assertion: dict[str, Any], event_id: str,
                           evidence_ref: str) -> dict[str, Any]:
