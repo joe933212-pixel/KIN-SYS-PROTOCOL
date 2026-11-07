@@ -197,6 +197,8 @@ class KinSysPrototypeApplication:
         self.pipeline.close()
         self.ingress.close()
         self.case_coordinator.close()
+        if self.institutional_instruction_execution is not None:
+            self.institutional_instruction_execution.close()
 
     @staticmethod
     def _required_scope(path: str, method: str) -> tuple[str | None, str | None]:
