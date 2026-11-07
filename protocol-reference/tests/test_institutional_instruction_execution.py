@@ -134,7 +134,7 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         ):
             self.service.execute(
                 tenant_id="tenant-ug", institution_id="BANK-UG-01",
-                binding_id="BIND-UG-01", instruction=request, evidence={"ref": "e1"},
+                binding_id="BIND-UG-01", instruction=request, evidence=request["evidence"],
             )
         self.assertEqual(self.pipeline.requests, [])
 
