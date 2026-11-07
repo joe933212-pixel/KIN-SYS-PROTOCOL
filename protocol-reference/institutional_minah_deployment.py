@@ -24,7 +24,8 @@ FIELDS = {
     "deployment_id", "version", "status", "agent_kind", "agent_ref",
     "interface_version", "deployment_mode", "model_ref", "endpoint_ref",
     "secret_ref", "owner_scope", "owner_ref", "jurisdictions",
-    "identity_provider_id", "identity_provider_version", "mandate_ref",
+    "identity_provider_id", "identity_provider_version", "jurisdiction_package_id",
+    "jurisdiction_package_version", "mandate_ref",
     "mandate_version", "permitted_operations", "prohibited_operations",
     "decision_boundaries", "policy_pack_version", "source_pack_version",
     "authority_profile_version", "created_at",
@@ -85,7 +86,8 @@ def _validate(config: Any, tenant_id: str) -> dict[str, Any]:
             raise MinahDeploymentError("MINAH_SECRET_OR_MODEL_MATERIAL_FORBIDDEN")
     for field in ("deployment_id", "version", "agent_ref", "interface_version",
                   "model_ref", "owner_ref", "identity_provider_id",
-                  "identity_provider_version", "mandate_ref", "mandate_version",
+                  "identity_provider_version", "jurisdiction_package_id",
+                  "jurisdiction_package_version", "mandate_ref", "mandate_version",
                   "policy_pack_version", "source_pack_version",
                   "authority_profile_version"):
         _identifier(config[field], field)
