@@ -41,6 +41,7 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
             "deployment_id": "MINAH-UG-01", "version": "9", "status": "ACTIVE",
             "owner_ref": self.tenant, "model_ref": "model:bank/minah-v1",
             "interface_version": "minah-review-0.1",
+            "jurisdictions": ["UG"],
             "jurisdiction_package_id": "UG-PACK-01",
             "jurisdiction_package_version": "4",
             "policy_pack_version": "policy-3", "source_pack_version": "sources-4",
@@ -191,6 +192,14 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
         self.runtime.available = False
         with self.assertRaisesRegex(
             InstitutionalRuntimeBindingError, "RUNTIME_MINAH_DEPLOYMENT_UNAVAILABLE"):
+            self.resolve()
+
+    def test_minah_must_declare_the_bound_jurisdiction(self):
+        self.runtime.config["jurisdictions"] = ["KE"]
+        with self.assertRaisesRegex(
+            InstitutionalRuntimeBindingError,
+            "RUNTIME_CONFIGURATION_PIN_MISMATCH:jurisdictions",
+        ):
             self.resolve()
 
     def test_policy_pin_mismatch_fails_closed(self):
