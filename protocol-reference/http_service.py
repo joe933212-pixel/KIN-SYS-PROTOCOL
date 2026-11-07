@@ -134,6 +134,7 @@ class KinSysPrototypeApplication:
         provider_administration: InstitutionalIdentityProviderAdministration | None = None,
         institutional_session_resolver: Any | None = None,
         minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
+        onboarding_administration: InstitutionalOnboardingAdministration | None = None,
     ):
         if pipeline is not None and any(
             adapter is not None
@@ -160,6 +161,7 @@ class KinSysPrototypeApplication:
         self.allow_unauthenticated_loopback = bool(allow_unauthenticated_loopback)
         any_institutional_admin = (
             provider_administration is not None or minah_deployment_administration is not None
+            or onboarding_administration is not None
         )
         if any_institutional_admin and not callable(
             getattr(institutional_session_resolver, "resolve", None)
@@ -169,6 +171,7 @@ class KinSysPrototypeApplication:
             raise ValueError("An institutional session resolver requires an institutional administration service.")
         self.provider_administration = provider_administration
         self.minah_deployment_administration = minah_deployment_administration
+        self.onboarding_administration = onboarding_administration
         self.institutional_session_resolver = institutional_session_resolver
 
     def close(self) -> None:
@@ -1198,6 +1201,7 @@ def create_app(
     provider_administration: InstitutionalIdentityProviderAdministration | None = None,
     institutional_session_resolver: Any | None = None,
     minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
+    onboarding_administration: InstitutionalOnboardingAdministration | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -1216,6 +1220,7 @@ def create_app(
         provider_administration=provider_administration,
         institutional_session_resolver=institutional_session_resolver,
         minah_deployment_administration=minah_deployment_administration,
+        onboarding_administration=onboarding_administration,
     )
 
 
