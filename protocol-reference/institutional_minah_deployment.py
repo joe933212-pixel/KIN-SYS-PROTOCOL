@@ -91,11 +91,12 @@ def _validate(config: Any, tenant_id: str) -> dict[str, Any]:
         _identifier(config[field], field)
     if config["status"] != "PENDING":
         raise MinahDeploymentError("NEW_OR_REVISED_DEPLOYMENT_MUST_BE_PENDING")
-    if config["agent_kind"] not in AGENT_KINDS:
+    if not isinstance(config["agent_kind"], str) or config["agent_kind"] not in AGENT_KINDS:
         raise MinahDeploymentError("MINAH_AGENT_KIND_UNSUPPORTED")
-    if config["deployment_mode"] not in DEPLOYMENT_MODES:
+    if not isinstance(config["deployment_mode"], str) or config["deployment_mode"] not in DEPLOYMENT_MODES:
         raise MinahDeploymentError("MINAH_DEPLOYMENT_MODE_UNSUPPORTED")
-    if config["owner_scope"] not in {"NATIONAL_SOVEREIGN", "ENTERPRISE", "INSTITUTION"}:
+    if (not isinstance(config["owner_scope"], str)
+            or config["owner_scope"] not in {"NATIONAL_SOVEREIGN", "ENTERPRISE", "INSTITUTION"}):
         raise MinahDeploymentError("MINAH_OWNER_SCOPE_INVALID")
     if not isinstance(config["jurisdictions"], list) or not config["jurisdictions"]:
         raise MinahDeploymentError("MINAH_JURISDICTIONS_REQUIRED")
@@ -253,7 +254,7 @@ class InstitutionalMinahDeploymentRegistry:
         _identifier(deployment_id, "deployment_id")
         _identifier(expected_version, "expected_version")
         _identifier(new_version, "new_version")
-        if new_status not in STATUSES or new_version == expected_version:
+        if not isinstance(new_status, str) or new_status not in STATUSES or new_version == expected_version:
             raise MinahDeploymentError("MINAH_TRANSITION_INVALID")
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
@@ -345,8 +346,9 @@ class InstitutionalMinahDeploymentAdministration:
         return principal["actor_ref"]
 
     def _check_provider(self, tenant_id: str, config: dict[str, Any]) -> None:
-        provider = self.providers.get_provider(tenant_id=tenant_id,
-            provider_id=config["identity_provider_id"])
+        resolver = getattr(self.providers, "resolve_active_provider", None)
+        provider = (resolver(tenant_id, config["identity_provider_id"])
+                    if callable(resolver) else None)
         if (provider is None or provider.get("status") != "ACTIVE"
                 or provider.get("version") != config["identity_provider_version"]):
             raise MinahDeploymentError("MINAH_IDENTITY_PROVIDER_NOT_ACTIVE_OR_VERSION_MISMATCH")
