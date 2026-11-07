@@ -466,7 +466,10 @@ class KinSysPrototypeApplication:
                     tenant_id=session["tenant_id"], institution_id=institution_id,
                     binding_id=binding_id)
                 # Never disclose endpoint or secret-manager references through this inspection API.
-                safe_context = {key:value for key,value in resolved.items() if key != "minah_config"}
+                safe_context = {
+                    key: value for key, value in resolved.items()
+                    if key not in {"minah_config", "identity_provider_config"}
+                }
                 return _response(start_response,200,{"runtime_context":safe_context},request_id)
             except HttpServiceError as exc:
                 return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
