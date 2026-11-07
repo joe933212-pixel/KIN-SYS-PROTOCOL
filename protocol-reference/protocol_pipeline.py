@@ -81,6 +81,20 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _safe_minah_profile_snapshot(profile: Any) -> dict[str, Any]:
+    """Return only non-secret deployment identity and policy metadata for durable pinning."""
+    if not isinstance(profile, dict):
+        raise ValueError("MINAH_DEPLOYMENT_PROFILE_REQUIRED")
+    allowed = (
+        "profile_version", "deployment_id", "owner_scope", "owner_ref",
+        "use_case", "jurisdictions", "policy_pack_version",
+        "source_pack_version", "model_ref", "deployment_mode",
+        "may_authorise", "mandate_ref", "mandate_version",
+        "interface_version", "authority_profile_version",
+    )
+    return {key: profile[key] for key in allowed if key in profile}
+
+
 def _safe_verification_metadata(result: dict[str, Any], allowed_fields: tuple[str, ...]) -> dict[str, str]:
     """Keep stable evidence references and version metadata, never raw identity data."""
     metadata: dict[str, str] = {}
@@ -558,7 +572,7 @@ class KinSysProtocolPipeline:
                 )
             else:
                 pinned_request = prior_operation["request_json"]
-                if _canonical(pinned_request.get("_minah_deployment_profile")) != _canonical(self.minah_profile):
+                if _canonical(pinned_request.get("_minah_deployment_profile")) != _canonical(_safe_minah_profile_snapshot(self.minah_profile)):
                     raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
                 if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
                     raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
@@ -609,7 +623,7 @@ class KinSysProtocolPipeline:
         # Pin the deployment profile into the durable operation fingerprint before
         # MINAH is invoked. Replays cannot silently switch to another profile.
         journal_request = dict(request)
-        journal_request["_minah_deployment_profile"] = self.minah_profile
+        journal_request["_minah_deployment_profile"] = _safe_minah_profile_snapshot(self.minah_profile)
         if self.require_profile_approval:
             journal_request["_minah_profile_approval"] = self.minah_profile_approval
             journal_request["_minah_profile_approval_verification"] = approval_metadata
@@ -1161,7 +1175,7 @@ class KinSysProtocolPipeline:
             }
 
         pinned_profile = pinned_request.get("_minah_deployment_profile")
-        if _canonical(pinned_profile) != _canonical(self.minah_profile):
+        if _canonical(pinned_profile) != _canonical(_safe_minah_profile_snapshot(self.minah_profile)):
             raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
         if self.require_profile_approval:
             if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
