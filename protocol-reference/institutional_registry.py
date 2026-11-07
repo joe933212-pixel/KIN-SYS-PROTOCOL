@@ -79,6 +79,63 @@ class InstitutionalRegistry:
         if any(not isinstance(x, str) or not x.strip() for x in identifiers):
             raise RegistryError("RESOURCE_IDENTIFIERS_REQUIRED")
 
+    def create_record_with_event(
+        self, *, tenant_id: str, resource_type: str, resource_id: str,
+        version: str, status: str, payload: dict[str, Any], event_id: str,
+        event_type: str, actor_ref: str, evidence_ref: str,
+        event_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically create an initial immutable snapshot and its audit event."""
+        self._check(tenant_id, resource_type, resource_id, version, status,
+                    event_id, event_type, actor_ref, evidence_ref)
+        if not isinstance(payload, dict) or not isinstance(event_payload, dict):
+            raise RegistryError("RECORD_AND_EVENT_PAYLOADS_MUST_BE_OBJECTS")
+        body, digest = _json(payload), _digest(payload)
+        event_body = _json(event_payload)
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self.db.execute(
+                """SELECT resource_type,resource_id,version,event_type,actor_ref,
+                          evidence_ref,payload_json FROM institutional_events
+                   WHERE tenant_id=? AND event_id=?""", (tenant_id, event_id)).fetchone()
+            if existing:
+                prior = self.db.execute(
+                    """SELECT status,payload_digest FROM institutional_records
+                       WHERE tenant_id=? AND resource_type=? AND resource_id=? AND version=?""",
+                    (tenant_id, resource_type, resource_id, version)).fetchone()
+                expected = (resource_type, resource_id, version, event_type,
+                            actor_ref, evidence_ref, event_body)
+                actual = tuple(existing[k] for k in ("resource_type","resource_id",
+                                "version","event_type","actor_ref","evidence_ref","payload_json"))
+                if (actual == expected and prior and prior["status"] == status
+                        and prior["payload_digest"] == digest):
+                    self.db.execute("COMMIT")
+                    return {"created": False, "payload_digest": digest, "event_id": event_id}
+                raise RegistryConflict("EVENT_ID_REUSE_CONFLICT")
+            if self.db.execute(
+                """SELECT 1 FROM institutional_records WHERE tenant_id=? AND resource_type=?
+                   AND resource_id=?""", (tenant_id, resource_type, resource_id)).fetchone():
+                raise RegistryConflict("RESOURCE_ALREADY_REGISTERED")
+            if self.db.execute(
+                """SELECT 1 FROM institutional_records WHERE tenant_id=? AND resource_type=?
+                   AND resource_id=? AND version=?""",
+                (tenant_id, resource_type, resource_id, version)).fetchone():
+                raise RegistryConflict("IMMUTABLE_VERSION_CONFLICT")
+            self.db.execute(
+                "INSERT INTO institutional_records VALUES(?,?,?,?,?,?,?,?)",
+                (tenant_id, resource_type, resource_id, version, status, body, digest, now))
+            self.db.execute(
+                "INSERT INTO institutional_events VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (tenant_id, event_id, resource_type, resource_id, version,
+                 event_type, actor_ref, evidence_ref, event_body, now))
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+        return {"created": True, "payload_digest": digest, "event_id": event_id}
+
     def create_record(self, *, tenant_id: str, resource_type: str,
                       resource_id: str, version: str, status: str,
                       payload: dict[str, Any]) -> dict[str, Any]:
