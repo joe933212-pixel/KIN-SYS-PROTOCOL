@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 from http_service import create_app
 from institutional_authority import InMemoryNonceGuard, InstitutionalAuthorityResolver, sign_actor_claims
 from institutional_onboarding_administration import InstitutionalOnboardingAdministration
+from institutional_lifecycle_administration import InstitutionalLifecycleAdministration
 from institutional_registry import InstitutionalRegistry
 
 
@@ -27,7 +28,7 @@ class InstitutionalDomainHttpTests(unittest.TestCase):
         self.grant = {
             "grant_id":"GRANT-HTTP","tenant_id":"tenant-http","status":"ACTIVE",
             "actor_ref":"actor:registrar","institution_id":"BANK-HTTP",
-            "authority_ref":"authority:registry","roles":["institution_registrar"],
+            "authority_ref":"authority:registry","roles":["institution_registrar","institution_verifier"],
             "resource_types":["institution"],"resource_ids":["BANK-HTTP"],
             "valid_from":900,"valid_until":1100,"version":"1",
             "issuer_institution_id":"REGISTRY-UG","approval_ref":"approval:grant",
@@ -47,8 +48,15 @@ class InstitutionalDomainHttpTests(unittest.TestCase):
                     "nonce":f"http-onboard-nonce-{inner.outer.counter:08d}"}
                 return {"authenticated":True,"tenant_id":"tenant-http",
                     "actor_assertion":{"claims":claims,"signature":sign_actor_claims(claims,inner.outer.key)}}
+        class EvidenceVerifier:
+            def verify(inner, evidence_ref, *, context):
+                import hashlib
+                digest=hashlib.sha256(evidence_ref.encode()).hexdigest()
+                return {"verified":True,"evidence_ref":evidence_ref,
+                    "verification_ref":"verification:"+digest[:16],"evidence_digest":"sha256:"+digest}
         self.app=create_app(
             onboarding_administration=InstitutionalOnboardingAdministration(self.registry,self.resolver),
+            lifecycle_administration=InstitutionalLifecycleAdministration(self.registry,self.resolver,EvidenceVerifier()),
             institutional_session_resolver=Session(self))
         self.addCleanup(self.app.close)
 
@@ -78,6 +86,25 @@ class InstitutionalDomainHttpTests(unittest.TestCase):
         response,body=self.request("/institutional/domain/institutions/BANK-HTTP/events")
         self.assertEqual(response["status"],200)
         self.assertEqual(len(body["events"]),1)
+
+    def test_authenticated_lifecycle_route_verifies_evidence_and_advances_version(self):
+        record={"institution_id":"BANK-HTTP","legal_name":"HTTP Bank","jurisdiction_ref":"UG",
+                "status":"PENDING_VERIFICATION","verification_ref":None}
+        response,body=self.request("/institutional/domain/institutions","POST",{
+            "version":"1.0","event_id":"evt-http-life-register","evidence_ref":"evidence:incorporation","record":record})
+        self.assertEqual(response["status"],201,body)
+        response,body=self.request("/institutional/domain/institutions/BANK-HTTP/lifecycle","POST",{
+            "expected_version":"1.0","new_version":"2.0","event_id":"evt-http-life-verify",
+            "target_status":"VERIFIED","evidence_ref":"evidence:registry-review",
+            "approval_ref":"approval:registry-review"})
+        self.assertEqual(response["status"],200,body)
+        self.assertTrue(body["transition"]["created"])
+        response,body=self.request("/institutional/domain/institutions/BANK-HTTP")
+        self.assertEqual(response["status"],200)
+        self.assertEqual(body["resource"]["status"],"VERIFIED")
+        events=self.registry.list_events(tenant_id="tenant-http",resource_type="institution",resource_id="BANK-HTTP")
+        self.assertEqual(len(events),2)
+        self.assertIn("evidence_verification",events[-1]["payload"])
 
     def test_client_cannot_supply_tenant_identity(self):
         response,body=self.request("/institutional/domain/institutions","POST",{
