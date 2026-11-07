@@ -320,14 +320,33 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             "may_authorise": False,
         }
 
-        for minah_status, expected_decision in (
-            ("REJECTED", "REJECTED"),
-            ("NEEDS_INFORMATION", "DEFERRED"),
-        ):
-            with self.subTest(minah_status=minah_status):
+        class FailedVerificationAdapter:
+            def __init__(self, status):
+                self.status = status
+                self.calls = 0
+
+            def verify_principal(self, request):
+                self.calls += 1
+                return {"verified": False, "status": self.status, "mode": "TEST_ADAPTER"}
+
+            def verify_action(self, request):
+                self.calls += 1
+                return {"verified": False, "status": self.status, "mode": "TEST_ADAPTER"}
+
+        scenarios = (
+            ("REJECTED", "REJECTED", None, None),
+            ("NEEDS_INFORMATION", "DEFERRED", None, None),
+            ("ADVISORY_ONLY", "REJECTED", "IDENTITY", "NOT_VERIFIED"),
+            ("ADVISORY_ONLY", "REJECTED", "AUTHORITY", "NOT_VERIFIED"),
+        )
+        for index, (minah_status, expected_decision, failed_gate, failure_status) in enumerate(scenarios):
+            with self.subTest(minah_status=minah_status, failed_gate=failed_gate):
                 minah = DispositionMinah(minah_status)
+                failed_adapter = FailedVerificationAdapter(failure_status) if failed_gate else None
                 pipeline = KinSysProtocolPipeline(
                     minah_adapter=minah,
+                    identity_adapter=failed_adapter if failed_gate == "IDENTITY" else None,
+                    authority_adapter=failed_adapter if failed_gate == "AUTHORITY" else None,
                     minah_profile=profile,
                     cee_database=":memory:",
                     ivm_database=":memory:",
@@ -357,12 +376,12 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
                 )
                 request = instruction()
                 request.update({
-                    "request_id": "REQ-GATE-" + minah_status,
-                    "operation_id": "OP-GATE-" + minah_status,
-                    "idempotency_key": "idempotency-gate-" + minah_status,
+                    "request_id": "REQ-GATE-" + str(index),
+                    "operation_id": "OP-GATE-" + str(index),
+                    "idempotency_key": "idempotency-gate-" + str(index),
                     "jurisdiction": "UG-DEMO",
                     "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
-                    "target_ref": "PROCESS-GATE-" + minah_status,
+                    "target_ref": "PROCESS-GATE-" + str(index),
                     "evidence": evidence,
                     "evidence_refs": ["evidence:gate-test"],
                 })
@@ -378,6 +397,8 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
 
                 self.assertEqual(outcome["decision"]["protocol_decision"], expected_decision)
                 self.assertEqual(minah.review_calls, 1)
+                if failed_adapter is not None:
+                    self.assertEqual(failed_adapter.calls, 1)
                 operation = pipeline.cee.get(request["operation_id"])
                 self.assertEqual(operation["phase"], "FINALIZED")
                 self.assertEqual(operation["outcome"], expected_decision)
