@@ -359,7 +359,17 @@ class KinSysProtocolPipeline:
         profile_signature_verifier: Any | None = None,
         profile_revocation_checker: Any | None = None,
         require_profile_approval: bool = False,
+        identity_provider_id: str | None = None,
+        identity_provider_version: str | None = None,
+        jurisdiction_package_id: str | None = None,
+        jurisdiction_package_version: str | None = None,
+        authority_profile_version: str | None = None,
     ):
+        self.identity_provider_id = identity_provider_id
+        self.identity_provider_version = identity_provider_version
+        self.jurisdiction_package_id = jurisdiction_package_id
+        self.jurisdiction_package_version = jurisdiction_package_version
+        self.authority_profile_version = authority_profile_version
         self.cee = CEEJournal(cee_database)
         self.ivm = ProtocolStore(ivm_database)
         self.minah = minah_adapter or DeterministicMinahAdapter()
