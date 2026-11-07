@@ -58,7 +58,7 @@ def config():
         "identity_provider_id": "idp-ug", "identity_provider_version": "2",
         "mandate_ref": "mandate:gov-1", "mandate_version": "1",
         "permitted_operations": ["trade.review"],
-        "prohibited_operations": ["authority.grant"],
+        "prohibited_operations": ["authority.grant", "bypass.cee"],
         "decision_boundaries": ["CEE_FINAL_ADMISSION"],
         "policy_pack_version": "policy-1", "source_pack_version": "sources-1",
         "authority_profile_version": "authority-1",
