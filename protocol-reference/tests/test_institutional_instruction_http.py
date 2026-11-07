@@ -40,7 +40,15 @@ class RuntimeResolver:
             "source_pack_version": "UG-SOURCES:2.0",
             "authority_profile_version": "BANK-AUTHORITY:1.0",
             "runtime_admission": "ELIGIBLE_FOR_GOVERNED_EXECUTION",
-            "minah_config": {"endpoint_ref": "secret://private"},
+            "minah_config": {
+                "deployment_id": "MINAH-UG-01",
+                "owner_ref": "tenant-ug",
+                "model_ref": "model:bank/minah-v1",
+                "jurisdictions": ["UG"],
+                "policy_pack_version": "BANK-RULES:1.0",
+                "source_pack_version": "UG-SOURCES:2.0",
+                "endpoint_ref": "secret://private",
+            },
         }
 
 
@@ -73,6 +81,16 @@ class Pipeline:
     jurisdiction_package_id = "JUR-UG-01"
     jurisdiction_package_version = "4.0"
     authority_profile_version = "BANK-AUTHORITY:1.0"
+    minah_profile = {
+        "profile_version": "kin-sys-minah-profile-0.1",
+        "deployment_id": "MINAH-UG-01",
+        "owner_ref": "tenant-ug",
+        "model_ref": "model:bank/minah-v1",
+        "jurisdictions": ["UG"],
+        "policy_pack_version": "BANK-RULES:1.0",
+        "source_pack_version": "UG-SOURCES:2.0",
+        "may_authorise": False,
+    }
 
     def __init__(self):
         self.requests = []
