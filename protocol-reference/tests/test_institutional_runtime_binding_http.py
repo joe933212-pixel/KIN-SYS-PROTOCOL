@@ -21,6 +21,8 @@ class RuntimeResolver:
             "tenant_id": tenant_id, "institution_id": institution_id,
             "binding_id": binding_id, "binding_version": "3",
             "minah_deployment_id": "MINAH-UG-01", "minah_runtime_version": "9",
+            "identity_provider_id": "IDP-UG-01", "identity_provider_version": "2",
+            "identity_provider_config": {"issuer": "https://private-idp.example"},
             "minah_config": {
                 "endpoint_ref": "https://private.example/minah",
                 "secret_ref": "secret://tenant/minah",
@@ -62,6 +64,8 @@ class InstitutionalRuntimeBindingHttpTests(unittest.TestCase):
         self.assertNotIn("minah_config", context)
         self.assertNotIn("secret_ref", json.dumps(body))
         self.assertNotIn("endpoint_ref", json.dumps(body))
+        self.assertNotIn("identity_provider_config", context)
+        self.assertNotIn("private-idp.example", json.dumps(body))
 
     def test_runtime_route_is_get_only(self):
         response, body = self.request(
