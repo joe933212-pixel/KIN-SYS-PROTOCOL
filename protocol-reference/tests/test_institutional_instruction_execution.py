@@ -21,6 +21,8 @@ class RuntimeResolver:
             "jurisdiction_package_id": "JUR-UG-01",
             "jurisdiction_package_version": "4.0",
             "minah_deployment_id": "MINAH-UG-01",
+            "identity_provider_id": "IDP-UG-01",
+            "identity_provider_version": "2.0",
             "minah_domain_version": "5.0",
             "minah_runtime_version": "9.0",
             "policy_pack_version": "BANK-RULES:1.0",
