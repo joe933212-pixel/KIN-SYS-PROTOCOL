@@ -26,7 +26,7 @@ class InstitutionalDomainHttpTests(unittest.TestCase):
         self.key = b"http-onboarding-test-key-at-least-32-bytes-long"
         self.grant = {
             "grant_id":"GRANT-HTTP","tenant_id":"tenant-http","status":"ACTIVE",
-            "actor_ref":"actor:registrar","institution_id":"REGISTRY-UG",
+            "actor_ref":"actor:registrar","institution_id":"BANK-HTTP",
             "authority_ref":"authority:registry","roles":["institution_registrar"],
             "resource_types":["institution"],"resource_ids":["BANK-HTTP"],
             "valid_from":900,"valid_until":1100,"version":"1",
