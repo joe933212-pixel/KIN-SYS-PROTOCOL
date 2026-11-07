@@ -42,6 +42,7 @@ from institutional_identity_provider_registry import (
 )
 
 from institutional_onboarding_administration import InstitutionalOnboardingAdministration, InstitutionalOnboardingError
+from institutional_lifecycle_administration import (InstitutionalLifecycleAdministration, InstitutionalLifecycleAdministrationError)
 from institutional_registry import RegistryConflict, RegistryError
 
 from institutional_minah_deployment import (
@@ -138,7 +139,8 @@ class KinSysPrototypeApplication:
         institutional_session_resolver: Any | None = None,
         minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
         onboarding_administration: InstitutionalOnboardingAdministration | None = None,
-    ):
+        lifecycle_administration: InstitutionalLifecycleAdministration | None = None,
+    ): 
         if pipeline is not None and any(
             adapter is not None
             for adapter in (minah_adapter, identity_adapter, authority_adapter, minah_profile, minah_profile_approval, profile_signature_verifier, profile_revocation_checker)
@@ -164,7 +166,7 @@ class KinSysPrototypeApplication:
         self.allow_unauthenticated_loopback = bool(allow_unauthenticated_loopback)
         any_institutional_admin = (
             provider_administration is not None or minah_deployment_administration is not None
-            or onboarding_administration is not None
+            or onboarding_administration is not None or lifecycle_administration is not None
         )
         if any_institutional_admin and not callable(
             getattr(institutional_session_resolver, "resolve", None)
@@ -175,6 +177,7 @@ class KinSysPrototypeApplication:
         self.provider_administration = provider_administration
         self.minah_deployment_administration = minah_deployment_administration
         self.onboarding_administration = onboarding_administration
+        self.lifecycle_administration = lifecycle_administration
         self.institutional_session_resolver = institutional_session_resolver
 
     def close(self) -> None:
@@ -206,6 +209,10 @@ class KinSysPrototypeApplication:
             return "institutional-domain:" + domain_routes[path] + ":list", None
         if path.startswith("/institutional/domain/"):
             parts = path.strip("/").split("/")
+            if len(parts) == 5 and parts[4] == "lifecycle" and method == "POST":
+                lifecycle_kinds = {"institutions":"institution", "jurisdictions":"jurisdiction", "minah-deployments":"minah", "bindings":"binding"}
+                if parts[2] in lifecycle_kinds and _ID_RE.fullmatch(parts[3]):
+                    return "institutional-domain:" + lifecycle_kinds[parts[2]] + ":lifecycle", parts[3]
             if len(parts) == 5 and parts[4] == "events":
                 return "institutional-domain:" + parts[2] + ":audit", parts[3]
             if len(parts) == 4:
@@ -280,6 +287,7 @@ class KinSysPrototypeApplication:
                         "POST /institutional/domain/jurisdictions",
                         "POST /institutional/domain/minah-deployments",
                         "POST /institutional/domain/bindings",
+                        "POST /institutional/domain/{resource_type}/{resource_id}/lifecycle",
                         "GET /institutional/domain/{resource_type}",
                         "GET /institutional/domain/{resource_type}/{resource_id}",
                         "GET /institutional/domain/{resource_type}/{resource_id}/events",
@@ -445,6 +453,20 @@ class KinSysPrototypeApplication:
                         version=body.get("version"),event_id=body.get("event_id"),evidence_ref=body.get("evidence_ref"),
                         record=record,actor_assertion=assertion)
                     return _response(start_response,201,{"registration":result},request_id)
+                if len(parts) == 5 and parts[4] == "lifecycle" and method == "POST":
+                    if self.lifecycle_administration is None:
+                        raise HttpServiceError(503,"INSTITUTIONAL_LIFECYCLE_NOT_CONFIGURED","Institutional lifecycle administration is not configured.")
+                    resource_id=parts[3]
+                    if not _ID_RE.fullmatch(resource_id):
+                        raise HttpServiceError(404,"INSTITUTIONAL_RESOURCE_NOT_FOUND","No resource exists in this institutional tenant.")
+                    body=self._read_json(environ,allowed_fields={"expected_version","new_version","event_id","target_status","evidence_ref","approval_ref","activation_context"})
+                    result=self.lifecycle_administration.transition(
+                        tenant_id=tenant_id,resource_type=resource_type,resource_id=resource_id,
+                        expected_version=body.get("expected_version"),new_version=body.get("new_version"),
+                        event_id=body.get("event_id"),target_status=body.get("target_status"),
+                        actor_assertion=assertion,evidence_ref=body.get("evidence_ref"),
+                        approval_ref=body.get("approval_ref"),activation_context=body.get("activation_context"))
+                    return _response(start_response,200,{"transition":result},request_id)
                 if len(parts) in (4,5) and parts[3] and _ID_RE.fullmatch(parts[3]):
                     resource_id=parts[3]
                     item=self.onboarding_administration.get(tenant_id=tenant_id,resource_type=resource_type,resource_id=resource_id)
@@ -460,7 +482,7 @@ class KinSysPrototypeApplication:
                 return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
             except RegistryConflict as exc:
                 return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_REGISTRY_CONFLICT","message":str(exc)}},request_id)
-            except (InstitutionalOnboardingError,RegistryError,ValueError,TypeError) as exc:
+            except (InstitutionalOnboardingError,InstitutionalLifecycleAdministrationError,RegistryError,ValueError,TypeError) as exc:
                 return _response(start_response,422,{"error":{"code":"INSTITUTIONAL_ONBOARDING_REJECTED","message":str(exc)[:240]}},request_id)
             except Exception:
                 return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"Institutional onboarding could not be completed."}},request_id)
