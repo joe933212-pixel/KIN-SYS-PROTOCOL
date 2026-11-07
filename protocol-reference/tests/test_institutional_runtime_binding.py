@@ -139,6 +139,7 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
         self.assertEqual(result["execution_order"],
                          ["MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION"])
         self.assertEqual(result["binding_version"], "3")
+        self.assertEqual(result["jurisdiction_ref"], "UG")
         self.assertEqual(result["jurisdiction_package_version"], "4")
         self.assertEqual(result["identity_provider_id"], "IDP-UG-01")
         self.assertEqual(result["identity_provider_version"], "2")
