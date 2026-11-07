@@ -202,6 +202,8 @@ class KinSysPrototypeApplication:
                          "/institutional/domain/bindings":"binding"}
         if path in domain_routes and method == "POST":
             return "institutional-domain:" + domain_routes[path] + ":register", None
+        if path in domain_routes and method == "GET":
+            return "institutional-domain:" + domain_routes[path] + ":list", None
         if path.startswith("/institutional/domain/"):
             parts = path.strip("/").split("/")
             if len(parts) == 5 and parts[4] == "events":
@@ -278,6 +280,7 @@ class KinSysPrototypeApplication:
                         "POST /institutional/domain/jurisdictions",
                         "POST /institutional/domain/minah-deployments",
                         "POST /institutional/domain/bindings",
+                        "GET /institutional/domain/{resource_type}",
                         "GET /institutional/domain/{resource_type}/{resource_id}",
                         "GET /institutional/domain/{resource_type}/{resource_id}/events",
                         "POST /institutional/identity-providers",
@@ -429,6 +432,10 @@ class KinSysPrototypeApplication:
                 if len(parts) not in (3,4,5) or parts[:2] != ["institutional","domain"] or parts[2] not in kinds:
                     raise HttpServiceError(404,"ROUTE_NOT_FOUND","No institutional domain route matches this path.")
                 resource_type = kinds[parts[2]]
+                if len(parts)==3 and method=="GET":
+                    resources=self.onboarding_administration.list(
+                        tenant_id=tenant_id, resource_type=resource_type)
+                    return _response(start_response,200,{"resources":resources,"count":len(resources)},request_id)
                 if len(parts)==3 and method=="POST":
                     body=self._read_json(environ,allowed_fields={"version","event_id","evidence_ref","record"})
                     record=body.get("record")
