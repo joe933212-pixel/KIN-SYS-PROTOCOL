@@ -142,6 +142,7 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
             "jurisdiction_package_id": "UG-PACK",
             "jurisdiction_package_version": "1.0",
             "minah_deployment_id": "MINAH-1",
+            "identity_provider_id": "IDP-1", "identity_provider_version": "1.0",
             "policy_pack_version": "1.0",
             "source_pack_version": "1.0",
             "authority_profile_version": "1.0",
@@ -196,7 +197,9 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
             "binding_id": "BIND-1", "owner_institution_id": "BANK-UG-01",
             "jurisdiction_package_id": "UG-PACK",
             "jurisdiction_package_version": "1.0",
-            "minah_deployment_id": "MINAH-1", "policy_pack_version": "1.0",
+            "minah_deployment_id": "MINAH-1",
+            "identity_provider_id": "IDP-1", "identity_provider_version": "1.0",
+            "policy_pack_version": "1.0",
             "source_pack_version": "1.0", "authority_profile_version": "1.0",
             "status": "APPROVED", "approval_ref": "approval:binding",
         }
