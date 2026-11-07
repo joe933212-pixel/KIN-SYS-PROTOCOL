@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kin-sys.org/schemas/institutional-minah-deployment-0.1.schema.json",
+  "$id": "urn:kin-sys:schema:institutional-minah-deployment:0.1",
   "title": "KIN-SYS Institutional MINAH Deployment",
   "description": "Provider-neutral institution-owned MINAH deployment descriptor. References only; no credentials or model binaries.",
   "type": "object",
