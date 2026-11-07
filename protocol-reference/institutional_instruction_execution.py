@@ -10,6 +10,7 @@ institution's approved MINAH, identity and authority adapters.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 from typing import Any, Callable
 
@@ -191,7 +192,7 @@ class InstitutionalInstructionExecutionService:
         if not isinstance(result, dict):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_PIPELINE_RESPONSE_INVALID")
-        if result.get("operation_id") not in (None, checked["operation_id"]):
+        if result.get("operation_id") != checked["operation_id"]:
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_PIPELINE_OPERATION_ID_MISMATCH")
         status = {
@@ -199,12 +200,18 @@ class InstitutionalInstructionExecutionService:
             "REJECTED": "REJECTED", "DEFERRED": "DEFERRED",
             "UNKNOWN": "UNKNOWN",
         }.get(result.get("status"), "UNKNOWN")
+        raw_reason = result.get("reason")
+        reason_code = (
+            raw_reason if isinstance(raw_reason, str)
+            and re.fullmatch(r"[A-Z0-9_:-]{1,120}", raw_reason)
+            else "INSTITUTIONAL_GOVERNED_EXECUTION"
+        )
         decision = validate_decision_envelope({
             "contract_version": checked["contract_version"],
             "request_id": checked["request_id"],
             "operation_id": checked["operation_id"],
             "protocol_decision": status,
-            "reason_code": str(result.get("reason") or "INSTITUTIONAL_GOVERNED_EXECUTION"),
+            "reason_code": reason_code,
             "user_message": {
                 "PASSED": "The institution's configured protocol gates passed. No external effect is implied.",
                 "REJECTED": "A required institutional protocol gate rejected the instruction.",
@@ -218,9 +225,15 @@ class InstitutionalInstructionExecutionService:
             "evidence_refs": checked.get("evidence_refs", []),
         })
         assert_instruction_binding(checked, decision)
+        safe_result = {
+            key: result[key] for key in (
+                "operation_id", "status", "reason", "funds_moved",
+                "ivm_decision", "duplicate",
+            ) if key in result
+        }
         return {
             "decision": decision,
-            "result": result,
+            "result": safe_result,
             "runtime_pins": pins,
             "production_ready": False,
         }
