@@ -55,6 +55,14 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
                 "verification_ref": "verification:institution",
             })
         self.registry.create_record(
+            tenant_id=self.tenant, resource_type="institution",
+            resource_id="OTHER-BANK", version="1",
+            status="VERIFIED", payload={
+                "institution_id": "OTHER-BANK", "legal_name": "Other Bank",
+                "jurisdiction_ref": "UG", "status": "VERIFIED",
+                "verification_ref": "verification:other",
+            })
+        self.registry.create_record(
             tenant_id=self.tenant, resource_type="jurisdiction",
             resource_id="UG-PACK-01", version="4", status="ACTIVE", payload={
                 "package_id": "UG-PACK-01", "version": "4",
