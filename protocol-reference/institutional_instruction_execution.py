@@ -357,21 +357,42 @@ class InstitutionalInstructionExecutionService:
                     "INSTITUTIONAL_PIPELINE_BINDING_MISMATCH:" + field)
         stored_profile = request.get("_minah_deployment_profile")
         active_profile = getattr(pipeline, "minah_profile", None)
-        if (stored_profile is not None
-                and _safe_minah_profile_snapshot(active_profile) != stored_profile):
+        if not isinstance(stored_profile, dict) or not isinstance(active_profile, dict):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_UNAVAILABLE")
-        if isinstance(active_profile, dict):
-            checks = {
-                "deployment_id": pins["minah_deployment_id"],
-                "owner_ref": pins["tenant_id"],
-                "policy_pack_version": pins["policy_pack_version"],
-                "source_pack_version": pins["source_pack_version"],
-            }
-            for field, expected in checks.items():
-                if active_profile.get(field) != expected:
-                    raise InstitutionalInstructionExecutionError(
-                        "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH:" + field)
+        try:
+            active_snapshot = _safe_minah_profile_snapshot(active_profile)
+        except (TypeError, ValueError):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_UNAVAILABLE") from None
+        # Recovery is permitted only when the executor presents the exact safe
+        # deployment profile admitted for this operation. Missing snapshots are
+        # not treated as legacy-compatible: doing so would permit recovery under
+        # an unpinned or substituted MINAH configuration.
+        if active_snapshot != stored_profile:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH")
+        profile_pins = {
+            "deployment_id": pins["minah_deployment_id"],
+            "owner_ref": pins["tenant_id"],
+            "policy_pack_version": pins["policy_pack_version"],
+            "source_pack_version": pins["source_pack_version"],
+        }
+        for field, expected in profile_pins.items():
+            if stored_profile.get(field) != expected:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH:" + field)
+        jurisdictions = stored_profile.get("jurisdictions")
+        if (not isinstance(jurisdictions, list) or not jurisdictions
+                or any(not isinstance(item, str) or not item.strip()
+                       for item in jurisdictions)
+                or len(set(jurisdictions)) != len(jurisdictions)
+                or pins["jurisdiction_ref"] not in jurisdictions):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH:jurisdictions")
+        if stored_profile.get("may_authorise") is not False:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH:may_authorise")
 
     def _find_pinned_pipeline(self, tenant_id: str, operation_id: str,
                               institution_id: str | None = None):
