@@ -29,7 +29,7 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
             "authority_ref": "authority:institution-register",
             "roles": ["institution_verifier", "binding_activation_authority"],
             "resource_types": ["institution", "binding"],
-            "resource_ids": ["BANK-UG-01", "BIND-1"],
+            "resource_ids": ["BANK-UG-01", "BIND-1", "BIND-2"],
             "valid_from": 900,
             "valid_until": 1100,
             "version": "3",
@@ -200,14 +200,14 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
             "source_pack_version": "1.0", "authority_profile_version": "1.0",
             "status": "APPROVED", "approval_ref": "approval:binding",
         }
-        for kind, resource_id, payload in (
-            ("institution", "BANK-UG-01", institution),
-            ("jurisdiction", "UG-PACK", jurisdiction),
-            ("minah", "MINAH-1", minah),
-            ("binding", "BIND-1", binding),
+        for kind, resource_id, version, payload in (
+            ("institution", "BANK-UG-01", "2.0", institution),
+            ("jurisdiction", "UG-PACK", "1.0", jurisdiction),
+            ("minah", "MINAH-1", "1.0", minah),
+            ("binding", "BIND-1", "1.0", binding),
         ):
             self.registry.create_record(tenant_id="tenant-a", resource_type=kind,
-                resource_id=resource_id, version="1.0", status=payload["status"],
+                resource_id=resource_id, version=version, status=payload["status"],
                 payload=payload)
         result = self.coordinator.transition(
             tenant_id="tenant-a", resource_type="binding", resource_id="BIND-1",
