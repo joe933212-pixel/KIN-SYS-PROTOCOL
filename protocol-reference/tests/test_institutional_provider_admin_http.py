@@ -127,6 +127,45 @@ class InstitutionalProviderHttpTests(unittest.TestCase):
         self.assertIsNone(self.registry.get_provider(
             tenant_id="tenant-bank-ug", provider_id="national-idp"))
 
+    def test_route_authorizer_must_approve_provider_administration_scope(self):
+        calls = []
+        class RouteAuthorizer:
+            def authorize(self, environ, scope, resource_id):
+                calls.append((scope, resource_id))
+                return True
+        app = create_app(
+            provider_administration=self.admin,
+            institutional_session_resolver=self.sessions,
+            authorizer=RouteAuthorizer(),
+            allow_unauthenticated_loopback=False,
+        )
+        self.addCleanup(app.close)
+        response, _ = self.register(app=app)
+        self.assertEqual(response["status"], 201)
+        self.assertEqual(calls, [("identity-provider:register", None)])
+
+    def test_session_resolver_exception_fails_closed_as_unauthenticated(self):
+        class BrokenSessionResolver:
+            def resolve(self, environ):
+                raise RuntimeError("session backend unavailable")
+        app = create_app(
+            provider_administration=self.admin,
+            institutional_session_resolver=BrokenSessionResolver(),
+        )
+        self.addCleanup(app.close)
+        response, body = self.register(app=app)
+        self.assertEqual(response["status"], 401)
+        self.assertEqual(body["error"]["code"], "INSTITUTIONAL_SESSION_INVALID")
+        self.assertEqual(self.authority.calls, [])
+
+    def test_routes_return_service_unavailable_when_admin_boundary_is_not_wired(self):
+        app = create_app()
+        self.addCleanup(app.close)
+        response, body = self.request(
+            app, "/institutional/identity-providers", "POST", {})
+        self.assertEqual(response["status"], 503)
+        self.assertEqual(body["error"]["code"], "PROVIDER_ADMINISTRATION_NOT_CONFIGURED")
+
     def test_insufficient_role_returns_forbidden_without_side_effects(self):
         self.authority.roles = ["identity_provider_approver"]
         response, body = self.register()
