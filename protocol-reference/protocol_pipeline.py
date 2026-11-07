@@ -1331,6 +1331,7 @@ class KinSysProtocolPipeline:
                 "tenant_id", "institution_id", "institution_version", "binding_id",
                 "binding_version", "jurisdiction_ref", "jurisdiction_package_id",
                 "jurisdiction_package_version", "minah_deployment_id",
+                "identity_provider_id", "identity_provider_version",
                 "minah_domain_version", "minah_runtime_version",
                 "policy_pack_version", "source_pack_version",
                 "authority_profile_version",
