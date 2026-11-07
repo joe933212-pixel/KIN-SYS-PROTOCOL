@@ -60,6 +60,7 @@ class InstitutionalInstructionExecutionService:
             "tenant_id", "institution_id", "institution_version", "binding_id",
             "binding_version", "jurisdiction_ref", "jurisdiction_package_id",
             "jurisdiction_package_version", "minah_deployment_id",
+            "identity_provider_id", "identity_provider_version",
             "minah_domain_version", "minah_runtime_version",
             "policy_pack_version", "source_pack_version",
             "authority_profile_version",
@@ -144,6 +145,7 @@ class InstitutionalInstructionExecutionService:
         cache_key = tuple(pins[field] for field in (
             "tenant_id", "institution_id", "binding_id", "binding_version",
             "minah_deployment_id", "minah_domain_version", "minah_runtime_version",
+            "identity_provider_id", "identity_provider_version",
             "jurisdiction_package_id", "jurisdiction_package_version",
             "policy_pack_version", "source_pack_version", "authority_profile_version",
         ))
