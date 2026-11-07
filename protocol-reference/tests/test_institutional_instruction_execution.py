@@ -391,7 +391,7 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
                 ):
                     service.recover(
                         tenant_id="tenant-ug", operation_id="OP-REAL-1",
-                        actor_ref="operator:alice", request_id="recovery-drift-" + field)
+                        actor_ref="operator:alice", request_id="recovery-drift-" + field.replace("_", "-"))
                 pipeline.minah_profile.clear()
                 pipeline.minah_profile.update(original_profile)
 
