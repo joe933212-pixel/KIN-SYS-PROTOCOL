@@ -77,8 +77,12 @@ class InstitutionalRuntimeBindingResolver:
             if jurisdiction["jurisdiction_ref"] != institution["jurisdiction_ref"]:
                 raise InstitutionalRuntimeBindingError("RUNTIME_JURISDICTION_SCOPE_MISMATCH")
 
-            identity_provider = self.identity_providers.resolve_active_provider(
-                tenant_id, binding["identity_provider_id"])
+            try:
+                identity_provider = self.identity_providers.resolve_active_provider(
+                    tenant_id, binding["identity_provider_id"])
+            except Exception as exc:
+                raise InstitutionalRuntimeBindingError(
+                    "RUNTIME_IDENTITY_PROVIDER_UNAVAILABLE") from exc
             if not isinstance(identity_provider, dict):
                 raise InstitutionalRuntimeBindingError(
                     "RUNTIME_IDENTITY_PROVIDER_NOT_ACTIVE")
