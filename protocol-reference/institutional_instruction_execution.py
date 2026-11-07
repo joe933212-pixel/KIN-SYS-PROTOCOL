@@ -456,6 +456,11 @@ class InstitutionalInstructionExecutionService:
             }
         pipeline, operation, pins, request = found
         journal = pipeline.cee
+        recovery_method = getattr(pipeline, "recover", None)
+        record_observation = getattr(journal, "record_observation", None)
+        if not callable(recovery_method) or not callable(record_observation):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_OPERATION_RECOVERY_UNAVAILABLE")
         detail: dict[str, str] = {}
         if isinstance(actor_ref, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}", actor_ref):
             detail["actor_ref"] = actor_ref
@@ -463,10 +468,10 @@ class InstitutionalInstructionExecutionService:
             detail["actor_binding"] = "VERIFIED_INSTITUTIONAL_SESSION"
         if isinstance(request_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,119}", request_id):
             detail["request_id"] = request_id
-        journal.record_observation(
+        record_observation(
             operation_id, "INSTITUTIONAL_RECOVERY", "REQUESTED", detail)
         try:
-            recovered = pipeline.recover(operation_id)
+            recovered = recovery_method(operation_id)
             if not isinstance(recovered, dict):
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_RECOVERY_RESPONSE_INVALID")
@@ -478,7 +483,7 @@ class InstitutionalInstructionExecutionService:
             completed_detail = dict(detail)
             if isinstance(reason, str) and re.fullmatch(r"[A-Z0-9_:-]{1,120}", reason):
                 completed_detail["reason_code"] = reason
-            journal.record_observation(
+            record_observation(
                 operation_id, "INSTITUTIONAL_RECOVERY", str(recovered_status), completed_detail)
             checked = verify_instruction_payload_digest(request.get("_contract_envelope"))
             return self._decision_response(checked, recovered, pins)
@@ -490,7 +495,7 @@ class InstitutionalInstructionExecutionService:
                 else "INSTITUTIONAL_RECOVERY_FAILED"
             )
             try:
-                journal.record_observation(
+                record_observation(
                     operation_id, "INSTITUTIONAL_RECOVERY", "BLOCKED", blocked_detail)
             except Exception:
                 pass
