@@ -4,10 +4,12 @@
 Authentication and actor assertions are injected from the trusted session
 boundary. This facade enforces tenant scope, registration roles, initial
 lifecycle states, domain validation and atomic record/audit creation.
-It does not authenticate people or independently verify legal evidence.
+It does not authenticate people. Registration evidence must be resolved by an injected
+trusted verifier; a caller-supplied non-empty reference alone is never proof.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from institutional_deployment_domain import (
@@ -49,13 +51,43 @@ class InstitutionalOnboardingError(ValueError):
 class InstitutionalOnboardingAdministration:
     """Register and retrieve immutable institutional domain records."""
 
-    def __init__(self, registry: InstitutionalRegistry, authority_resolver: Any):
+    _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+
+    def __init__(self, registry: InstitutionalRegistry, authority_resolver: Any,
+                 evidence_verifier: Any):
         if not isinstance(registry, InstitutionalRegistry):
             raise InstitutionalOnboardingError("INSTITUTIONAL_REGISTRY_REQUIRED")
         if not callable(getattr(authority_resolver, "resolve", None)):
             raise InstitutionalOnboardingError("TRUSTED_AUTHORITY_RESOLVER_REQUIRED")
+        if not callable(getattr(evidence_verifier, "verify", None)):
+            raise InstitutionalOnboardingError("TRUSTED_EVIDENCE_VERIFIER_REQUIRED")
         self.registry = registry
         self.authority_resolver = authority_resolver
+        self.evidence_verifier = evidence_verifier
+
+    def _verify_registration_evidence(self, evidence_ref: str, *,
+                                      tenant_id: str, resource_type: str,
+                                      resource_id: str, version: str) -> dict[str, str]:
+        context = {
+            "tenant_id": tenant_id, "resource_type": resource_type,
+            "resource_id": resource_id, "purpose": "INSTITUTIONAL_REGISTRATION",
+            "expected_version": version,
+        }
+        try:
+            result = self.evidence_verifier.verify(evidence_ref, context=context)
+        except Exception as exc:
+            raise InstitutionalOnboardingError("REGISTRATION_EVIDENCE_VERIFICATION_FAILED") from exc
+        if not isinstance(result, dict) or result.get("verified") is not True:
+            raise InstitutionalOnboardingError("REGISTRATION_EVIDENCE_NOT_VERIFIED")
+        if result.get("evidence_ref") != evidence_ref:
+            raise InstitutionalOnboardingError("REGISTRATION_EVIDENCE_REFERENCE_MISMATCH")
+        verification_ref = result.get("verification_ref")
+        digest = result.get("evidence_digest")
+        if not isinstance(verification_ref, str) or not verification_ref.strip():
+            raise InstitutionalOnboardingError("REGISTRATION_EVIDENCE_RECEIPT_INVALID")
+        if not isinstance(digest, str) or not self._DIGEST_RE.fullmatch(digest):
+            raise InstitutionalOnboardingError("REGISTRATION_EVIDENCE_DIGEST_INVALID")
+        return {"verification_ref": verification_ref, "evidence_digest": digest}
 
     def register(self, *, tenant_id: str, resource_type: str,
                  version: str, event_id: str, record: dict[str, Any],
@@ -110,6 +142,10 @@ class InstitutionalOnboardingAdministration:
             raise InstitutionalOnboardingError("REGISTRATION_ACTOR_INSTITUTION_MISMATCH")
         if REGISTRAR_ROLES[resource_type] not in actor.get("roles", []):
             raise InstitutionalOnboardingError("REGISTRATION_ROLE_REQUIRED")
+        evidence_receipt = self._verify_registration_evidence(
+            evidence_ref, tenant_id=tenant_id, resource_type=resource_type,
+            resource_id=resource_id, version=version,
+        )
         result = self.registry.create_record_with_event(
             tenant_id=tenant_id, resource_type=resource_type,
             resource_id=resource_id, version=version,
@@ -118,7 +154,8 @@ class InstitutionalOnboardingAdministration:
             actor_ref=actor["actor_ref"], evidence_ref=evidence_ref,
             event_payload={"registration_status": clean["status"],
                            "authority_ref": actor["authority_ref"],
-                           "grant_ref": actor["grant_ref"]},
+                           "grant_ref": actor["grant_ref"],
+                           "evidence_verification": evidence_receipt},
         )
         return {"resource_type": resource_type, "resource_id": resource_id,
                 "version": version, "status": clean["status"],
