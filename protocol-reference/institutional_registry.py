@@ -203,6 +203,23 @@ class InstitutionalRegistry:
                 "payload": json.loads(row["payload_json"]),
                 "payload_digest": row["payload_digest"], "created_at": row["created_at"]}
 
+    def get_current_record(self, *, tenant_id: str, resource_type: str,
+                          resource_id: str) -> dict[str, Any] | None:
+        """Load the latest tenant-scoped immutable snapshot for one resource."""
+        self._check(tenant_id, resource_type, resource_id)
+        row = self.db.execute(
+            """SELECT version,status,payload_json,payload_digest,created_at
+               FROM institutional_records
+               WHERE tenant_id=? AND resource_type=? AND resource_id=?
+               ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+            (tenant_id, resource_type, resource_id)).fetchone()
+        if row is None:
+            return None
+        return {"tenant_id": tenant_id, "resource_type": resource_type,
+                "resource_id": resource_id, "version": row["version"],
+                "status": row["status"], "payload": json.loads(row["payload_json"]),
+                "payload_digest": row["payload_digest"], "created_at": row["created_at"]}
+
     def list_records(self, *, tenant_id: str, resource_type: str,
                      resource_id: str | None = None) -> list[dict[str, Any]]:
         self._check(tenant_id, resource_type)
