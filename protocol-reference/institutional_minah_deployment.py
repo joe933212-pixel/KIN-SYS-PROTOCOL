@@ -63,6 +63,14 @@ def _identifier(value: Any, field: str) -> str:
     return value
 
 
+def _model_reference(value: Any) -> str:
+    """Validate a namespaced model reference, which may contain URI path separators."""
+    if (not isinstance(value, str) or len(value) > 256
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", value)):
+        raise MinahDeploymentError("MINAH_MODEL_REFERENCE_INVALID")
+    return value
+
+
 def _canonical(value: Any) -> str:
     try:
         return json.dumps(value, sort_keys=True, separators=(",", ":"),
@@ -85,12 +93,13 @@ def _validate(config: Any, tenant_id: str) -> dict[str, Any]:
         if key.lower() in FORBIDDEN_KEYS:
             raise MinahDeploymentError("MINAH_SECRET_OR_MODEL_MATERIAL_FORBIDDEN")
     for field in ("deployment_id", "version", "agent_ref", "interface_version",
-                  "model_ref", "owner_ref", "identity_provider_id",
+                  "owner_ref", "identity_provider_id",
                   "identity_provider_version", "jurisdiction_package_id",
                   "jurisdiction_package_version", "mandate_ref", "mandate_version",
                   "policy_pack_version", "source_pack_version",
                   "authority_profile_version"):
         _identifier(config[field], field)
+    _model_reference(config["model_ref"])
     if config["status"] != "PENDING":
         raise MinahDeploymentError("NEW_OR_REVISED_DEPLOYMENT_MUST_BE_PENDING")
     if not isinstance(config["agent_kind"], str) or config["agent_kind"] not in AGENT_KINDS:
