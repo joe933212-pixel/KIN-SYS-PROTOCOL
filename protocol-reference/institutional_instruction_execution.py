@@ -35,7 +35,8 @@ class InstitutionalInstructionExecutionService:
 
     def __init__(self, *, runtime_binding_resolver: Any,
                  pipeline_factory: Callable[[dict[str, Any]], Any],
-                 operation_pipeline_resolver: Callable[..., Any] | None = None):
+                 operation_pipeline_resolver: Callable[..., Any] | None = None,
+                 minah_deployment_resolver: Any | None = None):
         if not callable(getattr(runtime_binding_resolver, "resolve", None)):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_RUNTIME_BINDING_RESOLVER_REQUIRED")
@@ -45,8 +46,18 @@ class InstitutionalInstructionExecutionService:
         if operation_pipeline_resolver is not None and not callable(operation_pipeline_resolver):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_OPERATION_PIPELINE_RESOLVER_INVALID")
+        if minah_deployment_resolver is None:
+            minah_deployment_resolver = getattr(runtime_binding_resolver, "minah", None)
+        if (minah_deployment_resolver is not None
+                and not callable(getattr(minah_deployment_resolver, "resolve_active", None))):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_DEPLOYMENT_RESOLVER_INVALID")
         self.runtime_binding_resolver = runtime_binding_resolver
         self.pipeline_factory = pipeline_factory
+        # Recovery must re-check the live deployment lifecycle, not merely the
+        # profile cached in the original executor. Production resolvers are
+        # normally inherited from InstitutionalRuntimeBindingResolver.minah.
+        self.minah_deployment_resolver = minah_deployment_resolver
         # Optional durable catalog hook. It must return the executor configured
         # for the operation's original persisted pins, never the current binding.
         self.operation_pipeline_resolver = operation_pipeline_resolver
@@ -452,6 +463,44 @@ class InstitutionalInstructionExecutionService:
         self._assert_original_pipeline(pipeline, request, pins)
         return pipeline, operation, pins, request
 
+    def _assert_minah_deployment_recovery_eligible(
+            self, tenant_id: str, pins: dict[str, str],
+            stored_profile: dict[str, Any]) -> None:
+        resolver = self.minah_deployment_resolver
+        resolve_active = getattr(resolver, "resolve_active", None)
+        if not callable(resolve_active):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_LIFECYCLE_RESOLVER_REQUIRED")
+        try:
+            deployment = resolve_active(
+                tenant_id=tenant_id, deployment_id=pins["minah_deployment_id"])
+        except Exception as exc:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_DEPLOYMENT_UNAVAILABLE") from exc
+        if not isinstance(deployment, dict) or deployment.get("status") != "ACTIVE":
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_DEPLOYMENT_NOT_ACTIVE")
+        if deployment.get("tenant_id") != tenant_id or deployment.get(
+                "deployment_id") != pins["minah_deployment_id"]:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_DEPLOYMENT_IDENTITY_MISMATCH")
+        if deployment.get("version") != pins["minah_runtime_version"]:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_DEPLOYMENT_VERSION_MISMATCH")
+        config = deployment.get("config")
+        if not isinstance(config, dict):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_DEPLOYMENT_CONFIGURATION_INVALID")
+        config_fields = (
+            "deployment_id", "owner_ref", "model_ref", "jurisdictions",
+            "policy_pack_version", "source_pack_version", "mandate_ref",
+            "mandate_version", "interface_version", "authority_profile_version",
+        )
+        for field in config_fields:
+            if field in stored_profile and config.get(field) != stored_profile[field]:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_MINAH_DEPLOYMENT_CONFIGURATION_MISMATCH:" + field)
+
     def inspect(self, *, tenant_id: str, operation_id: str,
                 institution_id: str | None = None) -> dict[str, Any] | None:
         """Inspect an operation only through the journal carrying its original pins."""
@@ -541,6 +590,12 @@ class InstitutionalInstructionExecutionService:
         record_observation(
             operation_id, "INSTITUTIONAL_RECOVERY", "REQUESTED", detail)
         try:
+            stored_profile = request.get("_minah_deployment_profile")
+            if not isinstance(stored_profile, dict):
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_UNAVAILABLE")
+            self._assert_minah_deployment_recovery_eligible(
+                tenant_id, pins, stored_profile)
             recovered = recovery_method(operation_id)
             if not isinstance(recovered, dict):
                 raise InstitutionalInstructionExecutionError(
