@@ -384,6 +384,20 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             ["REQUESTED", "COMMITTED"],
         )
 
+        # An executor without a live lifecycle resolver cannot resume an
+        # operation merely because its original in-memory pipeline still exists.
+        unguarded_service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=self.resolver,
+            pipeline_factory=lambda runtime_context: pipeline,
+        )
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_MINAH_LIFECYCLE_RESOLVER_REQUIRED",
+        ):
+            unguarded_service.recover(
+                tenant_id="tenant-ug", operation_id="OP-REAL-1",
+                actor_ref="operator:alice", request_id="recovery-no-lifecycle")
+
         # Historical inspection remains available during lifecycle suspension,
         # but recovery is blocked until the exact pinned deployment is active.
         active_minah.deployment["status"] = "SUSPENDED"
@@ -413,6 +427,15 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
                 tenant_id="tenant-ug", operation_id="OP-REAL-1",
                 actor_ref="operator:alice", request_id="recovery-version-drift")
         active_minah.deployment["version"] = "9.0"
+        active_minah.deployment["config"]["model_ref"] = "replacement-model"
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_MINAH_DEPLOYMENT_CONFIGURATION_MISMATCH:model_ref",
+        ):
+            service.recover(
+                tenant_id="tenant-ug", operation_id="OP-REAL-1",
+                actor_ref="operator:alice", request_id="recovery-config-drift")
+        active_minah.deployment["config"]["model_ref"] = profile["model_ref"]
         recovered_again = service.recover(
             tenant_id="tenant-ug", operation_id="OP-REAL-1",
             actor_ref="operator:alice", request_id="recovery-reactivated")
