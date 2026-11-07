@@ -306,21 +306,6 @@ class InstitutionalMinahDeploymentRegistry:
                 "config": json.loads(row["config_json"]), "digest": row["digest"],
                 "created_at": row["created_at"]}
 
-    def resolve_active(self, *, tenant_id: str, deployment_id: str) -> dict[str, Any] | None:
-        """Return an executable deployment only while its exact IdP pin is active.
-
-        Runtime callers must use this resolver before accepting an instruction;
-        a stale or suspended identity provider disables the deployment.
-        """
-        deployment = self.registry.get(tenant_id=tenant_id, deployment_id=deployment_id)
-        if deployment is None or deployment["status"] != "ACTIVE":
-            return None
-        try:
-            self._check_provider(tenant_id, deployment["config"])
-        except MinahDeploymentError:
-            return None
-        return deployment
-
     def list_events(self, *, tenant_id: str, deployment_id: str) -> list[dict[str, Any]]:
         _identifier(tenant_id, "tenant_id")
         _identifier(deployment_id, "deployment_id")
@@ -413,6 +398,21 @@ class InstitutionalMinahDeploymentAdministration:
 
     def get(self, *, tenant_id: str, deployment_id: str) -> dict[str, Any] | None:
         return self.registry.get(tenant_id=tenant_id, deployment_id=deployment_id)
+
+    def resolve_active(self, *, tenant_id: str, deployment_id: str) -> dict[str, Any] | None:
+        """Return an executable deployment only while its exact IdP pin is active.
+
+        Runtime callers must use this resolver before accepting an instruction;
+        a stale or suspended identity provider disables the deployment.
+        """
+        deployment = self.registry.get(tenant_id=tenant_id, deployment_id=deployment_id)
+        if deployment is None or deployment["status"] != "ACTIVE":
+            return None
+        try:
+            self._check_provider(tenant_id, deployment["config"])
+        except MinahDeploymentError:
+            return None
+        return deployment
 
     def list_events(self, *, tenant_id: str, deployment_id: str) -> list[dict[str, Any]]:
         return self.registry.list_events(tenant_id=tenant_id, deployment_id=deployment_id)
