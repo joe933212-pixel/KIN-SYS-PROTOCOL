@@ -195,6 +195,11 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             minah_profile=profile,
             cee_database=":memory:",
             ivm_database=":memory:",
+            identity_provider_id="IDP-UG-01",
+            identity_provider_version="2.0",
+            jurisdiction_package_id="JUR-UG-01",
+            jurisdiction_package_version="4.0",
+            authority_profile_version="BANK-AUTHORITY:1.0",
         )
         self.addCleanup(pipeline.close)
         service = InstitutionalInstructionExecutionService(
