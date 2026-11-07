@@ -48,6 +48,11 @@ class RuntimeResolver:
 class Pipeline:
     EXECUTION_ORDER = ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")
     SUPPORTS_INSTITUTIONAL_RUNTIME_PINS = True
+    identity_provider_id = "IDP-UG-01"
+    identity_provider_version = "2.0"
+    jurisdiction_package_id = "JUR-UG-01"
+    jurisdiction_package_version = "4.0"
+    authority_profile_version = "BANK-AUTHORITY:1.0"
 
     def __init__(self):
         self.requests = []
