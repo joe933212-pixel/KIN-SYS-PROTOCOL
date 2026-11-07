@@ -1300,6 +1300,7 @@ def create_app(
     institutional_session_resolver: Any | None = None,
     minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
     onboarding_administration: InstitutionalOnboardingAdministration | None = None,
+    lifecycle_administration: InstitutionalLifecycleAdministration | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -1319,6 +1320,7 @@ def create_app(
         institutional_session_resolver=institutional_session_resolver,
         minah_deployment_administration=minah_deployment_administration,
         onboarding_administration=onboarding_administration,
+        lifecycle_administration=lifecycle_administration,
     )
 
 
