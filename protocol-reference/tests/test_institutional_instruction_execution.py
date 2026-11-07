@@ -280,6 +280,7 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             "model_ref": "deterministic-minah-mock",
             "deployment_mode": "SELF_HOSTED",
             "may_authorise": False,
+            "endpoint_ref": "secret://must-not-persist",
         }
         pipeline = KinSysProtocolPipeline(
             minah_profile=profile,
@@ -331,10 +332,13 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             operation["request_json"]["_institutional_runtime_binding"],
             outcome["runtime_pins"],
         )
+        stored_profile = operation["request_json"]["_minah_deployment_profile"]
         self.assertEqual(
-            operation["request_json"]["_minah_deployment_profile"],
-            profile,
+            stored_profile,
+            {key: value for key, value in profile.items() if key != "endpoint_ref"},
         )
+        self.assertNotIn("endpoint_ref", stored_profile)
+        self.assertNotIn("must-not-persist", str(operation["request_json"]))
         self.assertEqual(
             operation["request_json"]["_institutional_runtime_binding"]["binding_version"],
             "3.0",
