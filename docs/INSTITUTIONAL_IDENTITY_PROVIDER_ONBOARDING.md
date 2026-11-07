@@ -97,8 +97,39 @@ revision remains pending and requires fresh approval. Registry methods remain
 available for controlled internal/test use but are not an administrative
 security boundary.
 
-This service is a reference application boundary, not yet a deployed
-administrator API. Production wiring must derive tenant context from a
-verified institutional session, use a trusted grant store and key custody,
-provide a shared replay store, protect evidence references, and expose only
-the service—not raw registry mutations—to external callers.
+The authority-gated service is now wired into the WSGI prototype through
+`http_service.py`. The routes are available only when both
+`provider_administration` and `institutional_session_resolver` are injected:
+
+| Method and route | Purpose | Required route scope |
+|---|---|---|
+| `POST /institutional/identity-providers` | Register a new PENDING provider | `identity-provider:register` |
+| `GET /institutional/identity-providers/{provider_id}` | Read the current tenant-local provider snapshot | `identity-provider:read` |
+| `GET /institutional/identity-providers/{provider_id}/events` | Read provider lifecycle audit events | `identity-provider:audit` |
+| `PUT /institutional/identity-providers/{provider_id}/configuration` | Create a new PENDING configuration version | `identity-provider:configure` |
+| `POST /institutional/identity-providers/{provider_id}/lifecycle` | Activate, suspend or revoke | `identity-provider:lifecycle` |
+
+The session resolver contract is `resolve(environ) -> {authenticated: true,
+tenant_id: ..., actor_assertion: ...}`. It must derive the tenant from a
+verified institutional session and provide a signed assertion bound to that
+session. The assertion is never accepted from the HTTP request body. The
+provider configuration body must omit `tenant_id`; the route injects
+the tenant from the verified session before calling the application service.
+This prevents a caller from choosing or spoofing the registry tenant.
+
+The route-level institutional authorizer is an additional access-control
+layer. It does not replace the authority resolver: the resolver validates the
+signed assertion and grant, and the application service enforces the
+action-specific role. Read and audit operations are tenant-scoped by the
+verified session as well. Structured failures distinguish missing/invalid
+sessions (401), denied authority (403), stale versions or lifecycle conflicts
+(409), invalid configurations (422), and missing tenant-local providers (404).
+No route exposes the raw registry mutation methods.
+
+The WSGI app does not construct a production session resolver, grant store,
+or key-custody integration by itself. Routes return 503 when provider
+administration is not configured. Production wiring must use trusted grant
+storage and key custody, a shared replay store, protect evidence references,
+and expose only the application service—not raw registry mutations—to
+external callers. These are deployment responsibilities and remain subject
+to independent security review.
