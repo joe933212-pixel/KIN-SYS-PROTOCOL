@@ -22,7 +22,7 @@
     "agent_ref": {"type": "string", "minLength": 1, "maxLength": 120},
     "interface_version": {"type": "string", "minLength": 1, "maxLength": 120},
     "deployment_mode": {"enum": ["SELF_HOSTED", "ON_PREMISES", "CLOUD", "EDGE", "MANAGED"]},
-    "model_ref": {"type": "string", "minLength": 1, "maxLength": 120},
+    "model_ref": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$"},
     "endpoint_ref": {"type": ["string", "null"], "maxLength": 512},
     "secret_ref": {"type": ["string", "null"], "pattern": "^secret://"},
     "owner_scope": {"enum": ["NATIONAL_SOVEREIGN", "ENTERPRISE", "INSTITUTION"]},
