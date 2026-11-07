@@ -214,7 +214,7 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
             expected_version="1.0", new_version="2.0", event_id="evt-binding-active",
             target_status="ACTIVE", actor_assertion=self.assertion(),
             evidence_ref="evidence:activation", approval_ref="approval:activation",
-            activation_context={"institution_version": "1.0", "minah_version": "1.0",
+            activation_context={"institution_version": "2.0", "minah_version": "1.0",
                                 "conformance_evidence_ref": "evidence:minah-conformance"},
         )
         self.assertTrue(result["created"])
