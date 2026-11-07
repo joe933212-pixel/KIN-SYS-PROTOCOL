@@ -36,6 +36,9 @@ class RuntimeResolver:
 
 
 class Pipeline:
+    EXECUTION_ORDER = ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")
+    SUPPORTS_INSTITUTIONAL_RUNTIME_PINS = True
+
     def __init__(self):
         self.requests = []
 
