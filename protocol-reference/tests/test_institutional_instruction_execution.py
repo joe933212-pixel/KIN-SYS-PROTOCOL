@@ -123,6 +123,41 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         self.assertNotIn("minah_config", pinned)
         self.assertNotIn("endpoint_ref", str(pinned))
 
+    def test_institution_version_change_builds_a_new_pinned_pipeline(self):
+        resolver = RuntimeResolver()
+        created = []
+
+        def factory(context):
+            pipeline = Pipeline()
+            created.append((dict(context), pipeline))
+            return pipeline
+
+        service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=resolver,
+            pipeline_factory=factory,
+        )
+        for index in (1, 2):
+            request = instruction()
+            request["request_id"] = f"REQ-CACHE-{index}"
+            request["operation_id"] = f"OP-CACHE-{index}"
+            request["idempotency_key"] = f"idempotency-cache-{index}"
+            request["payload_digest"] = compute_payload_digest(request)
+            outcome = service.execute(
+                tenant_id="tenant-ug",
+                institution_id="BANK-UG-01",
+                binding_id="BIND-UG-01",
+                instruction=request,
+                evidence=request["evidence"],
+            )
+            self.assertEqual(outcome["decision"]["protocol_decision"], "PASSED")
+            if index == 1:
+                resolver.context["institution_version"] = "2.1"
+
+        self.assertEqual(len(created), 2)
+        self.assertEqual(created[0][0]["institution_version"], "2.0")
+        self.assertEqual(created[1][0]["institution_version"], "2.1")
+        self.assertIsNot(created[0][1], created[1][1])
+
     def test_rejects_instruction_for_different_jurisdiction_before_pipeline(self):
         request = instruction()
         request["jurisdiction"] = "KE"
