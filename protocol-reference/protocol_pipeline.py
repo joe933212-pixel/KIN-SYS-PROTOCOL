@@ -342,6 +342,9 @@ class CEEJournal:
 class KinSysProtocolPipeline:
     """Synthetic full-path harness that makes MINAH, IVM and CEE boundaries observable."""
 
+    EXECUTION_ORDER = ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")
+    SUPPORTS_INSTITUTIONAL_RUNTIME_PINS = True
+
     def __init__(
         self,
         *,
