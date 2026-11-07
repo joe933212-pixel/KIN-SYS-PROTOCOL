@@ -336,8 +336,8 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         scenarios = (
             ("REJECTED", "REJECTED", None, None),
             ("NEEDS_INFORMATION", "DEFERRED", None, None),
-            ("ADVISORY_ONLY", "REJECTED", "IDENTITY", "NOT_VERIFIED"),
-            ("ADVISORY_ONLY", "REJECTED", "AUTHORITY", "NOT_VERIFIED"),
+            ("ADVISORY_ONLY", "REJECTED", "IDENTITY", "REJECTED"),
+            ("ADVISORY_ONLY", "REJECTED", "AUTHORITY", "REJECTED"),
         )
         for index, (minah_status, expected_decision, failed_gate, failure_status) in enumerate(scenarios):
             with self.subTest(minah_status=minah_status, failed_gate=failed_gate):
