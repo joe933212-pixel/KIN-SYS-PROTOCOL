@@ -32,6 +32,14 @@ from governed_contracts import (
     validate_instruction_envelope,
 )
 from transition import EventIdConflict
+from institutional_identity_provider_administration import (
+    IdentityProviderAdministrationError,
+    InstitutionalIdentityProviderAdministration,
+)
+from institutional_identity_provider_registry import (
+    IdentityProviderRegistryConflict,
+    IdentityProviderRegistryError,
+)
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -118,6 +126,8 @@ class KinSysPrototypeApplication:
         ingress_database: str = ":memory:",
         authorizer: Any | None = None,
         allow_unauthenticated_loopback: bool = True,
+        provider_administration: InstitutionalIdentityProviderAdministration | None = None,
+        institutional_session_resolver: Any | None = None,
     ):
         if pipeline is not None and any(
             adapter is not None
@@ -142,6 +152,14 @@ class KinSysPrototypeApplication:
         self.enable_legacy_demo_routes = enable_legacy_demo_routes
         self.authorizer = authorizer
         self.allow_unauthenticated_loopback = bool(allow_unauthenticated_loopback)
+        if (provider_administration is None) != (institutional_session_resolver is None):
+            raise ValueError("Provider administration and institutional session resolver must be configured together.")
+        if provider_administration is not None and not callable(
+            getattr(institutional_session_resolver, "resolve", None)
+        ):
+            raise ValueError("A verified institutional session resolver is required.")
+        self.provider_administration = provider_administration
+        self.institutional_session_resolver = institutional_session_resolver
 
     def close(self) -> None:
         self.demonstrator.close()
@@ -162,6 +180,20 @@ class KinSysPrototypeApplication:
             return "protocol:operation:read", operation_id
         if path.startswith("/cee/operations/"):
             return "cee:operation:read", path[len("/cee/operations/"):]
+        if path == "/institutional/identity-providers":
+            if method == "POST":
+                return "identity-provider:register", None
+        if path.startswith("/institutional/identity-providers/"):
+            parts = path.strip("/").split("/")
+            provider_id = parts[2] if len(parts) >= 3 else None
+            if method == "GET" and len(parts) == 3:
+                return "identity-provider:read", provider_id
+            if method == "GET" and len(parts) == 4 and parts[3] == "events":
+                return "identity-provider:audit", provider_id
+            if method == "PUT" and len(parts) == 4 and parts[3] == "configuration":
+                return "identity-provider:configure", provider_id
+            if method == "POST" and len(parts) == 4 and parts[3] == "lifecycle":
+                return "identity-provider:lifecycle", provider_id
         scopes = {
             "/protocol/instructions": "protocol:instruction:submit",
             "/demo/instructions": "demo:execute",
@@ -201,6 +233,11 @@ class KinSysPrototypeApplication:
                         "GET /system/health",
                         "GET /system/readiness",
                         "GET /system/capabilities",
+                        "POST /institutional/identity-providers",
+                        "GET /institutional/identity-providers/{provider_id}",
+                        "GET /institutional/identity-providers/{provider_id}/events",
+                        "PUT /institutional/identity-providers/{provider_id}/configuration",
+                        "POST /institutional/identity-providers/{provider_id}/lifecycle",
                         "POST /demo/instructions",
                         "POST /protocol/instructions",
                         "GET /protocol/operations/{operation_id}",
@@ -320,6 +357,124 @@ class KinSysPrototypeApplication:
                         {"error": {"code": "AUTHENTICATION_REQUIRED", "message": "An institutional authorizer is required for non-loopback access."}},
                         request_id,
                     )
+
+        if path == "/institutional/identity-providers" or path.startswith("/institutional/identity-providers/"):
+            if self.provider_administration is None:
+                return _response(start_response, 503, {
+                    "error": {"code": "PROVIDER_ADMINISTRATION_NOT_CONFIGURED",
+                              "message": "Institutional provider administration is not configured."}
+                }, request_id)
+            try:
+                session = self.institutional_session_resolver.resolve(environ)
+                if (not isinstance(session, dict)
+                        or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"), str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])
+                        or not isinstance(session.get("actor_assertion"), dict)):
+                    raise HttpServiceError(
+                        401, "INSTITUTIONAL_SESSION_INVALID",
+                        "A verified institutional session with a signed authority assertion is required."
+                    )
+                tenant_id = session["tenant_id"]
+                assertion = session["actor_assertion"]
+                if path == "/institutional/identity-providers":
+                    if method != "POST":
+                        raise HttpServiceError(405, "METHOD_NOT_ALLOWED", "Use POST to register an identity provider.")
+                    body = self._read_json(environ, allowed_fields={"config", "event_id", "evidence_ref"})
+                    config = body.get("config")
+                    if not isinstance(config, dict) or "tenant_id" in config:
+                        raise HttpServiceError(
+                            422, "PROVIDER_CONFIG_INVALID",
+                            "config must be an object and must not contain tenant_id; tenant context comes from the verified session."
+                        )
+                    result = self.provider_administration.register_provider(
+                        tenant_id=tenant_id, config={**config, "tenant_id": tenant_id},
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"),
+                    )
+                    return _response(start_response, 201, {
+                        "status": "PENDING", "provider": result,
+                        "audit": {"event_id": body.get("event_id"), "evidence_ref": body.get("evidence_ref")},
+                    }, request_id)
+
+                parts = path.strip("/").split("/")
+                if len(parts) not in (3, 4) or parts[0:2] != ["institutional", "identity-providers"]:
+                    raise HttpServiceError(404, "ROUTE_NOT_FOUND", "No institutional provider route matches this path.")
+                provider_id = parts[2]
+                if not _ID_RE.fullmatch(provider_id):
+                    raise HttpServiceError(400, "INVALID_PROVIDER_ID", "Provider ID has an invalid format.")
+                if method == "GET" and len(parts) == 3:
+                    provider = self.provider_administration.get_provider(
+                        tenant_id=tenant_id, provider_id=provider_id)
+                    if provider is None:
+                        raise HttpServiceError(404, "PROVIDER_NOT_FOUND", "No provider exists in this institutional tenant.")
+                    return _response(start_response, 200, {"provider": provider}, request_id)
+                if method == "GET" and len(parts) == 4 and parts[3] == "events":
+                    events = self.provider_administration.list_events(
+                        tenant_id=tenant_id, provider_id=provider_id)
+                    if not events:
+                        provider = self.provider_administration.get_provider(
+                            tenant_id=tenant_id, provider_id=provider_id)
+                        if provider is None:
+                            raise HttpServiceError(404, "PROVIDER_NOT_FOUND", "No provider exists in this institutional tenant.")
+                    return _response(start_response, 200, {"events": events}, request_id)
+                if method == "PUT" and len(parts) == 4 and parts[3] == "configuration":
+                    body = self._read_json(environ, allowed_fields={
+                        "expected_version", "config", "event_id", "evidence_ref"})
+                    config = body.get("config")
+                    if not isinstance(config, dict) or "tenant_id" in config:
+                        raise HttpServiceError(
+                            422, "PROVIDER_CONFIG_INVALID",
+                            "config must be an object and must not contain tenant_id; tenant context comes from the verified session."
+                        )
+                    result = self.provider_administration.revise_provider_config(
+                        tenant_id=tenant_id, provider_id=provider_id,
+                        expected_version=body.get("expected_version"),
+                        config={**config, "tenant_id": tenant_id},
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"),
+                    )
+                    return _response(start_response, 202, {
+                        "status": "PENDING", "provider": result,
+                        "audit": {"event_id": body.get("event_id"), "evidence_ref": body.get("evidence_ref")},
+                    }, request_id)
+                if method == "POST" and len(parts) == 4 and parts[3] == "lifecycle":
+                    body = self._read_json(environ, allowed_fields={
+                        "expected_version", "new_version", "new_status", "event_id", "evidence_ref"})
+                    result = self.provider_administration.transition_provider(
+                        tenant_id=tenant_id, provider_id=provider_id,
+                        expected_version=body.get("expected_version"),
+                        new_version=body.get("new_version"),
+                        new_status=body.get("new_status"),
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"),
+                    )
+                    return _response(start_response, 200, {
+                        "status": result.get("status"), "provider": result,
+                        "audit": {"event_id": body.get("event_id"), "evidence_ref": body.get("evidence_ref")},
+                    }, request_id)
+                raise HttpServiceError(405, "METHOD_NOT_ALLOWED", "The method is not supported for this provider route.")
+            except HttpServiceError as exc:
+                return _response(start_response, exc.status, {
+                    "error": {"code": exc.code, "message": exc.message}}, request_id)
+            except IdentityProviderAdministrationError as exc:
+                return _response(start_response, 403, {
+                    "error": {"code": str(exc), "message": "The institutional authority assertion does not permit this operation."}
+                }, request_id)
+            except IdentityProviderRegistryConflict as exc:
+                return _response(start_response, 409, {
+                    "error": {"code": str(exc), "message": "The provider version or lifecycle state conflicts with the current registry state."}
+                }, request_id)
+            except IdentityProviderRegistryError as exc:
+                code = str(exc)
+                status = 404 if code == "PROVIDER_NOT_FOUND" else 422
+                return _response(start_response, status, {
+                    "error": {"code": code, "message": "The provider configuration or lifecycle request was rejected."}
+                }, request_id)
+            except Exception:
+                return _response(start_response, 500, {
+                    "error": {"code": "INTERNAL_ERROR", "message": "The institutional provider operation could not be completed."}
+                }, request_id)
 
         cee_operation_prefix = "/cee/operations/"
         if path.startswith(cee_operation_prefix):
@@ -910,6 +1065,8 @@ def create_app(
     ingress_database: str = ":memory:",
     authorizer: Any | None = None,
     allow_unauthenticated_loopback: bool = True,
+    provider_administration: InstitutionalIdentityProviderAdministration | None = None,
+    institutional_session_resolver: Any | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -925,6 +1082,8 @@ def create_app(
         ingress_database=ingress_database,
         authorizer=authorizer,
         allow_unauthenticated_loopback=allow_unauthenticated_loopback,
+        provider_administration=provider_administration,
+        institutional_session_resolver=institutional_session_resolver,
     )
 
 
