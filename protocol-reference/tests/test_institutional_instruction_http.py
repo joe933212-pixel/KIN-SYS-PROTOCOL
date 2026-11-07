@@ -9,8 +9,11 @@ from institutional_instruction_execution import InstitutionalInstructionExecutio
 
 
 class SessionResolver:
+    def __init__(self):
+        self.tenant_id = "tenant-ug"
+
     def resolve(self, environ):
-        return {"authenticated": True, "tenant_id": "tenant-ug"}
+        return {"authenticated": True, "tenant_id": self.tenant_id, "actor_ref": "operator:alice"}
 
 
 class RuntimeResolver:
@@ -37,6 +40,27 @@ class RuntimeResolver:
         }
 
 
+class Journal:
+    def __init__(self):
+        self.operations = {}
+        self.audit = {}
+
+    def get(self, operation_id):
+        return self.operations.get(operation_id)
+
+    def events(self, operation_id):
+        return []
+
+    def observations(self, operation_id):
+        return list(self.audit.get(operation_id, []))
+
+    def record_observation(self, operation_id, kind, status, detail):
+        self.audit.setdefault(operation_id, []).append({
+            "kind": kind, "status": status, "detail": dict(detail),
+            "created_at": "2026-11-07T12:00:00+00:00",
+        })
+
+
 class Pipeline:
     EXECUTION_ORDER = ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")
     SUPPORTS_INSTITUTIONAL_RUNTIME_PINS = True
@@ -48,16 +72,39 @@ class Pipeline:
 
     def __init__(self):
         self.requests = []
+        self.cee = Journal()
+        self.recoveries = []
 
     def execute(self, request):
-        self.requests.append(request)
-        return {
+        self.requests.append(dict(request))
+        result = {
             "operation_id": request["operation_id"],
             "status": "COMMITTED",
             "reason": "SYNTHETIC_GATES_PASSED",
             "funds_moved": False,
             "private_token": "must-not-leak",
         }
+        self.cee.operations[request["operation_id"]] = {
+            "operation_id": request["operation_id"],
+            "request_json": dict(request),
+            "request_digest": "sha256:synthetic-test-fingerprint",
+            "phase": "FINALIZED",
+            "result_json": dict(result),
+        }
+        return result
+
+    def inspect(self, operation_id):
+        operation = self.cee.get(operation_id)
+        if operation is None:
+            return None
+        return {"operation_id": operation_id, "phase": operation["phase"], "resumable": False}
+
+    def recover(self, operation_id):
+        self.recoveries.append(operation_id)
+        operation = self.cee.get(operation_id)
+        if operation is None:
+            return {"operation_id": operation_id, "status": "UNKNOWN", "reason": "OPERATION_NOT_FOUND"}
+        return dict(operation["result_json"])
 
 
 def make_instruction():
@@ -88,14 +135,15 @@ class InstitutionalInstructionHttpTests(unittest.TestCase):
             runtime_binding_resolver=RuntimeResolver(),
             pipeline_factory=lambda context: self.pipeline,
         )
+        self.session = SessionResolver()
         self.app = create_app(
             institutional_instruction_execution=service,
-            institutional_session_resolver=SessionResolver(),
+            institutional_session_resolver=self.session,
         )
         self.addCleanup(self.app.close)
 
     def request(self, payload, path="/institutional/instructions", method="POST"):
-        raw = json.dumps(payload).encode()
+        raw = b"" if payload is None else json.dumps(payload).encode()
         environ = {
             "REQUEST_METHOD": method,
             "PATH_INFO": path,
@@ -109,6 +157,49 @@ class InstitutionalInstructionHttpTests(unittest.TestCase):
             captured["status"] = int(status.split()[0])
         body = b"".join(self.app(environ, start_response))
         return captured, json.loads(body)
+
+    def test_operation_inspection_is_tenant_scoped_and_redacts_private_configuration(self):
+        response, _ = self.request({
+            "institution_id": "BANK-UG-01", "binding_id": "BIND-UG-01",
+            "instruction": make_instruction(),
+            "evidence": {"document_ref": "evidence:http-1"},
+        })
+        self.assertEqual(response["status"], 200)
+        response, body = self.request(
+            {}, path="/institutional/instructions/OP-HTTP-1", method="GET")
+        self.assertEqual(response["status"], 200, body)
+        self.assertEqual(body["operation"]["runtime_pins"]["tenant_id"], "tenant-ug")
+        self.assertEqual(body["operation"]["runtime_pins"]["binding_version"], "3.0")
+        self.assertNotIn("minah_config", json.dumps(body))
+        self.assertNotIn("endpoint_ref", json.dumps(body))
+        self.assertNotIn("evidence", json.dumps(body))
+        self.session.tenant_id = "tenant-ke"
+        response, body = self.request(
+            {}, path="/institutional/instructions/OP-HTTP-1", method="GET")
+        self.assertEqual(response["status"], 404, body)
+
+    def test_recovery_uses_original_operation_without_replacement_body_and_records_audit(self):
+        response, _ = self.request({
+            "institution_id": "BANK-UG-01", "binding_id": "BIND-UG-01",
+            "instruction": make_instruction(),
+            "evidence": {"document_ref": "evidence:http-1"},
+        })
+        self.assertEqual(response["status"], 200)
+        response, body = self.request(
+            None, path="/institutional/instructions/OP-HTTP-1/recover", method="POST")
+        self.assertEqual(response["status"], 200, body)
+        self.assertEqual(body["decision"]["protocol_decision"], "PASSED")
+        self.assertEqual(self.pipeline.recoveries, ["OP-HTTP-1"])
+        audit = self.pipeline.cee.observations("OP-HTTP-1")
+        self.assertEqual([item["status"] for item in audit], ["REQUESTED", "COMMITTED"])
+        self.assertEqual(audit[0]["detail"]["actor_ref"], "operator:alice")
+
+    def test_recovery_rejects_replacement_request_body(self):
+        response, body = self.request(
+            {"replacement": True},
+            path="/institutional/instructions/OP-HTTP-1/recover", method="POST")
+        self.assertEqual(response["status"], 400)
+        self.assertEqual(body["error"]["code"], "RECOVERY_BODY_NOT_ALLOWED")
 
     def test_authenticated_institutional_route_executes_with_session_tenant_and_safe_pins(self):
         response, body = self.request({
