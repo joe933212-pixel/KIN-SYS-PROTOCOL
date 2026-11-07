@@ -64,6 +64,7 @@ def make_instruction():
         "submitted_at": "2026-11-07T10:00:00+00:00",
         "rule_pack_version": "BANK-RULES:1.0",
         "evidence_refs": ["evidence:http-1"],
+        "evidence": {"document_ref": "evidence:http-1"},
     }
     value["payload_digest"] = compute_payload_digest(value)
     return value
