@@ -1,0 +1,152 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+import unittest
+
+from governed_contracts import CONTRACT_VERSION, compute_payload_digest
+from institutional_instruction_execution import (
+    InstitutionalInstructionExecutionError,
+    InstitutionalInstructionExecutionService,
+)
+
+
+class RuntimeResolver:
+    def __init__(self, context=None):
+        self.context = context or {
+            "tenant_id": "tenant-ug",
+            "institution_id": "BANK-UG-01",
+            "institution_version": "2.0",
+            "binding_id": "BIND-UG-01",
+            "binding_version": "3.0",
+            "jurisdiction_ref": "UG",
+            "jurisdiction_package_id": "JUR-UG-01",
+            "jurisdiction_package_version": "4.0",
+            "minah_deployment_id": "MINAH-UG-01",
+            "minah_domain_version": "5.0",
+            "minah_runtime_version": "9.0",
+            "policy_pack_version": "BANK-RULES:1.0",
+            "source_pack_version": "UG-SOURCES:2.0",
+            "authority_profile_version": "BANK-AUTHORITY:1.0",
+            "runtime_admission": "ELIGIBLE_FOR_GOVERNED_EXECUTION",
+            "minah_config": {
+                "deployment_id": "MINAH-UG-01",
+                "owner_ref": "tenant-ug",
+                "model_ref": "model:bank/minah-v1",
+                "policy_pack_version": "BANK-RULES:1.0",
+                "source_pack_version": "UG-SOURCES:2.0",
+                "endpoint_ref": "secret://private-endpoint",
+            },
+        }
+        self.calls = []
+
+    def resolve(self, **kwargs):
+        self.calls.append(kwargs)
+        return dict(self.context)
+
+
+class Pipeline:
+    def __init__(self):
+        self.requests = []
+
+    def execute(self, request):
+        self.requests.append(dict(request))
+        return {
+            "operation_id": request["operation_id"],
+            "status": "COMMITTED",
+            "reason": "SYNTHETIC_GATES_PASSED",
+            "funds_moved": False,
+            "ivm_decision": {"status": "ACCEPTED"},
+        }
+
+
+def instruction():
+    value = {
+        "contract_version": CONTRACT_VERSION,
+        "request_id": "REQ-1001",
+        "operation_id": "OP-1001",
+        "idempotency_key": "idempotency-1001",
+        "principal_ref": "actor:alice",
+        "authority_ref": "authority:bank-ug",
+        "action": "ACTIVATE",
+        "target_ref": "PROCESS-1001",
+        "purpose": "Institutional transaction validation",
+        "jurisdiction": "UG",
+        "submitted_at": "2026-11-07T10:00:00+00:00",
+        "rule_pack_version": "BANK-RULES:1.0",
+        "evidence_refs": ["evidence:case-1001"],
+    }
+    value["payload_digest"] = compute_payload_digest(value)
+    return value
+
+
+class InstitutionalInstructionExecutionTests(unittest.TestCase):
+    def setUp(self):
+        self.resolver = RuntimeResolver()
+        self.pipeline = Pipeline()
+        self.service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=self.resolver,
+            pipeline_factory=lambda context: self.pipeline,
+        )
+
+    def test_resolves_binding_pins_exact_versions_and_executes_pipeline(self):
+        result = self.service.execute(
+            tenant_id="tenant-ug",
+            institution_id="BANK-UG-01",
+            binding_id="BIND-UG-01",
+            instruction=instruction(),
+            evidence={"document_ref": "evidence:case-1001"},
+        )
+        self.assertEqual(self.resolver.calls, [{
+            "tenant_id": "tenant-ug",
+            "institution_id": "BANK-UG-01",
+            "binding_id": "BIND-UG-01",
+        }])
+        self.assertEqual(result["decision"]["protocol_decision"], "PASSED")
+        self.assertEqual(result["runtime_pins"]["binding_version"], "3.0")
+        self.assertEqual(result["runtime_pins"]["minah_runtime_version"], "9.0")
+        pinned = self.pipeline.requests[0]["_institutional_runtime_binding"]
+        self.assertEqual(pinned, result["runtime_pins"])
+        self.assertEqual(self.pipeline.requests[0]["jurisdiction"], "UG")
+        self.assertNotIn("minah_config", pinned)
+        self.assertNotIn("endpoint_ref", str(pinned))
+
+    def test_rejects_instruction_for_different_jurisdiction_before_pipeline(self):
+        request = instruction()
+        request["jurisdiction"] = "KE"
+        request["payload_digest"] = compute_payload_digest(request)
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTRUCTION_JURISDICTION_DOES_NOT_MATCH_ACTIVE_BINDING",
+        ):
+            self.service.execute(
+                tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                binding_id="BIND-UG-01", instruction=request, evidence={"ref": "e1"},
+            )
+        self.assertEqual(self.pipeline.requests, [])
+
+    def test_rejects_policy_version_drift_before_pipeline(self):
+        request = instruction()
+        request["rule_pack_version"] = "BANK-RULES:2.0"
+        request["payload_digest"] = compute_payload_digest(request)
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTRUCTION_POLICY_VERSION_DOES_NOT_MATCH_ACTIVE_BINDING",
+        ):
+            self.service.execute(
+                tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                binding_id="BIND-UG-01", instruction=request, evidence={"ref": "e1"},
+            )
+        self.assertEqual(self.pipeline.requests, [])
+
+    def test_rejects_runtime_context_from_another_tenant(self):
+        self.resolver.context["tenant_id"] = "tenant-ke"
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError, "RESOLVED_RUNTIME_IDENTITY_MISMATCH"
+        ):
+            self.service.execute(
+                tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                binding_id="BIND-UG-01", instruction=instruction(), evidence={"ref": "e1"},
+            )
+        self.assertEqual(self.pipeline.requests, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
