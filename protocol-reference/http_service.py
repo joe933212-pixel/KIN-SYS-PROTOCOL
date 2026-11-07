@@ -53,6 +53,9 @@ from institutional_minah_deployment import (
 from institutional_runtime_binding import (
     InstitutionalRuntimeBindingResolver, InstitutionalRuntimeBindingError,
 )
+from institutional_instruction_execution import (
+    InstitutionalInstructionExecutionService, InstitutionalInstructionExecutionError,
+)
 
 MAX_BODY_BYTES = 64 * 1024
 _ALLOWED_FIELDS = {
@@ -144,6 +147,7 @@ class KinSysPrototypeApplication:
         onboarding_administration: InstitutionalOnboardingAdministration | None = None,
         lifecycle_administration: InstitutionalLifecycleAdministration | None = None,
         runtime_binding_resolver: InstitutionalRuntimeBindingResolver | None = None,
+        institutional_instruction_execution: InstitutionalInstructionExecutionService | None = None,
     ): 
         if pipeline is not None and any(
             adapter is not None
@@ -172,6 +176,7 @@ class KinSysPrototypeApplication:
             provider_administration is not None or minah_deployment_administration is not None
             or onboarding_administration is not None or lifecycle_administration is not None
             or runtime_binding_resolver is not None
+            or institutional_instruction_execution is not None
         )
         if any_institutional_admin and not callable(
             getattr(institutional_session_resolver, "resolve", None)
@@ -184,6 +189,7 @@ class KinSysPrototypeApplication:
         self.onboarding_administration = onboarding_administration
         self.lifecycle_administration = lifecycle_administration
         self.runtime_binding_resolver = runtime_binding_resolver
+        self.institutional_instruction_execution = institutional_instruction_execution
         self.institutional_session_resolver = institutional_session_resolver
 
     def close(self) -> None:
@@ -205,6 +211,8 @@ class KinSysPrototypeApplication:
             return "protocol:operation:read", operation_id
         if path.startswith("/cee/operations/"):
             return "cee:operation:read", path[len("/cee/operations/"):]
+        if path == "/institutional/instructions" and method == "POST":
+            return "institutional-instruction:submit", None
         if path.startswith("/institutional/runtime/") and method == "GET":
             parts = path.strip("/").split("/")
             if (len(parts) == 5 and parts[1] == "runtime" and parts[3] == "bindings"
@@ -464,6 +472,54 @@ class KinSysPrototypeApplication:
                 return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_RUNTIME_NOT_ADMISSIBLE","message":str(exc)[:240]}},request_id)
             except Exception:
                 return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"Institutional runtime context could not be resolved."}},request_id)
+
+        if path == "/institutional/instructions":
+            if method != "POST":
+                return _response(start_response,405,{"error":{"code":"METHOD_NOT_ALLOWED","message":"Use POST for institutional instruction execution."}},request_id)
+            if self.institutional_instruction_execution is None:
+                return _response(start_response,503,{"error":{"code":"INSTITUTIONAL_INSTRUCTION_EXECUTOR_NOT_CONFIGURED","message":"Institutional governed instruction execution is not configured."}},request_id)
+            try:
+                payload = self._read_json(
+                    environ,
+                    allowed_fields={"institution_id", "binding_id", "instruction", "evidence"},
+                )
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if (not isinstance(session,dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"),str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])):
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                for field in ("institution_id", "binding_id"):
+                    if not isinstance(payload.get(field),str) or not _ID_RE.fullmatch(payload[field]):
+                        raise HttpServiceError(422,"INVALID_"+field.upper(),field+" must be a valid identifier.")
+                if not isinstance(payload.get("instruction"),dict):
+                    raise HttpServiceError(422,"INSTRUCTION_ENVELOPE_REQUIRED","instruction must be a governed v0.1 envelope.")
+                if not isinstance(payload.get("evidence"),dict):
+                    raise HttpServiceError(422,"CONTRACT_EXECUTION_EVIDENCE_REQUIRED","An evidence object is required by this reference execution route.")
+                execution = self.institutional_instruction_execution.execute(
+                    tenant_id=session["tenant_id"],
+                    institution_id=payload["institution_id"],
+                    binding_id=payload["binding_id"],
+                    instruction=payload["instruction"],
+                    evidence=payload["evidence"],
+                )
+                return _response(start_response,200,{
+                    "status":execution["decision"]["protocol_decision"],
+                    "decision":execution["decision"],
+                    "result":execution["result"],
+                    "runtime_pins":execution["runtime_pins"],
+                    "production_ready":False,
+                },request_id)
+            except HttpServiceError as exc:
+                return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
+            except InstitutionalInstructionExecutionError as exc:
+                return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_EXECUTION_NOT_ADMISSIBLE","message":str(exc)[:240]}},request_id)
+            except (ValueError,TypeError) as exc:
+                return _response(start_response,422,{"error":{"code":"INVALID_INSTITUTIONAL_INSTRUCTION","message":str(exc)[:240]}},request_id)
+            except Exception:
+                return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"The institutional instruction could not be completed."}},request_id)
 
         domain_prefix = "/institutional/domain/"
         if path.startswith(domain_prefix):
@@ -1346,6 +1402,7 @@ def create_app(
     onboarding_administration: InstitutionalOnboardingAdministration | None = None,
     lifecycle_administration: InstitutionalLifecycleAdministration | None = None,
     runtime_binding_resolver: InstitutionalRuntimeBindingResolver | None = None,
+    institutional_instruction_execution: InstitutionalInstructionExecutionService | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -1367,6 +1424,7 @@ def create_app(
         onboarding_administration=onboarding_administration,
         lifecycle_administration=lifecycle_administration,
         runtime_binding_resolver=runtime_binding_resolver,
+        institutional_instruction_execution=institutional_instruction_execution,
     )
 
 
