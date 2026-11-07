@@ -247,5 +247,19 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         )
 
 
+    def test_recovery_never_resolves_a_new_active_binding_when_original_runtime_is_unavailable(self):
+        resolver = RuntimeResolver()
+        service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=resolver,
+            pipeline_factory=lambda context: self.fail("recovery must not build a replacement pipeline"),
+        )
+        outcome = service.recover(
+            tenant_id="tenant-ug", operation_id="OP-OLD-1",
+            actor_ref="operator:alice", request_id="request-recovery-1",
+        )
+        self.assertEqual(outcome["status"], "UNKNOWN")
+        self.assertEqual(outcome["reason"], "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE")
+        self.assertEqual(resolver.calls, [])
+
 if __name__ == "__main__":
     unittest.main()
