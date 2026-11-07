@@ -21,14 +21,14 @@ ALLOWED = {
  "jurisdiction": {"package_id","version","owner_institution_id","jurisdiction_ref","status","sources","approval_ref"},
  "source": {"source_ref","source_type","title","publisher_ref","content_digest","provenance_ref","effective_from","effective_to","status","approval_ref"},
  "minah": {"deployment_id","owner_institution_id","adapter_mode","adapter_ref","model_ref","interface_version","status"},
- "binding": {"binding_id","owner_institution_id","jurisdiction_package_id","jurisdiction_package_version","minah_deployment_id","policy_pack_version","source_pack_version","authority_profile_version","status","approval_ref"},
+ "binding": {"binding_id","owner_institution_id","jurisdiction_package_id","jurisdiction_package_version","minah_deployment_id","identity_provider_id","identity_provider_version","policy_pack_version","source_pack_version","authority_profile_version","status","approval_ref"},
 }
 REQUIRED = {
  "institution": {"institution_id","legal_name","jurisdiction_ref","status","verification_ref"},
  "jurisdiction": {"package_id","version","owner_institution_id","jurisdiction_ref","status","sources","approval_ref"},
  "source": {"source_ref","source_type","title","publisher_ref","content_digest","provenance_ref","effective_from","status"},
  "minah": {"deployment_id","owner_institution_id","adapter_mode","adapter_ref","model_ref","interface_version","status"},
- "binding": {"binding_id","owner_institution_id","jurisdiction_package_id","jurisdiction_package_version","minah_deployment_id","policy_pack_version","source_pack_version","authority_profile_version","status","approval_ref"},
+ "binding": {"binding_id","owner_institution_id","jurisdiction_package_id","jurisdiction_package_version","minah_deployment_id","identity_provider_id","identity_provider_version","policy_pack_version","source_pack_version","authority_profile_version","status","approval_ref"},
 }
 
 class DomainModelViolation(ValueError):
@@ -104,7 +104,7 @@ def validate_minah_deployment(value: Any) -> dict[str, Any]:
 
 def validate_binding(value: Any) -> dict[str, Any]:
     r = _record(value, "binding")
-    _strings(r, ("binding_id","owner_institution_id","jurisdiction_package_id","jurisdiction_package_version","minah_deployment_id","policy_pack_version","source_pack_version","authority_profile_version"), "binding")
+    _strings(r, ("binding_id","owner_institution_id","jurisdiction_package_id","jurisdiction_package_version","minah_deployment_id","identity_provider_id","identity_provider_version","policy_pack_version","source_pack_version","authority_profile_version"), "binding")
     if r["status"] not in BINDING_STATES:
         raise DomainModelViolation("INVALID_BINDING_STATUS")
     if r["status"] in {"APPROVED","ACTIVE"} and not r.get("approval_ref"):
