@@ -92,6 +92,7 @@ class InstitutionalRuntimeBindingResolver:
             pins = {
                 "model_ref": minah_domain["model_ref"],
                 "interface_version": minah_domain["interface_version"],
+                "jurisdiction_ref": jurisdiction["jurisdiction_ref"],
                 "jurisdiction_package_id": jurisdiction["package_id"],
                 "jurisdiction_package_version": jurisdiction["version"],
                 "policy_pack_version": binding["policy_pack_version"],
