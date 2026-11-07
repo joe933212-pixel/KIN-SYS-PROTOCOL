@@ -61,7 +61,7 @@ def deployment(**changes):
         "jurisdictions": ["UG"], "identity_provider_id": "idp-ug",
         "identity_provider_version": "7", "mandate_ref": "mandate:gov-001",
         "mandate_version": "3", "permitted_operations": ["trade.review", "identity.check"],
-        "prohibited_operations": ["grant.authority", "bypass.cee"],
+        "prohibited_operations": ["authority.grant", "bypass.cee"],
         "decision_boundaries": ["MINAH_RECOMMENDATION_ONLY", "CEE_FINAL_ADMISSION"],
         "policy_pack_version": "policy-4", "source_pack_version": "sources-2",
         "authority_profile_version": "authority-5", "created_at": now,
@@ -128,6 +128,12 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
         with self.assertRaisesRegex(MinahDeploymentError, "MINAH_SECRET_REFERENCE_REQUIRED"):
             self.register(deployment(secret_ref="actual-secret-value"))
 
+    def test_minah_must_preserve_cee_final_admission_boundary(self):
+        with self.assertRaisesRegex(MinahDeploymentError, "MUST_NOT_BYPASS_CEE"):
+            self.register(deployment(prohibited_operations=["authority.grant"]))
+        with self.assertRaisesRegex(MinahDeploymentError, "CEE_FINAL_ADMISSION_BOUNDARY_REQUIRED"):
+            self.register(deployment(decision_boundaries=["MINAH_RECOMMENDATION_ONLY"]))
+
     def test_minah_cannot_grant_authority_or_conflicting_operations(self):
         with self.assertRaisesRegex(MinahDeploymentError, "OPERATION_ALLOW_DENY_CONFLICT"):
             self.register(deployment(prohibited_operations=["trade.review"]))
@@ -161,6 +167,18 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                 expected_version="3", new_version="4", new_status="ACTIVE",
                 actor_ref="actor:admin", event_id="event-reactivate",
                 evidence_ref="evidence:reactivation")
+
+    def test_runtime_resolution_fails_closed_when_pinned_provider_is_suspended(self):
+        self.register()
+        self.admin.transition(tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-2",
+            evidence_ref="evidence:activation")
+        self.assertIsNotNone(self.admin.resolve_active(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001"))
+        self.providers.config["status"] = "SUSPENDED"
+        self.assertIsNone(self.admin.resolve_active(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001"))
 
     def test_replayed_assertion_is_rejected_without_mutation(self):
         assertion = self.assertion()
