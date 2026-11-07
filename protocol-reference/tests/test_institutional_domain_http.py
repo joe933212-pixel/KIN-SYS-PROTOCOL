@@ -66,7 +66,7 @@ class InstitutionalDomainHttpTests(unittest.TestCase):
                 return {"verified":True,"evidence_ref":evidence_ref,
                     "verification_ref":"verification:"+digest[:16],"evidence_digest":"sha256:"+digest}
         self.app=create_app(
-            onboarding_administration=InstitutionalOnboardingAdministration(self.registry,self.resolver),
+            onboarding_administration=InstitutionalOnboardingAdministration(self.registry,self.resolver,EvidenceVerifier()),
             lifecycle_administration=InstitutionalLifecycleAdministration(self.registry,self.resolver,EvidenceVerifier()),
             institutional_session_resolver=Session(self))
         self.addCleanup(self.app.close)
