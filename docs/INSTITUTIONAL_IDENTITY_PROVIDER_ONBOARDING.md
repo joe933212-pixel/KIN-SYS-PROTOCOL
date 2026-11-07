@@ -112,8 +112,12 @@ The authority-gated service is now wired into the WSGI prototype through
 The session resolver contract is `resolve(environ) -> {authenticated: true,
 tenant_id: ..., actor_assertion: ...}`. It must derive the tenant from a
 verified institutional session and provide a signed assertion bound to that
-session. The assertion is never accepted from the HTTP request body. The
-provider configuration body must omit `tenant_id`; the route injects
+session. The assertion is never accepted from the HTTP request body. Each
+mutation must receive a fresh, short-lived, one-time-nonce-bound assertion;
+the same assertion must not be reused for a second operation. The session
+resolver is responsible for minting or obtaining that assertion from the
+trusted institutional authority context. The provider configuration body
+must omit `tenant_id`; the route injects
 the tenant from the verified session before calling the application service.
 This prevents a caller from choosing or spoofing the registry tenant.
 
