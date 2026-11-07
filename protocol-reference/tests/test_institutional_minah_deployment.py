@@ -122,6 +122,12 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
         with self.assertRaisesRegex(MinahDeploymentError, "OWNER_TENANT_MISMATCH"):
             self.register(deployment(owner_ref="tenant-other"))
 
+    def test_namespaced_model_reference_accepts_path_segments_and_rejects_unsafe_values(self):
+        result = self.register(deployment(model_ref="model:institution/minah/v1"))
+        self.assertEqual(result["config"]["model_ref"], "model:institution/minah/v1")
+        with self.assertRaisesRegex(MinahDeploymentError, "MINAH_MODEL_REFERENCE_INVALID"):
+            self.register(deployment(model_ref="model:institution/minah v1"))
+
     def test_agent_descriptor_supports_hosted_agent_without_secret_material(self):
         result = self.register(deployment(
             agent_kind="THIRD_PARTY_HOSTED", endpoint_ref="https://agent.example.org/minah"))
