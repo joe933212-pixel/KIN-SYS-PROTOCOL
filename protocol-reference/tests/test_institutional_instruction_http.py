@@ -49,6 +49,7 @@ class Pipeline:
             "status": "COMMITTED",
             "reason": "SYNTHETIC_GATES_PASSED",
             "funds_moved": False,
+            "private_token": "must-not-leak",
         }
 
 
@@ -114,6 +115,7 @@ class InstitutionalInstructionHttpTests(unittest.TestCase):
         self.assertEqual(body["runtime_pins"]["tenant_id"], "tenant-ug")
         self.assertNotIn("minah_config", json.dumps(body))
         self.assertNotIn("endpoint_ref", json.dumps(body))
+        self.assertNotIn("private_token", json.dumps(body))
         self.assertEqual(
             self.pipeline.requests[0]["_institutional_runtime_binding"]["binding_id"],
             "BIND-UG-01",
