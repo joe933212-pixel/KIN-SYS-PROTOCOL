@@ -47,6 +47,19 @@ class RuntimeResolver:
         return dict(self.context)
 
 
+class ActiveMinahResolver:
+    def __init__(self, deployment):
+        self.deployment = dict(deployment)
+
+    def resolve_active(self, *, tenant_id, deployment_id):
+        current = self.deployment
+        if (current.get("tenant_id") != tenant_id
+                or current.get("deployment_id") != deployment_id
+                or current.get("status") != "ACTIVE"):
+            return None
+        return dict(current)
+
+
 class Pipeline:
     EXECUTION_ORDER = ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")
     SUPPORTS_INSTITUTIONAL_RUNTIME_PINS = True
@@ -293,9 +306,17 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             authority_profile_version="BANK-AUTHORITY:1.0",
         )
         self.addCleanup(pipeline.close)
+        active_minah = ActiveMinahResolver({
+            "tenant_id": "tenant-ug",
+            "deployment_id": "MINAH-UG-01",
+            "version": "9.0",
+            "status": "ACTIVE",
+            "config": dict(profile),
+        })
         service = InstitutionalInstructionExecutionService(
             runtime_binding_resolver=self.resolver,
             pipeline_factory=lambda runtime_context: pipeline,
+            minah_deployment_resolver=active_minah,
         )
         evidence = {
             "consignment_id": "PROCESS-REAL-1",
@@ -362,6 +383,40 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             [item["status"] for item in recovery_observations],
             ["REQUESTED", "COMMITTED"],
         )
+
+        # Historical inspection remains available during lifecycle suspension,
+        # but recovery is blocked until the exact pinned deployment is active.
+        active_minah.deployment["status"] = "SUSPENDED"
+        self.assertIsNotNone(service.inspect(
+            tenant_id="tenant-ug", operation_id="OP-REAL-1"))
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_MINAH_DEPLOYMENT_NOT_ACTIVE",
+        ):
+            service.recover(
+                tenant_id="tenant-ug", operation_id="OP-REAL-1",
+                actor_ref="operator:alice", request_id="recovery-suspended")
+        active_minah.deployment["status"] = "REVOKED"
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_MINAH_DEPLOYMENT_NOT_ACTIVE",
+        ):
+            service.recover(
+                tenant_id="tenant-ug", operation_id="OP-REAL-1",
+                actor_ref="operator:alice", request_id="recovery-revoked")
+        active_minah.deployment.update(status="ACTIVE", version="10.0")
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_MINAH_DEPLOYMENT_VERSION_MISMATCH",
+        ):
+            service.recover(
+                tenant_id="tenant-ug", operation_id="OP-REAL-1",
+                actor_ref="operator:alice", request_id="recovery-version-drift")
+        active_minah.deployment["version"] = "9.0"
+        recovered_again = service.recover(
+            tenant_id="tenant-ug", operation_id="OP-REAL-1",
+            actor_ref="operator:alice", request_id="recovery-reactivated")
+        self.assertEqual(recovered_again["decision"]["protocol_decision"], "PASSED")
 
         # A previously successful operation must not be inspected or resumed
         # through a MINAH profile whose deployment identity or governance scope
