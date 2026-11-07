@@ -79,16 +79,35 @@ class InstitutionalOnboardingAdministration:
             raise InstitutionalOnboardingError("RESOURCE_ID_REQUIRED")
         if clean.get("status") != INITIAL_STATES[resource_type]:
             raise InstitutionalOnboardingError("INVALID_INITIAL_LIFECYCLE_STATE")
-        if resource_type in {"jurisdiction", "minah", "binding"}:
-            if clean.get("owner_institution_id") is None:
-                raise InstitutionalOnboardingError("RESOURCE_OWNER_INSTITUTION_REQUIRED")
+        owner_institution_id = (
+            clean.get("institution_id") if resource_type == "institution"
+            else clean.get("owner_institution_id")
+        )
+        if not isinstance(owner_institution_id, str) or not owner_institution_id.strip():
+            raise InstitutionalOnboardingError("RESOURCE_OWNER_INSTITUTION_REQUIRED")
+        if resource_type != "institution":
+            owner = self.registry.get_current_record(
+                tenant_id=tenant_id, resource_type="institution",
+                resource_id=owner_institution_id,
+            )
+            if owner is None:
+                raise InstitutionalOnboardingError("RESOURCE_OWNER_INSTITUTION_NOT_REGISTERED")
+            if owner["payload"].get("institution_id") != owner_institution_id:
+                raise InstitutionalOnboardingError("RESOURCE_OWNER_INSTITUTION_MISMATCH")
+            if owner["status"] in {"SUSPENDED", "REVOKED"}:
+                raise InstitutionalOnboardingError("RESOURCE_OWNER_INSTITUTION_NOT_ELIGIBLE")
         try:
             actor = self.authority_resolver.resolve(
                 actor_assertion, tenant_id=tenant_id,
                 resource_type=resource_type, resource_id=resource_id,
             )
         except Exception as exc:
-            raise InstitutionalOnboardingError("REGISTRATION_AUTHORITY_REJECTED:" + str(exc)) from exc
+            # Do not disclose resolver internals, grant data or cryptographic details.
+            raise InstitutionalOnboardingError("REGISTRATION_AUTHORITY_REJECTED") from exc
+        if not isinstance(actor, dict) or actor.get("authenticated") is not True or actor.get("verified") is not True:
+            raise InstitutionalOnboardingError("VERIFIED_REGISTRATION_ACTOR_REQUIRED")
+        if actor.get("institution_id") != owner_institution_id:
+            raise InstitutionalOnboardingError("REGISTRATION_ACTOR_INSTITUTION_MISMATCH")
         if REGISTRAR_ROLES[resource_type] not in actor.get("roles", []):
             raise InstitutionalOnboardingError("REGISTRATION_ROLE_REQUIRED")
         result = self.registry.create_record_with_event(
