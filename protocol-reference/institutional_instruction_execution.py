@@ -97,6 +97,9 @@ class InstitutionalInstructionExecutionService:
         if not isinstance(evidence, dict):
             raise InstitutionalInstructionExecutionError("EXECUTION_EVIDENCE_MUST_BE_OBJECT")
         checked = verify_instruction_payload_digest(instruction)
+        if not isinstance(checked.get("evidence"), dict) or checked["evidence"] != evidence:
+            raise InstitutionalInstructionExecutionError(
+                "EXECUTION_EVIDENCE_MUST_MATCH_DIGEST_BOUND_INSTRUCTION")
         context = self.runtime_binding_resolver.resolve(
             tenant_id=tenant_id, institution_id=institution_id, binding_id=binding_id)
         pins = self._pins(context)
