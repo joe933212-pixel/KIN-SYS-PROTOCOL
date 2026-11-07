@@ -389,6 +389,9 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         unguarded_service = InstitutionalInstructionExecutionService(
             runtime_binding_resolver=self.resolver,
             pipeline_factory=lambda runtime_context: pipeline,
+            # Resolve the already-persisted operation so this assertion reaches
+            # the lifecycle gate rather than returning "original runtime missing".
+            operation_pipeline_resolver=lambda **kwargs: pipeline,
         )
         with self.assertRaisesRegex(
             InstitutionalInstructionExecutionError,
