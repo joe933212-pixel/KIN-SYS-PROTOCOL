@@ -339,7 +339,8 @@ class InstitutionalInstructionExecutionService:
                     raise InstitutionalInstructionExecutionError(
                         "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH:" + field)
 
-    def _find_pinned_pipeline(self, tenant_id: str, operation_id: str):
+    def _find_pinned_pipeline(self, tenant_id: str, operation_id: str,
+                              institution_id: str | None = None):
         candidates: list[Any] = []
         with self._pipeline_lock:
             candidates.extend({id(value): value for value in self._pipelines.values()}.values())
@@ -357,7 +358,8 @@ class InstitutionalInstructionExecutionService:
                 continue
             request = operation.get("request_json")
             pins = request.get("_institutional_runtime_binding") if isinstance(request, dict) else None
-            if isinstance(pins, dict) and pins.get("tenant_id") == tenant_id:
+            if (isinstance(pins, dict) and pins.get("tenant_id") == tenant_id
+                    and (institution_id is None or pins.get("institution_id") == institution_id)):
                 matches.append((pipeline, operation))
         if not matches and self.operation_pipeline_resolver is not None:
             try:
@@ -369,7 +371,8 @@ class InstitutionalInstructionExecutionService:
                 if isinstance(operation, dict):
                     request = operation.get("request_json")
                     pins = request.get("_institutional_runtime_binding") if isinstance(request, dict) else None
-                    if isinstance(pins, dict) and pins.get("tenant_id") == tenant_id:
+                    if (isinstance(pins, dict) and pins.get("tenant_id") == tenant_id
+                            and (institution_id is None or pins.get("institution_id") == institution_id)):
                         matches.append((pipeline, operation))
             except Exception as exc:
                 raise InstitutionalInstructionExecutionError(
@@ -384,13 +387,14 @@ class InstitutionalInstructionExecutionService:
         self._assert_original_pipeline(pipeline, request, pins)
         return pipeline, operation, pins, request
 
-    def inspect(self, *, tenant_id: str, operation_id: str) -> dict[str, Any] | None:
+    def inspect(self, *, tenant_id: str, operation_id: str,
+                institution_id: str | None = None) -> dict[str, Any] | None:
         """Inspect an operation only through the journal carrying its original pins."""
         if not all(isinstance(value, str) and value.strip()
                    for value in (tenant_id, operation_id)):
             raise InstitutionalInstructionExecutionError(
                 "VERIFIED_TENANT_AND_OPERATION_REQUIRED")
-        found = self._find_pinned_pipeline(tenant_id, operation_id)
+        found = self._find_pinned_pipeline(tenant_id, operation_id, institution_id)
         if found is None:
             return None
         pipeline, operation, pins, _request = found
@@ -441,13 +445,14 @@ class InstitutionalInstructionExecutionService:
         }
 
     def recover(self, *, tenant_id: str, operation_id: str,
-                actor_ref: str | None = None, request_id: str | None = None) -> dict[str, Any]:
+                institution_id: str | None = None, actor_ref: str | None = None,
+                request_id: str | None = None) -> dict[str, Any]:
         """Recover only through the original pipeline and immutable operation pins."""
         if not all(isinstance(value, str) and value.strip()
                    for value in (tenant_id, operation_id)):
             raise InstitutionalInstructionExecutionError(
                 "VERIFIED_TENANT_AND_OPERATION_REQUIRED")
-        found = self._find_pinned_pipeline(tenant_id, operation_id)
+        found = self._find_pinned_pipeline(tenant_id, operation_id, institution_id)
         if found is None:
             return {
                 "operation_id": operation_id, "status": "UNKNOWN",
