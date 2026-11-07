@@ -11,9 +11,13 @@ from institutional_instruction_execution import InstitutionalInstructionExecutio
 class SessionResolver:
     def __init__(self):
         self.tenant_id = "tenant-ug"
+        self.institution_id = "BANK-UG-01"
 
     def resolve(self, environ):
-        return {"authenticated": True, "tenant_id": self.tenant_id, "actor_ref": "operator:alice"}
+        return {
+            "authenticated": True, "tenant_id": self.tenant_id,
+            "institution_id": self.institution_id, "actor_ref": "operator:alice",
+        }
 
 
 class RuntimeResolver:
@@ -177,6 +181,11 @@ class InstitutionalInstructionHttpTests(unittest.TestCase):
         response, body = self.request(
             {}, path="/institutional/instructions/OP-HTTP-1", method="GET")
         self.assertEqual(response["status"], 404, body)
+        self.session.tenant_id = "tenant-ug"
+        self.session.institution_id = "BANK-KE-01"
+        response, body = self.request(
+            {}, path="/institutional/instructions/OP-HTTP-1", method="GET")
+        self.assertEqual(response["status"], 404, body)
 
     def test_recovery_uses_original_operation_without_replacement_body_and_records_audit(self):
         response, _ = self.request({
@@ -218,6 +227,19 @@ class InstitutionalInstructionHttpTests(unittest.TestCase):
             self.pipeline.requests[0]["_institutional_runtime_binding"]["binding_id"],
             "BIND-UG-01",
         )
+
+    def test_session_cannot_submit_for_a_different_institution(self):
+        self.session.institution_id = "BANK-KE-01"
+        response, body = self.request({
+            "institution_id": "BANK-UG-01",
+            "binding_id": "BIND-UG-01",
+            "instruction": make_instruction(),
+            "evidence": {"document_ref": "evidence:http-1"},
+        })
+        self.assertEqual(response["status"], 403)
+        self.assertEqual(
+            body["error"]["code"], "INSTITUTIONAL_SESSION_INSTITUTION_MISMATCH")
+        self.assertEqual(self.pipeline.requests, [])
 
     def test_client_cannot_supply_tenant_context(self):
         response, body = self.request({
