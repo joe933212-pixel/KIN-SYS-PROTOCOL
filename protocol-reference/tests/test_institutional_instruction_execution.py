@@ -246,6 +246,21 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             "3.0",
         )
 
+        inspected = service.inspect(
+            tenant_id="tenant-ug", operation_id="OP-REAL-1")
+        self.assertEqual(inspected["phase"], "FINALIZED")
+        self.assertEqual(inspected["runtime_pins"], outcome["runtime_pins"])
+        self.assertFalse(inspected["recovery_required"])
+        recovered = service.recover(
+            tenant_id="tenant-ug", operation_id="OP-REAL-1",
+            actor_ref="operator:alice", request_id="recovery-real-1")
+        self.assertEqual(recovered["decision"]["protocol_decision"], "PASSED")
+        observations = pipeline.cee.observations("OP-REAL-1")
+        self.assertEqual(
+            [item["status"] for item in observations],
+            ["REQUESTED", "COMMITTED"],
+        )
+
 
     def test_recovery_never_resolves_a_new_active_binding_when_original_runtime_is_unavailable(self):
         resolver = RuntimeResolver()
