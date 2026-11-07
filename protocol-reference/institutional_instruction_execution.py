@@ -10,6 +10,7 @@ institution's approved MINAH, identity and authority adapters.
 from __future__ import annotations
 
 import hashlib
+import threading
 from typing import Any, Callable
 
 from governed_contracts import (
@@ -39,6 +40,18 @@ class InstitutionalInstructionExecutionService:
                 "INSTITUTIONAL_PIPELINE_FACTORY_REQUIRED")
         self.runtime_binding_resolver = runtime_binding_resolver
         self.pipeline_factory = pipeline_factory
+        self._pipeline_lock = threading.RLock()
+        self._pipelines: dict[tuple[str, ...], Any] = {}
+
+    def close(self) -> None:
+        """Close process-cached institution pipelines when the service shuts down."""
+        with self._pipeline_lock:
+            pipelines = list({id(value): value for value in self._pipelines.values()}.values())
+            self._pipelines.clear()
+        for pipeline in pipelines:
+            close = getattr(pipeline, "close", None)
+            if callable(close):
+                close()
 
     @staticmethod
     def _pins(context: dict[str, Any]) -> dict[str, str]:
@@ -119,11 +132,21 @@ class InstitutionalInstructionExecutionService:
         # The complete configuration (including private adapter references) is
         # supplied only to the trusted server-side factory, never returned or
         # copied into the operation's public/audit pin set.
-        pipeline = self.pipeline_factory(dict(context))
-        if not callable(getattr(pipeline, "execute", None)):
-            raise InstitutionalInstructionExecutionError(
-                "INSTITUTIONAL_PIPELINE_EXECUTOR_INVALID")
-        self._assert_pipeline_profile(pipeline, context)
+        cache_key = tuple(pins[field] for field in (
+            "tenant_id", "institution_id", "binding_id", "binding_version",
+            "minah_deployment_id", "minah_domain_version", "minah_runtime_version",
+            "jurisdiction_package_id", "jurisdiction_package_version",
+            "policy_pack_version", "source_pack_version", "authority_profile_version",
+        ))
+        with self._pipeline_lock:
+            pipeline = self._pipelines.get(cache_key)
+            if pipeline is None:
+                pipeline = self.pipeline_factory(dict(context))
+                if not callable(getattr(pipeline, "execute", None)):
+                    raise InstitutionalInstructionExecutionError(
+                        "INSTITUTIONAL_PIPELINE_EXECUTOR_INVALID")
+                self._assert_pipeline_profile(pipeline, context)
+                self._pipelines[cache_key] = pipeline
 
         rule_set, rule_version = checked["rule_pack_version"].rsplit(":", 1)
         internal_request = {
