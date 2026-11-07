@@ -509,6 +509,10 @@ class KinSysPrototypeApplication:
                 for field in ("institution_id", "binding_id"):
                     if not isinstance(payload.get(field),str) or not _ID_RE.fullmatch(payload[field]):
                         raise HttpServiceError(422,"INVALID_"+field.upper(),field+" must be a valid identifier.")
+                if ("institution_id" in session
+                        and session["institution_id"] != payload["institution_id"]):
+                    raise HttpServiceError(403,"INSTITUTIONAL_SESSION_INSTITUTION_MISMATCH",
+                                           "The authenticated session is not bound to the requested institution.")
                 if not isinstance(payload.get("instruction"),dict):
                     raise HttpServiceError(422,"INSTRUCTION_ENVELOPE_REQUIRED","instruction must be a governed v0.1 envelope.")
                 if not isinstance(payload.get("evidence"),dict):
@@ -557,13 +561,17 @@ class KinSysPrototypeApplication:
                     raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
                 if (not isinstance(session,dict) or session.get("authenticated") is not True
                         or not isinstance(session.get("tenant_id"),str)
-                        or not _ID_RE.fullmatch(session["tenant_id"])):
+                        or not _ID_RE.fullmatch(session["tenant_id"])
+                        or ("institution_id" in session
+                            and (not isinstance(session["institution_id"],str)
+                                 or not _ID_RE.fullmatch(session["institution_id"])))):
                     raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
                 operation_id = parts[0]
                 if is_recovery:
                     actor_ref = session.get("actor_ref", session.get("subject"))
                     recovered = self.institutional_instruction_execution.recover(
                         tenant_id=session["tenant_id"], operation_id=operation_id,
+                        institution_id=session.get("institution_id"),
                         actor_ref=actor_ref, request_id=request_id)
                     if (recovered.get("status") == "UNKNOWN"
                             and recovered.get("reason") == "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE"):
@@ -579,7 +587,8 @@ class KinSysPrototypeApplication:
                         "production_ready":False,
                     },request_id)
                 inspected = self.institutional_instruction_execution.inspect(
-                    tenant_id=session["tenant_id"], operation_id=operation_id)
+                    tenant_id=session["tenant_id"], operation_id=operation_id,
+                    institution_id=session.get("institution_id"))
                 if inspected is None:
                     return _response(start_response,404,{"error":{"code":"INSTITUTIONAL_OPERATION_NOT_FOUND","message":"No institutional operation is visible in this tenant."}},request_id)
                 return _response(start_response,200,{
