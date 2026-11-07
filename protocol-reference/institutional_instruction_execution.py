@@ -32,15 +32,22 @@ class InstitutionalInstructionExecutionService:
     """Resolve, pin and execute one instruction under an institution's binding."""
 
     def __init__(self, *, runtime_binding_resolver: Any,
-                 pipeline_factory: Callable[[dict[str, Any]], Any]):
+                 pipeline_factory: Callable[[dict[str, Any]], Any],
+                 operation_pipeline_resolver: Callable[..., Any] | None = None):
         if not callable(getattr(runtime_binding_resolver, "resolve", None)):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_RUNTIME_BINDING_RESOLVER_REQUIRED")
         if not callable(pipeline_factory):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_PIPELINE_FACTORY_REQUIRED")
+        if operation_pipeline_resolver is not None and not callable(operation_pipeline_resolver):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_OPERATION_PIPELINE_RESOLVER_INVALID")
         self.runtime_binding_resolver = runtime_binding_resolver
         self.pipeline_factory = pipeline_factory
+        # Optional durable catalog hook. It must return the executor configured
+        # for the operation's original persisted pins, never the current binding.
+        self.operation_pipeline_resolver = operation_pipeline_resolver
         self._pipeline_lock = threading.RLock()
         self._pipelines: dict[tuple[str, ...], Any] = {}
 
@@ -208,6 +215,12 @@ class InstitutionalInstructionExecutionService:
         if result.get("operation_id") != checked["operation_id"]:
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_PIPELINE_OPERATION_ID_MISMATCH")
+        return self._decision_response(checked, result, pins)
+
+
+    @staticmethod
+    def _decision_response(checked: dict[str, Any], result: dict[str, Any],
+                           pins: dict[str, str]) -> dict[str, Any]:
         status = {
             "COMMITTED": "PASSED", "PASSED": "PASSED",
             "REJECTED": "REJECTED", "DEFERRED": "DEFERRED",
@@ -240,13 +253,235 @@ class InstitutionalInstructionExecutionService:
         assert_instruction_binding(checked, decision)
         safe_result = {
             key: result[key] for key in (
-                "operation_id", "status", "reason", "funds_moved",
-                "ivm_decision", "duplicate",
+                "operation_id", "status", "reason", "funds_moved", "duplicate",
             ) if key in result
         }
         return {
             "decision": decision,
             "result": safe_result,
-            "runtime_pins": pins,
+            "runtime_pins": dict(pins),
             "production_ready": False,
         }
+
+    @staticmethod
+    def _validate_stored_pins(operation: dict[str, Any], tenant_id: str,
+                              operation_id: str) -> tuple[dict[str, str], dict[str, Any]]:
+        request = operation.get("request_json")
+        if not isinstance(request, dict) or request.get("operation_id") != operation_id:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_OPERATION_JOURNAL_INVALID")
+        pins = request.get("_institutional_runtime_binding")
+        required = (
+            "tenant_id", "institution_id", "institution_version", "binding_id",
+            "binding_version", "jurisdiction_ref", "jurisdiction_package_id",
+            "jurisdiction_package_version", "minah_deployment_id",
+            "identity_provider_id", "identity_provider_version",
+            "minah_domain_version", "minah_runtime_version",
+            "policy_pack_version", "source_pack_version", "authority_profile_version",
+        )
+        if not isinstance(pins, dict) or any(
+            not isinstance(pins.get(field), str) or not pins[field].strip()
+            for field in required
+        ):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_OPERATION_RUNTIME_PINS_INVALID")
+        if pins["tenant_id"] != tenant_id:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_OPERATION_TENANT_MISMATCH")
+        checked = verify_instruction_payload_digest(request.get("_contract_envelope"))
+        if (checked["operation_id"] != operation_id
+                or checked["jurisdiction"] != pins["jurisdiction_ref"]
+                or checked["rule_pack_version"] != pins["policy_pack_version"]):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_OPERATION_PINNED_REQUEST_MISMATCH")
+        return ({field: pins[field] for field in required}, request)
+
+    @staticmethod
+    def _assert_original_pipeline(pipeline: Any, request: dict[str, Any],
+                                  pins: dict[str, str]) -> None:
+        if (getattr(pipeline, "SUPPORTS_INSTITUTIONAL_RUNTIME_PINS", False) is not True
+                or tuple(getattr(pipeline, "EXECUTION_ORDER", ())) !=
+                ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_PIPELINE_GOVERNANCE_CONTRACT_UNSUPPORTED")
+        fields = {
+            "identity_provider_id": pins["identity_provider_id"],
+            "identity_provider_version": pins["identity_provider_version"],
+            "jurisdiction_package_id": pins["jurisdiction_package_id"],
+            "jurisdiction_package_version": pins["jurisdiction_package_version"],
+            "authority_profile_version": pins["authority_profile_version"],
+        }
+        for field, expected in fields.items():
+            if getattr(pipeline, field, None) != expected:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_PIPELINE_BINDING_MISMATCH:" + field)
+        stored_profile = request.get("_minah_deployment_profile")
+        active_profile = getattr(pipeline, "minah_profile", None)
+        if stored_profile is not None and active_profile != stored_profile:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_UNAVAILABLE")
+        if isinstance(active_profile, dict):
+            checks = {
+                "deployment_id": pins["minah_deployment_id"],
+                "owner_ref": pins["tenant_id"],
+                "policy_pack_version": pins["policy_pack_version"],
+                "source_pack_version": pins["source_pack_version"],
+            }
+            for field, expected in checks.items():
+                if active_profile.get(field) != expected:
+                    raise InstitutionalInstructionExecutionError(
+                        "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH:" + field)
+
+    def _find_pinned_pipeline(self, tenant_id: str, operation_id: str):
+        candidates: list[Any] = []
+        with self._pipeline_lock:
+            candidates.extend({id(value): value for value in self._pipelines.values()}.values())
+        matches: list[tuple[Any, dict[str, Any]]] = []
+        for pipeline in candidates:
+            journal = getattr(pipeline, "cee", None)
+            getter = getattr(journal, "get", None)
+            if not callable(getter):
+                continue
+            try:
+                operation = getter(operation_id)
+            except Exception:
+                continue
+            if not isinstance(operation, dict):
+                continue
+            request = operation.get("request_json")
+            pins = request.get("_institutional_runtime_binding") if isinstance(request, dict) else None
+            if isinstance(pins, dict) and pins.get("tenant_id") == tenant_id:
+                matches.append((pipeline, operation))
+        if not matches and self.operation_pipeline_resolver is not None:
+            try:
+                pipeline = self.operation_pipeline_resolver(
+                    tenant_id=tenant_id, operation_id=operation_id)
+                journal = getattr(pipeline, "cee", None)
+                getter = getattr(journal, "get", None)
+                operation = getter(operation_id) if callable(getter) else None
+                if isinstance(operation, dict):
+                    matches.append((pipeline, operation))
+            except Exception as exc:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_ORIGINAL_PINNED_RUNTIME_UNAVAILABLE") from exc
+        if len(matches) > 1:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_OPERATION_ID_AMBIGUOUS")
+        if not matches:
+            return None
+        pipeline, operation = matches[0]
+        pins, request = self._validate_stored_pins(operation, tenant_id, operation_id)
+        self._assert_original_pipeline(pipeline, request, pins)
+        return pipeline, operation, pins, request
+
+    def inspect(self, *, tenant_id: str, operation_id: str) -> dict[str, Any] | None:
+        """Inspect an operation only through the journal carrying its original pins."""
+        if not all(isinstance(value, str) and value.strip()
+                   for value in (tenant_id, operation_id)):
+            raise InstitutionalInstructionExecutionError(
+                "VERIFIED_TENANT_AND_OPERATION_REQUIRED")
+        found = self._find_pinned_pipeline(tenant_id, operation_id)
+        if found is None:
+            return None
+        pipeline, operation, pins, _request = found
+        inspector = getattr(pipeline, "inspect", None)
+        if not callable(inspector):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_OPERATION_INSPECTOR_UNAVAILABLE")
+        snapshot = inspector(operation_id)
+        if not isinstance(snapshot, dict):
+            return None
+        journal = pipeline.cee
+        events = journal.events(operation_id)
+        observations = journal.observations(operation_id)
+        stored_result = operation.get("result_json")
+        result_summary = {}
+        if isinstance(stored_result, dict):
+            result_summary = {
+                key: stored_result[key] for key in ("status", "reason")
+                if key in stored_result
+            }
+        safe_observations = []
+        for item in observations:
+            detail = item.get("detail", {})
+            safe_detail = {
+                key: detail[key] for key in (
+                    "actor_ref", "actor_binding", "request_id", "reason_code",
+                ) if isinstance(detail, dict) and key in detail
+            }
+            safe_observations.append({
+                "kind": item.get("kind"), "status": item.get("status"),
+                "created_at": item.get("created_at"), "detail": safe_detail,
+            })
+        return {
+            "operation_id": operation_id,
+            "phase": operation.get("phase"),
+            "status": result_summary.get("status", operation.get("phase")),
+            "request_fingerprint": operation.get("request_digest"),
+            "runtime_pins": pins,
+            "resumable": bool(snapshot.get("resumable")),
+            "recovery_required": bool(snapshot.get("resumable")),
+            "result": result_summary,
+            "cee_event_summary": [
+                {"phase": event.get("phase"), "status": event.get("status")}
+                for event in events
+            ],
+            "observations": safe_observations,
+            "production_ready": False,
+        }
+
+    def recover(self, *, tenant_id: str, operation_id: str,
+                actor_ref: str | None = None, request_id: str | None = None) -> dict[str, Any]:
+        """Recover only through the original pipeline and immutable operation pins."""
+        if not all(isinstance(value, str) and value.strip()
+                   for value in (tenant_id, operation_id)):
+            raise InstitutionalInstructionExecutionError(
+                "VERIFIED_TENANT_AND_OPERATION_REQUIRED")
+        found = self._find_pinned_pipeline(tenant_id, operation_id)
+        if found is None:
+            return {
+                "operation_id": operation_id, "status": "UNKNOWN",
+                "reason": "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE",
+                "recovery_required": True, "production_ready": False,
+            }
+        pipeline, operation, pins, request = found
+        journal = pipeline.cee
+        detail: dict[str, str] = {}
+        if isinstance(actor_ref, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}", actor_ref):
+            detail["actor_ref"] = actor_ref
+        else:
+            detail["actor_binding"] = "VERIFIED_INSTITUTIONAL_SESSION"
+        if isinstance(request_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,119}", request_id):
+            detail["request_id"] = request_id
+        journal.record_observation(
+            operation_id, "INSTITUTIONAL_RECOVERY", "REQUESTED", detail)
+        try:
+            recovered = pipeline.recover(operation_id)
+            if not isinstance(recovered, dict):
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_RECOVERY_RESPONSE_INVALID")
+            recovered_status = recovered.get("status", "UNKNOWN")
+            reason = recovered.get("reason")
+            completed_detail = dict(detail)
+            if isinstance(reason, str) and re.fullmatch(r"[A-Z0-9_:-]{1,120}", reason):
+                completed_detail["reason_code"] = reason
+            journal.record_observation(
+                operation_id, "INSTITUTIONAL_RECOVERY", str(recovered_status), completed_detail)
+            checked = verify_instruction_payload_digest(request.get("_contract_envelope"))
+            return self._decision_response(checked, recovered, pins)
+        except Exception as exc:
+            blocked_detail = dict(detail)
+            reason = str(exc)
+            blocked_detail["reason_code"] = (
+                reason if re.fullmatch(r"[A-Z0-9_:-]{1,120}", reason)
+                else "INSTITUTIONAL_RECOVERY_FAILED"
+            )
+            try:
+                journal.record_observation(
+                    operation_id, "INSTITUTIONAL_RECOVERY", "BLOCKED", blocked_detail)
+            except Exception:
+                pass
+            if isinstance(exc, InstitutionalInstructionExecutionError):
+                raise
+            raise InstitutionalInstructionExecutionError(
+                blocked_detail["reason_code"]) from exc
