@@ -1318,10 +1318,29 @@ class KinSysProtocolPipeline:
         if not isinstance(request, dict) or required - set(request):
             missing = sorted(required - set(request)) if isinstance(request, dict) else sorted(required)
             raise ValueError("MISSING_REQUIRED_FIELDS:" + ",".join(missing))
-        allowed_extensions = {"_contract_envelope"}
+        allowed_extensions = {"_contract_envelope", "_institutional_runtime_binding"}
         unknown = sorted(set(request) - required - allowed_extensions)
         if unknown:
             raise ValueError("UNKNOWN_FIELDS:" + ",".join(unknown))
+        if "_institutional_runtime_binding" in request:
+            pins = request["_institutional_runtime_binding"]
+            pin_fields = {
+                "tenant_id", "institution_id", "institution_version", "binding_id",
+                "binding_version", "jurisdiction_ref", "jurisdiction_package_id",
+                "jurisdiction_package_version", "minah_deployment_id",
+                "minah_domain_version", "minah_runtime_version",
+                "policy_pack_version", "source_pack_version",
+                "authority_profile_version",
+            }
+            if (not isinstance(pins, dict) or set(pins) != pin_fields
+                    or any(not isinstance(value, str) or not value.strip()
+                           for value in pins.values())):
+                raise ValueError("INVALID_INSTITUTIONAL_RUNTIME_BINDING_PINS")
+            if pins["jurisdiction_ref"] != request["jurisdiction"]:
+                raise ValueError("INSTITUTIONAL_RUNTIME_JURISDICTION_MISMATCH")
+            if (pins["policy_pack_version"]
+                    != request["rule_set"] + ":" + request["rule_version"]):
+                raise ValueError("INSTITUTIONAL_RUNTIME_POLICY_VERSION_MISMATCH")
         if "_contract_envelope" in request:
             # Preserve the complete validated client envelope inside the durable
             # operation fingerprint so retries cannot alter omitted contract fields.
