@@ -363,6 +363,38 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             ["REQUESTED", "COMMITTED"],
         )
 
+        # A previously successful operation must not be inspected or resumed
+        # through a MINAH profile whose deployment identity or governance scope
+        # has changed since admission.
+        original_profile = dict(pipeline.minah_profile)
+        drift_cases = (
+            ("deployment_id", "MINAH-UG-REPLACEMENT"),
+            ("owner_ref", "tenant-other"),
+            ("model_ref", "replacement-model"),
+            ("policy_pack_version", "KIN-SYS-DEMO-RULES:2.0"),
+            ("source_pack_version", "REPLACED-SOURCES:1.0"),
+            ("jurisdictions", ["KE"]),
+            ("may_authorise", True),
+        )
+        for field, value in drift_cases:
+            with self.subTest(recovery_profile_field=field):
+                pipeline.minah_profile[field] = value
+                with self.assertRaisesRegex(
+                    InstitutionalInstructionExecutionError,
+                    "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH",
+                ):
+                    service.inspect(
+                        tenant_id="tenant-ug", operation_id="OP-REAL-1")
+                with self.assertRaisesRegex(
+                    InstitutionalInstructionExecutionError,
+                    "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_MISMATCH",
+                ):
+                    service.recover(
+                        tenant_id="tenant-ug", operation_id="OP-REAL-1",
+                        actor_ref="operator:alice", request_id="recovery-drift-" + field)
+                pipeline.minah_profile.clear()
+                pipeline.minah_profile.update(original_profile)
+
 
     def test_recovery_never_resolves_a_new_active_binding_when_original_runtime_is_unavailable(self):
         resolver = RuntimeResolver()
