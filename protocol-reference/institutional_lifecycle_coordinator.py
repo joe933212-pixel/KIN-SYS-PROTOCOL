@@ -50,6 +50,8 @@ class InstitutionalLifecycleCoordinator:
         target_status: str, actor_assertion: dict[str, Any], evidence_ref: str,
         approval_ref: str | None = None,
         activation_context: dict[str, Any] | None = None,
+        evidence_verification: dict[str, Any] | None = None,
+        conformance_evidence_verification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if resource_type not in VALIDATORS:
             raise LifecycleCoordinatorError("UNSUPPORTED_RESOURCE_TYPE")
@@ -126,6 +128,10 @@ class InstitutionalLifecycleCoordinator:
         proposed["record"] = VALIDATORS[resource_type](proposed["record"])
         if proposed["event"].get("resource_id") != resource_id:
             raise LifecycleCoordinatorError("TRANSITION_RESOURCE_ID_MISMATCH")
+        if evidence_verification is not None:
+            proposed["event"]["evidence_verification"] = evidence_verification
+        if conformance_evidence_verification is not None:
+            proposed["event"]["conformance_evidence_verification"] = conformance_evidence_verification
 
         # The registry checks the expected current version and writes the new
         # immutable snapshot and audit event in one SQLite transaction.
