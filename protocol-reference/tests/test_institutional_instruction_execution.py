@@ -72,6 +72,7 @@ def instruction():
         "submitted_at": "2026-11-07T10:00:00+00:00",
         "rule_pack_version": "BANK-RULES:1.0",
         "evidence_refs": ["evidence:case-1001"],
+        "evidence": {"document_ref": "evidence:case-1001"},
     }
     value["payload_digest"] = compute_payload_digest(value)
     return value
