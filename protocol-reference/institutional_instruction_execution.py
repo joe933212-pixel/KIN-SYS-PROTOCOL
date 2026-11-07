@@ -160,13 +160,11 @@ class InstitutionalInstructionExecutionService:
         # The complete configuration (including private adapter references) is
         # supplied only to the trusted server-side factory, never returned or
         # copied into the operation's public/audit pin set.
-        cache_key = tuple(pins[field] for field in (
-            "tenant_id", "institution_id", "binding_id", "binding_version",
-            "minah_deployment_id", "minah_domain_version", "minah_runtime_version",
-            "identity_provider_id", "identity_provider_version",
-            "jurisdiction_package_id", "jurisdiction_package_version",
-            "policy_pack_version", "source_pack_version", "authority_profile_version",
-        ))
+        # Cache identity must include every immutable runtime pin. In particular,
+        # an institution record can be revised while its binding ID/version remains
+        # unchanged; omitting institution_version would silently reuse an executor
+        # constructed from the prior institutional identity/configuration.
+        cache_key = tuple(pins[field] for field in sorted(pins))
         with self._pipeline_lock:
             pipeline = self._pipelines.get(cache_key)
             if pipeline is None:
