@@ -100,8 +100,11 @@ class InstitutionalInstructionExecutionService:
         if not isinstance(checked.get("evidence"), dict) or checked["evidence"] != evidence:
             raise InstitutionalInstructionExecutionError(
                 "EXECUTION_EVIDENCE_MUST_MATCH_DIGEST_BOUND_INSTRUCTION")
-        context = self.runtime_binding_resolver.resolve(
-            tenant_id=tenant_id, institution_id=institution_id, binding_id=binding_id)
+        try:
+            context = self.runtime_binding_resolver.resolve(
+                tenant_id=tenant_id, institution_id=institution_id, binding_id=binding_id)
+        except InstitutionalRuntimeBindingError as exc:
+            raise InstitutionalInstructionExecutionError(str(exc)) from exc
         pins = self._pins(context)
         if pins["institution_id"] != institution_id or pins["tenant_id"] != tenant_id:
             raise InstitutionalInstructionExecutionError(
