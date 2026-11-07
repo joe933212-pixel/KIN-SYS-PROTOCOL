@@ -215,6 +215,13 @@ class KinSysPrototypeApplication:
             return "cee:operation:read", path[len("/cee/operations/"):]
         if path == "/institutional/instructions" and method == "POST":
             return "institutional-instruction:submit", None
+        if path.startswith("/institutional/instructions/"):
+            parts = path[len("/institutional/instructions/"):].split("/")
+            if len(parts) == 1 and _ID_RE.fullmatch(parts[0]) and method == "GET":
+                return "institutional-instruction:inspect", parts[0]
+            if (len(parts) == 2 and _ID_RE.fullmatch(parts[0])
+                    and parts[1] == "recover" and method == "POST"):
+                return "institutional-instruction:recover", parts[0]
         if path.startswith("/institutional/runtime/") and method == "GET":
             parts = path.strip("/").split("/")
             if (len(parts) == 5 and parts[1] == "runtime" and parts[3] == "bindings"
@@ -313,6 +320,9 @@ class KinSysPrototypeApplication:
                         "GET /institutional/domain/{resource_type}/{resource_id}",
                         "GET /institutional/domain/{resource_type}/{resource_id}/events",
                         "GET /institutional/runtime/{institution_id}/bindings/{binding_id}",
+                        "POST /institutional/instructions",
+                        "GET /institutional/instructions/{operation_id}",
+                        "POST /institutional/instructions/{operation_id}/recover",
                         "POST /institutional/identity-providers",
                         "POST /institutional/minah-deployments",
                         "GET /institutional/minah-deployments/{deployment_id}",
@@ -525,6 +535,66 @@ class KinSysPrototypeApplication:
                 return _response(start_response,422,{"error":{"code":"INVALID_INSTITUTIONAL_INSTRUCTION","message":str(exc)[:240]}},request_id)
             except Exception:
                 return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"The institutional instruction could not be completed."}},request_id)
+
+        instruction_operation_prefix = "/institutional/instructions/"
+        if path.startswith(instruction_operation_prefix):
+            parts = path[len(instruction_operation_prefix):].split("/")
+            if (len(parts) not in {1, 2} or not _ID_RE.fullmatch(parts[0])
+                    or (len(parts) == 2 and parts[1] != "recover")):
+                return _response(start_response,404,{"error":{"code":"ROUTE_NOT_FOUND","message":"No institutional instruction operation route matches this path."}},request_id)
+            is_recovery = len(parts) == 2
+            if (is_recovery and method != "POST") or (not is_recovery and method != "GET"):
+                expected = "POST" if is_recovery else "GET"
+                return _response(start_response,405,{"error":{"code":"METHOD_NOT_ALLOWED","message":"Use "+expected+" for this institutional instruction operation route."}},request_id)
+            if self.institutional_instruction_execution is None:
+                return _response(start_response,503,{"error":{"code":"INSTITUTIONAL_INSTRUCTION_EXECUTOR_NOT_CONFIGURED","message":"Institutional instruction operation services are not configured."}},request_id)
+            if is_recovery and environ.get("CONTENT_LENGTH","0") not in {"","0"}:
+                return _response(start_response,400,{"error":{"code":"RECOVERY_BODY_NOT_ALLOWED","message":"Recovery uses the original pinned operation and does not accept replacement content."}},request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if (not isinstance(session,dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"),str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])):
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                operation_id = parts[0]
+                if is_recovery:
+                    actor_ref = session.get("actor_ref", session.get("subject"))
+                    recovered = self.institutional_instruction_execution.recover(
+                        tenant_id=session["tenant_id"], operation_id=operation_id,
+                        actor_ref=actor_ref, request_id=request_id)
+                    if (recovered.get("status") == "UNKNOWN"
+                            and recovered.get("reason") == "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE"):
+                        return _response(start_response,409,{
+                            "status":"UNKNOWN","result":recovered,
+                            "recovery_required":True,"production_ready":False,
+                        },request_id)
+                    return _response(start_response,200,{
+                        "status":recovered["decision"]["protocol_decision"],
+                        "decision":recovered["decision"],"result":recovered["result"],
+                        "runtime_pins":recovered["runtime_pins"],
+                        "recovery_required":recovered["decision"]["protocol_decision"] == "UNKNOWN",
+                        "production_ready":False,
+                    },request_id)
+                inspected = self.institutional_instruction_execution.inspect(
+                    tenant_id=session["tenant_id"], operation_id=operation_id)
+                if inspected is None:
+                    return _response(start_response,404,{"error":{"code":"INSTITUTIONAL_OPERATION_NOT_FOUND","message":"No institutional operation is visible in this tenant."}},request_id)
+                return _response(start_response,200,{
+                    "status":inspected["status"],"operation":inspected,
+                    "recovery_required":inspected["recovery_required"],
+                    "production_ready":False,
+                },request_id)
+            except HttpServiceError as exc:
+                return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
+            except InstitutionalInstructionExecutionError as exc:
+                return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_OPERATION_NOT_ADMISSIBLE","message":str(exc)[:240]}},request_id)
+            except (ValueError,TypeError) as exc:
+                return _response(start_response,422,{"error":{"code":"INVALID_INSTITUTIONAL_OPERATION_REQUEST","message":str(exc)[:240]}},request_id)
+            except Exception:
+                return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"The institutional operation could not be inspected or recovered safely."}},request_id)
 
         domain_prefix = "/institutional/domain/"
         if path.startswith(domain_prefix):
