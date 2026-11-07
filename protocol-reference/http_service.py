@@ -41,6 +41,9 @@ from institutional_identity_provider_registry import (
     IdentityProviderRegistryError,
 )
 
+from institutional_onboarding_administration import InstitutionalOnboardingAdministration, InstitutionalOnboardingError
+from institutional_registry import RegistryConflict, RegistryError
+
 from institutional_minah_deployment import (
     InstitutionalMinahDeploymentAdministration,
     MinahDeploymentConflict,
@@ -193,6 +196,18 @@ class KinSysPrototypeApplication:
             return "protocol:operation:read", operation_id
         if path.startswith("/cee/operations/"):
             return "cee:operation:read", path[len("/cee/operations/"):]
+        domain_routes = {"/institutional/domain/institutions":"institution",
+                         "/institutional/domain/jurisdictions":"jurisdiction",
+                         "/institutional/domain/minah-deployments":"minah",
+                         "/institutional/domain/bindings":"binding"}
+        if path in domain_routes and method == "POST":
+            return "institutional-domain:" + domain_routes[path] + ":register", None
+        if path.startswith("/institutional/domain/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 5 and parts[4] == "events":
+                return "institutional-domain:" + parts[2] + ":audit", parts[3]
+            if len(parts) == 4:
+                return "institutional-domain:" + parts[2] + ":read", parts[3]
         if path == "/institutional/minah-deployments" and method == "POST":
             return "minah-deployment:register", None
         if path.startswith("/institutional/minah-deployments/"):
@@ -259,6 +274,12 @@ class KinSysPrototypeApplication:
                         "GET /system/health",
                         "GET /system/readiness",
                         "GET /system/capabilities",
+                        "POST /institutional/domain/institutions",
+                        "POST /institutional/domain/jurisdictions",
+                        "POST /institutional/domain/minah-deployments",
+                        "POST /institutional/domain/bindings",
+                        "GET /institutional/domain/{resource_type}/{resource_id}",
+                        "GET /institutional/domain/{resource_type}/{resource_id}/events",
                         "POST /institutional/identity-providers",
                         "POST /institutional/minah-deployments",
                         "GET /institutional/minah-deployments/{deployment_id}",
@@ -388,6 +409,54 @@ class KinSysPrototypeApplication:
                         {"error": {"code": "AUTHENTICATION_REQUIRED", "message": "An institutional authorizer is required for non-loopback access."}},
                         request_id,
                     )
+
+        domain_prefix = "/institutional/domain/"
+        if path.startswith(domain_prefix):
+            if self.onboarding_administration is None:
+                return _response(start_response, 503, {"error":{"code":"INSTITUTIONAL_ONBOARDING_NOT_CONFIGURED","message":"Institutional domain onboarding is not configured."}}, request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if (not isinstance(session,dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"),str) or not _ID_RE.fullmatch(session["tenant_id"])
+                        or not isinstance(session.get("actor_assertion"),dict)):
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session with a signed authority assertion is required.")
+                tenant_id, assertion = session["tenant_id"], session["actor_assertion"]
+                parts = path.strip("/").split("/")
+                kinds = {"institutions":"institution","jurisdictions":"jurisdiction","minah-deployments":"minah","bindings":"binding"}
+                if len(parts) not in (3,4,5) or parts[:2] != ["institutional","domain"] or parts[2] not in kinds:
+                    raise HttpServiceError(404,"ROUTE_NOT_FOUND","No institutional domain route matches this path.")
+                resource_type = kinds[parts[2]]
+                if len(parts)==3 and method=="POST":
+                    body=self._read_json(environ,allowed_fields={"version","event_id","evidence_ref","record"})
+                    record=body.get("record")
+                    if not isinstance(record,dict) or "tenant_id" in record:
+                        raise HttpServiceError(422,"DOMAIN_RECORD_INVALID","record must be an object without tenant_id; tenant context comes from the verified session.")
+                    result=self.onboarding_administration.register(tenant_id=tenant_id,resource_type=resource_type,
+                        version=body.get("version"),event_id=body.get("event_id"),evidence_ref=body.get("evidence_ref"),
+                        record=record,actor_assertion=assertion)
+                    return _response(start_response,201,{"registration":result},request_id)
+                if len(parts) in (4,5) and parts[3] and _ID_RE.fullmatch(parts[3]):
+                    resource_id=parts[3]
+                    item=self.onboarding_administration.get(tenant_id=tenant_id,resource_type=resource_type,resource_id=resource_id)
+                    if item is None:
+                        raise HttpServiceError(404,"INSTITUTIONAL_RESOURCE_NOT_FOUND","No resource exists in this institutional tenant.")
+                    if len(parts)==4 and method=="GET":
+                        return _response(start_response,200,{"resource":item},request_id)
+                    if len(parts)==5 and parts[4]=="events" and method=="GET":
+                        events=self.onboarding_administration.events(tenant_id=tenant_id,resource_type=resource_type,resource_id=resource_id)
+                        return _response(start_response,200,{"events":events},request_id)
+                raise HttpServiceError(405,"METHOD_NOT_ALLOWED","Method or institutional domain route is not supported.")
+            except HttpServiceError as exc:
+                return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
+            except RegistryConflict as exc:
+                return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_REGISTRY_CONFLICT","message":str(exc)}},request_id)
+            except (InstitutionalOnboardingError,RegistryError,ValueError,TypeError) as exc:
+                return _response(start_response,422,{"error":{"code":"INSTITUTIONAL_ONBOARDING_REJECTED","message":str(exc)[:240]}},request_id)
+            except Exception:
+                return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"Institutional onboarding could not be completed."}},request_id)
 
         if path == "/institutional/minah-deployments" or path.startswith("/institutional/minah-deployments/"):
             if self.minah_deployment_administration is None:
