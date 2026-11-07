@@ -52,6 +52,28 @@ class RuntimeResolver:
         }
 
 
+class ActiveMinahResolver:
+    """Synthetic live deployment registry used by recovery lifecycle checks."""
+
+    def resolve_active(self, *, tenant_id, deployment_id):
+        if tenant_id != "tenant-ug" or deployment_id != "MINAH-UG-01":
+            return None
+        return {
+            "tenant_id": "tenant-ug",
+            "deployment_id": "MINAH-UG-01",
+            "version": "9.0",
+            "status": "ACTIVE",
+            "config": {
+                "deployment_id": "MINAH-UG-01",
+                "owner_ref": "tenant-ug",
+                "model_ref": "model:bank/minah-v1",
+                "jurisdictions": ["UG"],
+                "policy_pack_version": "BANK-RULES:1.0",
+                "source_pack_version": "UG-SOURCES:2.0",
+            },
+        }
+
+
 class Journal:
     def __init__(self):
         self.operations = {}
@@ -156,6 +178,7 @@ class InstitutionalInstructionHttpTests(unittest.TestCase):
         service = InstitutionalInstructionExecutionService(
             runtime_binding_resolver=RuntimeResolver(),
             pipeline_factory=lambda context: self.pipeline,
+            minah_deployment_resolver=ActiveMinahResolver(),
         )
         self.session = SessionResolver()
         self.app = create_app(
