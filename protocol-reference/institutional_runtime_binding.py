@@ -14,6 +14,7 @@ from institutional_deployment_domain import (
     validate_jurisdiction_package, validate_minah_deployment,
 )
 from institutional_registry import InstitutionalRegistry
+from institutional_identity_provider_registry import InstitutionalIdentityProviderRegistry
 
 
 class InstitutionalRuntimeBindingError(ValueError):
@@ -24,13 +25,17 @@ class InstitutionalRuntimeBindingResolver:
     """Resolve one current binding and all exact dependencies for one tenant."""
 
     def __init__(self, *, registry: InstitutionalRegistry,
-                 minah_deployment_administration: Any):
+                 minah_deployment_administration: Any,
+                 identity_provider_registry: InstitutionalIdentityProviderRegistry):
         if not isinstance(registry, InstitutionalRegistry):
             raise InstitutionalRuntimeBindingError("INSTITUTIONAL_REGISTRY_REQUIRED")
         if not callable(getattr(minah_deployment_administration, "resolve_active", None)):
             raise InstitutionalRuntimeBindingError("ACTIVE_MINAH_RESOLVER_REQUIRED")
+        if not isinstance(identity_provider_registry, InstitutionalIdentityProviderRegistry):
+            raise InstitutionalRuntimeBindingError("INSTITUTIONAL_IDENTITY_PROVIDER_REGISTRY_REQUIRED")
         self.registry = registry
         self.minah = minah_deployment_administration
+        self.identity_providers = identity_provider_registry
 
     def _record(self, tenant_id: str, resource_type: str,
                 resource_id: str) -> dict[str, Any]:
@@ -71,6 +76,19 @@ class InstitutionalRuntimeBindingResolver:
                 raise InstitutionalRuntimeBindingError("RUNTIME_JURISDICTION_OWNER_MISMATCH")
             if jurisdiction["jurisdiction_ref"] != institution["jurisdiction_ref"]:
                 raise InstitutionalRuntimeBindingError("RUNTIME_JURISDICTION_SCOPE_MISMATCH")
+
+            identity_provider = self.identity_providers.resolve_active_provider(
+                tenant_id, binding["identity_provider_id"])
+            if not isinstance(identity_provider, dict):
+                raise InstitutionalRuntimeBindingError(
+                    "RUNTIME_IDENTITY_PROVIDER_NOT_ACTIVE")
+            if (identity_provider.get("tenant_id") != tenant_id
+                    or identity_provider.get("provider_id") != binding["identity_provider_id"]):
+                raise InstitutionalRuntimeBindingError(
+                    "RUNTIME_IDENTITY_PROVIDER_TENANT_MISMATCH")
+            if identity_provider.get("version") != binding["identity_provider_version"]:
+                raise InstitutionalRuntimeBindingError(
+                    "RUNTIME_IDENTITY_PROVIDER_VERSION_STALE")
 
             minah_record = self._record(
                 tenant_id, "minah", binding["minah_deployment_id"])
@@ -116,6 +134,9 @@ class InstitutionalRuntimeBindingResolver:
                 "jurisdiction_package_id": jurisdiction["package_id"],
                 "jurisdiction_package_version": jurisdiction["version"],
                 "minah_deployment_id": binding["minah_deployment_id"],
+                "identity_provider_id": identity_provider["provider_id"],
+                "identity_provider_version": identity_provider["version"],
+                "identity_provider_config": dict(identity_provider),
                 "minah_domain_version": minah_record["version"],
                 "minah_runtime_version": active_minah.get("version"),
                 "minah_config": dict(config),
