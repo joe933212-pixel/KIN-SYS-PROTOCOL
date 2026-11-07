@@ -56,6 +56,7 @@ def config():
         "secret_ref": "secret://gov/minah/credential",
         "owner_scope": "NATIONAL_SOVEREIGN", "jurisdictions": ["UG"],
         "identity_provider_id": "idp-ug", "identity_provider_version": "2",
+        "jurisdiction_package_id": "UG-JURISDICTION", "jurisdiction_package_version": "4",
         "mandate_ref": "mandate:gov-1", "mandate_version": "1",
         "permitted_operations": ["trade.review"],
         "prohibited_operations": ["authority.grant", "bypass.cee"],
