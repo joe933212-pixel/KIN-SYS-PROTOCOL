@@ -365,7 +365,13 @@ class KinSysPrototypeApplication:
                               "message": "Institutional provider administration is not configured."}
                 }, request_id)
             try:
-                session = self.institutional_session_resolver.resolve(environ)
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(
+                        401, "INSTITUTIONAL_SESSION_INVALID",
+                        "A verified institutional session is required."
+                    )
                 if (not isinstance(session, dict)
                         or session.get("authenticated") is not True
                         or not isinstance(session.get("tenant_id"), str)
