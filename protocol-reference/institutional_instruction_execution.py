@@ -113,6 +113,14 @@ class InstitutionalInstructionExecutionService:
         if not isinstance(checked.get("evidence"), dict) or checked["evidence"] != evidence:
             raise InstitutionalInstructionExecutionError(
                 "EXECUTION_EVIDENCE_MUST_MATCH_DIGEST_BOUND_INSTRUCTION")
+        evidence_refs = checked.get("evidence_refs", [])
+        if not isinstance(evidence_refs, list) or any(
+            not isinstance(ref, str) or not ref.strip() for ref in evidence_refs
+        ):
+            raise InstitutionalInstructionExecutionError("INVALID_INSTRUCTION_EVIDENCE_REFERENCES")
+        rule_parts = checked["rule_pack_version"].rsplit(":", 1)
+        if len(rule_parts) != 2 or not all(part.strip() for part in rule_parts):
+            raise InstitutionalInstructionExecutionError("INVALID_INSTRUCTION_RULE_PACK_VERSION")
         try:
             context = self.runtime_binding_resolver.resolve(
                 tenant_id=tenant_id, institution_id=institution_id, binding_id=binding_id)
@@ -178,6 +186,9 @@ class InstitutionalInstructionExecutionService:
         if not isinstance(result, dict):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_PIPELINE_RESPONSE_INVALID")
+        if result.get("operation_id") not in (None, checked["operation_id"]):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_PIPELINE_OPERATION_ID_MISMATCH")
         status = {
             "COMMITTED": "PASSED", "PASSED": "PASSED",
             "REJECTED": "REJECTED", "DEFERRED": "DEFERRED",
