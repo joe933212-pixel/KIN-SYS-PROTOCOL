@@ -1331,10 +1331,40 @@ class KinSysProtocolPipeline:
         if not isinstance(request, dict) or required - set(request):
             missing = sorted(required - set(request)) if isinstance(request, dict) else sorted(required)
             raise ValueError("MISSING_REQUIRED_FIELDS:" + ",".join(missing))
-        allowed_extensions = {"_contract_envelope", "_institutional_runtime_binding"}
+        allowed_extensions = {
+            "_contract_envelope", "_institutional_runtime_binding",
+            "_minah_deployment_profile",
+        }
         unknown = sorted(set(request) - required - allowed_extensions)
         if unknown:
             raise ValueError("UNKNOWN_FIELDS:" + ",".join(unknown))
+        if "_minah_deployment_profile" in request:
+            profile = request["_minah_deployment_profile"]
+            profile_fields = {
+                "profile_version", "deployment_id", "owner_scope", "owner_ref",
+                "use_case", "jurisdictions", "policy_pack_version",
+                "source_pack_version", "model_ref", "deployment_mode",
+                "may_authorise", "mandate_ref", "mandate_version",
+                "interface_version", "authority_profile_version",
+            }
+            if (not isinstance(profile, dict) or not profile
+                    or set(profile) - profile_fields
+                    or any(not isinstance(key, str) for key in profile)):
+                raise ValueError("INVALID_MINAH_DEPLOYMENT_PROFILE_SNAPSHOT")
+            for field in (
+                "profile_version", "deployment_id", "owner_ref",
+                "policy_pack_version", "source_pack_version", "model_ref",
+            ):
+                if not isinstance(profile.get(field), str) or not profile[field].strip():
+                    raise ValueError("INVALID_MINAH_DEPLOYMENT_PROFILE_SNAPSHOT:" + field)
+            jurisdictions = profile.get("jurisdictions")
+            if (not isinstance(jurisdictions, list) or not jurisdictions
+                    or any(not isinstance(item, str) or not item.strip()
+                           for item in jurisdictions)
+                    or len(set(jurisdictions)) != len(jurisdictions)
+                    or request["jurisdiction"] not in jurisdictions
+                    or profile.get("may_authorise") is not False):
+                raise ValueError("INVALID_MINAH_DEPLOYMENT_PROFILE_SNAPSHOT:scope")
         if "_institutional_runtime_binding" in request:
             pins = request["_institutional_runtime_binding"]
             pin_fields = {
