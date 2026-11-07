@@ -367,6 +367,9 @@ class InstitutionalMinahDeploymentAdministration:
     def revise(self, *, tenant_id: str, deployment_id: str, expected_version: str,
                config: dict[str, Any], actor_assertion: dict[str, Any],
                event_id: str, evidence_ref: str) -> dict[str, Any]:
+        _identifier(tenant_id, "tenant_id")
+        _identifier(deployment_id, "deployment_id")
+        _identifier(expected_version, "expected_version")
         clean = _validate(config, tenant_id)
         self._check_provider(tenant_id, clean)
         actor = self._authorise(actor_assertion, tenant_id=tenant_id,
@@ -379,7 +382,9 @@ class InstitutionalMinahDeploymentAdministration:
                    expected_version: str, new_version: str, new_status: str,
                    actor_assertion: dict[str, Any], event_id: str,
                    evidence_ref: str) -> dict[str, Any]:
-        if new_status not in ROLE_BY_ACTION or new_status == "REGISTER":
+        _identifier(tenant_id, "tenant_id")
+        _identifier(deployment_id, "deployment_id")
+        if not isinstance(new_status, str) or new_status not in ROLE_BY_ACTION or new_status == "REGISTER":
             raise MinahDeploymentError("MINAH_DEPLOYMENT_STATUS_UNSUPPORTED")
         actor = self._authorise(actor_assertion, tenant_id=tenant_id,
             deployment_id=deployment_id, action=new_status)
