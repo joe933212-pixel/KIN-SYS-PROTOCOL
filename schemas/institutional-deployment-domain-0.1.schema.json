@@ -250,6 +250,8 @@
         "jurisdiction_package_id",
         "jurisdiction_package_version",
         "minah_deployment_id",
+        "identity_provider_id",
+        "identity_provider_version",
         "policy_pack_version",
         "source_pack_version",
         "authority_profile_version",
@@ -270,6 +272,12 @@
           "$ref": "#/$defs/s"
         },
         "minah_deployment_id": {
+          "$ref": "#/$defs/s"
+        },
+        "identity_provider_id": {
+          "$ref": "#/$defs/s"
+        },
+        "identity_provider_version": {
           "$ref": "#/$defs/s"
         },
         "policy_pack_version": {
