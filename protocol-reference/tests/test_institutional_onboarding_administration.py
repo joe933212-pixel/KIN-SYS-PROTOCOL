@@ -10,6 +10,22 @@ from institutional_onboarding_administration import (
 from institutional_registry import InstitutionalRegistry, RegistryConflict
 
 
+class EvidenceVerifier:
+    def __init__(self, rejected_refs=()):
+        self.rejected_refs = set(rejected_refs)
+        self.calls = []
+
+    def verify(self, evidence_ref, *, context):
+        self.calls.append((evidence_ref, dict(context)))
+        if evidence_ref in self.rejected_refs:
+            return {"verified": False, "evidence_ref": evidence_ref}
+        import hashlib
+        digest = hashlib.sha256(evidence_ref.encode()).hexdigest()
+        return {"verified": True, "evidence_ref": evidence_ref,
+                "verification_ref": "verification:" + digest[:16],
+                "evidence_digest": "sha256:" + digest}
+
+
 class InstitutionalOnboardingAdministrationTests(unittest.TestCase):
     def setUp(self):
         fd, self.path = tempfile.mkstemp(suffix=".sqlite")
@@ -32,7 +48,9 @@ class InstitutionalOnboardingAdministrationTests(unittest.TestCase):
             grant_loader=lambda tenant, grant: self.grant if tenant == "tenant-a" and grant == "GRANT-1" else None,
             consume_nonce=self.nonces.consume, clock=lambda: 1000,
         )
-        self.admin = InstitutionalOnboardingAdministration(self.registry, resolver)
+        self.verifier = EvidenceVerifier()
+        self.admin = InstitutionalOnboardingAdministration(
+            self.registry, resolver, self.verifier)
         self.counter = 0
 
     def assertion(self):
@@ -59,6 +77,40 @@ class InstitutionalOnboardingAdministrationTests(unittest.TestCase):
         events = self.admin.events(tenant_id="tenant-a",resource_type="institution",resource_id="BANK-1")
         self.assertEqual(len(events),1)
         self.assertEqual(events[0]["event_type"],"INSTITUTION_REGISTERED")
+        receipt = events[0]["payload"]["evidence_verification"]
+        self.assertTrue(receipt["verification_ref"].startswith("verification:"))
+        self.assertTrue(receipt["evidence_digest"].startswith("sha256:"))
+        self.assertEqual(self.verifier.calls[0][1]["purpose"], "INSTITUTIONAL_REGISTRATION")
+
+    def test_unverified_registration_evidence_fails_before_any_record_or_event(self):
+        self.verifier.rejected_refs.add("evidence:incorporation")
+        with self.assertRaisesRegex(
+            InstitutionalOnboardingError, "REGISTRATION_EVIDENCE_NOT_VERIFIED"):
+            self.admin.register(
+                tenant_id="tenant-a", resource_type="institution", version="1.0",
+                event_id="evt-unverified", record=self.record(),
+                actor_assertion=self.assertion(), evidence_ref="evidence:incorporation")
+        self.assertIsNone(self.admin.get(
+            tenant_id="tenant-a", resource_type="institution", resource_id="BANK-1"))
+        self.assertEqual(self.admin.events(
+            tenant_id="tenant-a", resource_type="institution", resource_id="BANK-1"), [])
+
+    def test_registration_rejects_receipt_for_another_evidence_reference(self):
+        class MismatchedVerifier:
+            def verify(self, evidence_ref, *, context):
+                return {"verified": True, "evidence_ref": "evidence:other",
+                        "verification_ref": "verification:wrong",
+                        "evidence_digest": "sha256:" + "a" * 64}
+        admin = InstitutionalOnboardingAdministration(
+            self.registry, self.admin.authority_resolver, MismatchedVerifier())
+        with self.assertRaisesRegex(
+            InstitutionalOnboardingError, "REGISTRATION_EVIDENCE_REFERENCE_MISMATCH"):
+            admin.register(
+                tenant_id="tenant-a", resource_type="institution", version="1.0",
+                event_id="evt-mismatch", record=self.record(),
+                actor_assertion=self.assertion(), evidence_ref="evidence:incorporation")
+        self.assertIsNone(self.admin.get(
+            tenant_id="tenant-a", resource_type="institution", resource_id="BANK-1"))
 
     def test_registration_is_tenant_scoped(self):
         with self.assertRaisesRegex(InstitutionalOnboardingError,"REGISTRATION_AUTHORITY_REJECTED"):
