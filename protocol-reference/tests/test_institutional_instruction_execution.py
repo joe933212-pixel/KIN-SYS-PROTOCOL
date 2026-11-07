@@ -34,6 +34,7 @@ class RuntimeResolver:
                 "deployment_id": "MINAH-UG-01",
                 "owner_ref": "tenant-ug",
                 "model_ref": "model:bank/minah-v1",
+                "jurisdictions": ["UG"],
                 "policy_pack_version": "BANK-RULES:1.0",
                 "source_pack_version": "UG-SOURCES:2.0",
                 "endpoint_ref": "secret://private-endpoint",
@@ -54,6 +55,16 @@ class Pipeline:
     jurisdiction_package_id = "JUR-UG-01"
     jurisdiction_package_version = "4.0"
     authority_profile_version = "BANK-AUTHORITY:1.0"
+    minah_profile = {
+        "profile_version": "kin-sys-minah-profile-0.1",
+        "deployment_id": "MINAH-UG-01",
+        "owner_ref": "tenant-ug",
+        "model_ref": "model:bank/minah-v1",
+        "jurisdictions": ["UG"],
+        "policy_pack_version": "BANK-RULES:1.0",
+        "source_pack_version": "UG-SOURCES:2.0",
+        "may_authorise": False,
+    }
 
     def __init__(self):
         self.requests = []
@@ -122,6 +133,48 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         self.assertEqual(self.pipeline.requests[0]["jurisdiction"], "UG")
         self.assertNotIn("minah_config", pinned)
         self.assertNotIn("endpoint_ref", str(pinned))
+
+    def test_rejects_pipeline_without_inspectable_minah_profile(self):
+        class UnprofiledPipeline(Pipeline):
+            minah_profile = None
+
+        service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=self.resolver,
+            pipeline_factory=lambda context: UnprofiledPipeline(),
+        )
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_PIPELINE_MINAH_PROFILE_REQUIRED",
+        ):
+            service.execute(
+                tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                binding_id="BIND-UG-01", instruction=instruction(),
+                evidence=instruction()["evidence"],
+            )
+
+    def test_rejects_minah_profile_from_another_deployment_or_jurisdiction(self):
+        for field, value in (
+            ("deployment_id", "MINAH-OTHER-01"),
+            ("owner_ref", "tenant-other"),
+            ("jurisdictions", ["KE"]),
+            ("model_ref", "model:other/minah"),
+            ("may_authorise", True),
+        ):
+            with self.subTest(field=field):
+                class MismatchedPipeline(Pipeline):
+                    pass
+                MismatchedPipeline.minah_profile = dict(Pipeline.minah_profile)
+                MismatchedPipeline.minah_profile[field] = value
+                service = InstitutionalInstructionExecutionService(
+                    runtime_binding_resolver=self.resolver,
+                    pipeline_factory=lambda context: MismatchedPipeline(),
+                )
+                with self.assertRaises(InstitutionalInstructionExecutionError):
+                    service.execute(
+                        tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                        binding_id="BIND-UG-01", instruction=instruction(),
+                        evidence=instruction()["evidence"],
+                    )
 
     def test_institution_version_change_builds_a_new_pinned_pipeline(self):
         resolver = RuntimeResolver()
