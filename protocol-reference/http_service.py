@@ -158,14 +158,15 @@ class KinSysPrototypeApplication:
         self.enable_legacy_demo_routes = enable_legacy_demo_routes
         self.authorizer = authorizer
         self.allow_unauthenticated_loopback = bool(allow_unauthenticated_loopback)
-        if (provider_administration is None) != (institutional_session_resolver is None):
-            raise ValueError("Provider administration and institutional session resolver must be configured together.")
-        if provider_administration is not None and not callable(
+        any_institutional_admin = (
+            provider_administration is not None or minah_deployment_administration is not None
+        )
+        if any_institutional_admin and not callable(
             getattr(institutional_session_resolver, "resolve", None)
         ):
             raise ValueError("A verified institutional session resolver is required.")
-        if minah_deployment_administration is not None and institutional_session_resolver is None:
-            raise ValueError("MINAH deployment administration requires the verified institutional session resolver.")
+        if not any_institutional_admin and institutional_session_resolver is not None:
+            raise ValueError("An institutional session resolver requires an institutional administration service.")
         self.provider_administration = provider_administration
         self.minah_deployment_administration = minah_deployment_administration
         self.institutional_session_resolver = institutional_session_resolver
