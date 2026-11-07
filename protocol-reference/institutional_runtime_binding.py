@@ -114,7 +114,6 @@ class InstitutionalRuntimeBindingResolver:
             pins = {
                 "model_ref": minah_domain["model_ref"],
                 "interface_version": minah_domain["interface_version"],
-                "jurisdiction_ref": jurisdiction["jurisdiction_ref"],
                 "jurisdiction_package_id": jurisdiction["package_id"],
                 "jurisdiction_package_version": jurisdiction["version"],
                 "policy_pack_version": binding["policy_pack_version"],
@@ -125,6 +124,19 @@ class InstitutionalRuntimeBindingResolver:
                 if config.get(field) != expected:
                     raise InstitutionalRuntimeBindingError(
                         "RUNTIME_CONFIGURATION_PIN_MISMATCH:" + field)
+            # Institutional MINAH deployment descriptors declare a list of
+            # permitted jurisdictions; they do not carry a singular
+            # jurisdiction_ref field. The active binding must be covered by
+            # that declared scope.
+            configured_jurisdictions = config.get("jurisdictions")
+            if (not isinstance(configured_jurisdictions, list)
+                    or not configured_jurisdictions
+                    or any(not isinstance(item, str) or not item.strip()
+                           for item in configured_jurisdictions)
+                    or len(set(configured_jurisdictions)) != len(configured_jurisdictions)
+                    or jurisdiction["jurisdiction_ref"] not in configured_jurisdictions):
+                raise InstitutionalRuntimeBindingError(
+                    "RUNTIME_CONFIGURATION_PIN_MISMATCH:jurisdictions")
             if config.get("deployment_id") != binding["minah_deployment_id"]:
                 raise InstitutionalRuntimeBindingError("RUNTIME_MINAH_DEPLOYMENT_ID_MISMATCH")
             if config.get("owner_ref") != tenant_id:
