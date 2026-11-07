@@ -1,9 +1,11 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 import os
 import tempfile
+import time
 import unittest
 
 from institutional_registry import InstitutionalRegistry
+from institutional_identity_provider_registry import InstitutionalIdentityProviderRegistry
 from institutional_runtime_binding import (
     InstitutionalRuntimeBindingError, InstitutionalRuntimeBindingResolver,
 )
@@ -28,6 +30,10 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
         self.registry = InstitutionalRegistry(self.path)
         self.addCleanup(self.registry.close)
         self.addCleanup(lambda: os.path.exists(self.path) and os.unlink(self.path))
+        self.idp_path = self.path + ".idp"
+        self.identity_provider_registry = InstitutionalIdentityProviderRegistry(self.idp_path)
+        self.addCleanup(self.identity_provider_registry.close)
+        self.addCleanup(lambda: os.path.exists(self.idp_path) and os.unlink(self.idp_path))
         self.tenant = "tenant-ug"
         self.institution_id = "BANK-UG-01"
         self.binding_id = "BIND-UG-01"
@@ -42,7 +48,10 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
         }
         self.runtime = MinahRuntime(self.config)
         self.resolver = InstitutionalRuntimeBindingResolver(
-            registry=self.registry, minah_deployment_administration=self.runtime)
+            registry=self.registry,
+            minah_deployment_administration=self.runtime,
+            identity_provider_registry=self.identity_provider_registry,
+        )
         self._seed()
 
     def _seed(self):
@@ -83,6 +92,28 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
                 "model_ref": "model:bank/minah-v1",
                 "interface_version": "minah-review-0.1", "status": "ACTIVE",
             })
+        now = int(time.time())
+        provider_config = {
+            "tenant_id": self.tenant, "provider_id": "IDP-UG-01", "version": "1",
+            "protocol": "OIDC", "issuer": "https://idp.bank.example",
+            "client_id": "kin-sys-client", "status": "PENDING",
+            "allowed_hosts": ["idp.bank.example"],
+            "allowed_algorithms": ["RS256"], "audiences": ["kin-sys-client"],
+            "allowed_acr": ["urn:bank:loa:2"], "required_amr": ["pwd"],
+            "valid_from": now - 60, "valid_until": now + 3600,
+            "cache_ttl_seconds": 60,
+        }
+        self.identity_provider_registry.register_provider(
+            tenant_id=self.tenant, config=provider_config,
+            event_id="IDP-EVENT-REGISTER", actor_ref="IDP-REGISTRAR",
+            evidence_ref="evidence:idp-registration",
+        )
+        self.identity_provider_registry.transition_provider(
+            tenant_id=self.tenant, provider_id="IDP-UG-01",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            event_id="IDP-EVENT-ACTIVE", actor_ref="IDP-APPROVER",
+            evidence_ref="evidence:idp-approval",
+        )
         self.registry.create_record(
             tenant_id=self.tenant, resource_type="binding",
             resource_id=self.binding_id, version="3", status="ACTIVE", payload={
@@ -90,6 +121,7 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
                 "jurisdiction_package_id": "UG-PACK-01",
                 "jurisdiction_package_version": "4",
                 "minah_deployment_id": "MINAH-UG-01",
+                "identity_provider_id": "IDP-UG-01", "identity_provider_version": "2",
                 "policy_pack_version": "policy-3", "source_pack_version": "sources-4",
                 "authority_profile_version": "authority-2",
                 "status": "ACTIVE", "approval_ref": "approval:binding",
@@ -116,6 +148,7 @@ class InstitutionalRuntimeBindingTests(unittest.TestCase):
                 "jurisdiction_package_id": "UG-PACK-01",
                 "jurisdiction_package_version": "4",
                 "minah_deployment_id": "MINAH-UG-01",
+                "identity_provider_id": "IDP-UG-01", "identity_provider_version": "2",
                 "policy_pack_version": "policy-3", "source_pack_version": "sources-4",
                 "authority_profile_version": "authority-2",
                 "status": "SUSPENDED", "approval_ref": "approval:binding",
