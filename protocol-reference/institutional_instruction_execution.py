@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from copy import deepcopy
 import threading
 from typing import Any, Callable
 
@@ -223,6 +224,9 @@ class InstitutionalInstructionExecutionService:
             "evidence": evidence,
             "_contract_envelope": checked,
             "_institutional_runtime_binding": pins,
+            # Preserve the exact effective MINAH profile used at admission.
+            # Recovery must not silently continue under a substituted profile.
+            "_minah_deployment_profile": deepcopy(pipeline.minah_profile),
         }
         try:
             result = pipeline.execute(internal_request)
