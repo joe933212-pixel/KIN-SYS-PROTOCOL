@@ -470,8 +470,15 @@ class KinSysPrototypeApplication:
                     raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
                 if (not isinstance(session,dict) or session.get("authenticated") is not True
                         or not isinstance(session.get("tenant_id"),str)
-                        or not _ID_RE.fullmatch(session["tenant_id"])):
+                        or not _ID_RE.fullmatch(session["tenant_id"])
+                        or ("institution_id" in session
+                            and (not isinstance(session["institution_id"],str)
+                                 or not _ID_RE.fullmatch(session["institution_id"])))):
                     raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if ("institution_id" in session
+                        and session["institution_id"] != institution_id):
+                    raise HttpServiceError(403,"INSTITUTIONAL_SESSION_INSTITUTION_MISMATCH",
+                                           "The authenticated session is not bound to the requested institution.")
                 resolved = self.runtime_binding_resolver.resolve(
                     tenant_id=session["tenant_id"], institution_id=institution_id,
                     binding_id=binding_id)
