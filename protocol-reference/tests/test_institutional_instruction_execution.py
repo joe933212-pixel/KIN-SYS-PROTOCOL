@@ -280,5 +280,115 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         self.assertEqual(outcome["reason"], "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE")
         self.assertEqual(resolver.calls, [])
 
+
+    def test_minah_rejection_and_deferral_stop_before_identity_authority_and_ivm(self):
+        class DispositionMinah:
+            def __init__(self, status):
+                self.status = status
+                self.review_calls = 0
+
+            def review(self, evidence):
+                self.review_calls += 1
+                return {
+                    "status": self.status,
+                    "missing_fields": ["additional_evidence"] if self.status == "NEEDS_INFORMATION" else [],
+                    "source_refs": ["source:institutional-test"],
+                    "uncertainty": "HIGH",
+                    "may_authorise": False,
+                    "model_version": "institutional-minah-test-v1",
+                }
+
+        evidence = {
+            "consignment_id": "PROCESS-GATE-TEST",
+            "commodity": "SYNTHETIC_MAIZE",
+            "origin": "UGANDA-DEMO",
+            "destination": "BORDER-DEMO",
+            "rule_refs": ["SYNTHETIC-RULE-1"],
+        }
+        profile = {
+            "profile_version": "kin-sys-minah-profile-0.1",
+            "deployment_id": "MINAH-UG-01",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "tenant-ug",
+            "use_case": "INSTITUTIONAL_GATE_TEST",
+            "jurisdictions": ["UG-DEMO"],
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            "model_ref": "institutional-minah-test-v1",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": False,
+        }
+
+        for minah_status, expected_decision in (
+            ("REJECTED", "REJECTED"),
+            ("NEEDS_INFORMATION", "DEFERRED"),
+        ):
+            with self.subTest(minah_status=minah_status):
+                minah = DispositionMinah(minah_status)
+                pipeline = KinSysProtocolPipeline(
+                    minah_adapter=minah,
+                    minah_profile=profile,
+                    cee_database=":memory:",
+                    ivm_database=":memory:",
+                    identity_provider_id="IDP-UG-01",
+                    identity_provider_version="2.0",
+                    jurisdiction_package_id="JUR-UG-01",
+                    jurisdiction_package_version="4.0",
+                    authority_profile_version="BANK-AUTHORITY:1.0",
+                )
+                self.addCleanup(pipeline.close)
+                resolver = RuntimeResolver()
+                resolver.context.update({
+                    "jurisdiction_ref": "UG-DEMO",
+                    "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+                    "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+                    "minah_config": {
+                        "deployment_id": "MINAH-UG-01",
+                        "owner_ref": "tenant-ug",
+                        "model_ref": "institutional-minah-test-v1",
+                        "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+                        "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+                    },
+                })
+                service = InstitutionalInstructionExecutionService(
+                    runtime_binding_resolver=resolver,
+                    pipeline_factory=lambda context: pipeline,
+                )
+                request = instruction()
+                request.update({
+                    "request_id": "REQ-GATE-" + minah_status,
+                    "operation_id": "OP-GATE-" + minah_status,
+                    "idempotency_key": "idempotency-gate-" + minah_status,
+                    "jurisdiction": "UG-DEMO",
+                    "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+                    "target_ref": "PROCESS-GATE-" + minah_status,
+                    "evidence": evidence,
+                    "evidence_refs": ["evidence:gate-test"],
+                })
+                request["payload_digest"] = compute_payload_digest(request)
+
+                outcome = service.execute(
+                    tenant_id="tenant-ug",
+                    institution_id="BANK-UG-01",
+                    binding_id="BIND-UG-01",
+                    instruction=request,
+                    evidence=evidence,
+                )
+
+                self.assertEqual(outcome["decision"]["protocol_decision"], expected_decision)
+                self.assertEqual(minah.review_calls, 1)
+                operation = pipeline.cee.get(request["operation_id"])
+                self.assertEqual(operation["phase"], "FINALIZED")
+                self.assertEqual(operation["outcome"], expected_decision)
+                self.assertIsNone(operation["ivm_json"])
+                self.assertIsNone(pipeline.ivm.event(
+                    "EV-" + __import__("hashlib").sha256(
+                        request["idempotency_key"].encode("utf-8")
+                    ).hexdigest()[:24]
+                ))
+                self.assertEqual(pipeline.ivm.history(request["target_ref"]), [])
+                terminal_event = pipeline.cee.events(request["operation_id"])[-1]
+                self.assertTrue(terminal_event["detail"]["ivm_not_invoked"])
+
 if __name__ == "__main__":
     unittest.main()
