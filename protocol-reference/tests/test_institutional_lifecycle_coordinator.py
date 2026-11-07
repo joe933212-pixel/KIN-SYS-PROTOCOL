@@ -27,7 +27,7 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
             "actor_ref": "actor:registrar",
             "institution_id": "REGULATOR-UG",
             "authority_ref": "authority:institution-register",
-            "roles": ["institution_verifier"],
+            "roles": ["institution_verifier", "binding_activation_authority"],
             "resource_types": ["institution", "binding"],
             "resource_ids": ["BANK-UG-01", "BIND-1"],
             "valid_from": 900,
@@ -166,6 +166,85 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
             tenant_id="tenant-a", resource_type="binding",
             resource_id="BIND-1", version="2.0",
         ))
+
+    def test_binding_activation_loads_exact_related_records_from_tenant_registry(self):
+        institution = {
+            "institution_id": "BANK-UG-01", "legal_name": "Example Bank",
+            "jurisdiction_ref": "UG", "status": "VERIFIED",
+            "verification_ref": "approval:institution",
+        }
+        jurisdiction = {
+            "package_id": "UG-PACK", "version": "1.0",
+            "owner_institution_id": "BANK-UG-01", "jurisdiction_ref": "UG",
+            "status": "APPROVED", "approval_ref": "approval:jurisdiction",
+            "sources": [{
+                "source_ref": "source:law-1", "source_type": "STATUTE",
+                "title": "Example statute", "publisher_ref": "publisher:ug",
+                "content_digest": "sha256:" + "a" * 64,
+                "provenance_ref": "provenance:law-1", "effective_from": "2026-01-01",
+                "effective_to": None, "status": "APPROVED",
+                "approval_ref": "approval:source-1",
+            }],
+        }
+        minah = {
+            "deployment_id": "MINAH-1", "owner_institution_id": "BANK-UG-01",
+            "adapter_mode": "NATIVE", "adapter_ref": "adapter:minah-1",
+            "model_ref": "model:minah-v1", "interface_version": "0.1",
+            "status": "CONFORMANCE_PASSED",
+        }
+        binding = {
+            "binding_id": "BIND-1", "owner_institution_id": "BANK-UG-01",
+            "jurisdiction_package_id": "UG-PACK",
+            "jurisdiction_package_version": "1.0",
+            "minah_deployment_id": "MINAH-1", "policy_pack_version": "1.0",
+            "source_pack_version": "1.0", "authority_profile_version": "1.0",
+            "status": "APPROVED", "approval_ref": "approval:binding",
+        }
+        for kind, resource_id, payload in (
+            ("institution", "BANK-UG-01", institution),
+            ("jurisdiction", "UG-PACK", jurisdiction),
+            ("minah", "MINAH-1", minah),
+            ("binding", "BIND-1", binding),
+        ):
+            self.registry.create_record(tenant_id="tenant-a", resource_type=kind,
+                resource_id=resource_id, version="1.0", status=payload["status"],
+                payload=payload)
+        result = self.coordinator.transition(
+            tenant_id="tenant-a", resource_type="binding", resource_id="BIND-1",
+            expected_version="1.0", new_version="2.0", event_id="evt-binding-active",
+            target_status="ACTIVE", actor_assertion=self.assertion(),
+            evidence_ref="evidence:activation", approval_ref="approval:activation",
+            activation_context={"institution_version": "1.0", "minah_version": "1.0",
+                                "conformance_evidence_ref": "evidence:minah-conformance"},
+        )
+        self.assertTrue(result["created"])
+        active = self.registry.get_record(tenant_id="tenant-a", resource_type="binding",
+            resource_id="BIND-1", version="2.0")
+        self.assertEqual(active["status"], "ACTIVE")
+
+    def test_binding_activation_rejects_caller_supplied_domain_records(self):
+        binding = {
+            "binding_id": "BIND-2", "owner_institution_id": "BANK-UG-01",
+            "jurisdiction_package_id": "UG-PACK",
+            "jurisdiction_package_version": "1.0",
+            "minah_deployment_id": "MINAH-1", "policy_pack_version": "1.0",
+            "source_pack_version": "1.0", "authority_profile_version": "1.0",
+            "status": "APPROVED", "approval_ref": "approval:binding",
+        }
+        self.registry.create_record(tenant_id="tenant-a", resource_type="binding",
+            resource_id="BIND-2", version="1.0", status="APPROVED", payload=binding)
+        with self.assertRaisesRegex(LifecycleCoordinatorError, "INVALID_ACTIVATION_CONTEXT"):
+            self.coordinator.transition(
+                tenant_id="tenant-a", resource_type="binding", resource_id="BIND-2",
+                expected_version="1.0", new_version="2.0", event_id="evt-forged-context",
+                target_status="ACTIVE", actor_assertion=self.assertion(),
+                evidence_ref="evidence:activation", approval_ref="approval:activation",
+                activation_context={"institution": {"status": "VERIFIED"},
+                    "jurisdiction": {"status": "APPROVED"}, "minah": {"status": "CONFORMANCE_PASSED"},
+                    "conformance_evidence_ref": "evidence:forged"},
+            )
+        self.assertIsNone(self.registry.get_record(tenant_id="tenant-a",
+            resource_type="binding", resource_id="BIND-2", version="2.0"))
 
     def test_invalid_signature_is_rejected(self):
         assertion = self.assertion()
