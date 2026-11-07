@@ -253,7 +253,8 @@ class InstitutionalInstructionExecutionService:
         assert_instruction_binding(checked, decision)
         safe_result = {
             key: result[key] for key in (
-                "operation_id", "status", "reason", "funds_moved", "duplicate",
+                "operation_id", "status", "reason", "funds_moved",
+                "ivm_decision", "duplicate",
             ) if key in result
         }
         return {
