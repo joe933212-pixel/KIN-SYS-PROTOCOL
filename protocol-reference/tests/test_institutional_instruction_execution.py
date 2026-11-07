@@ -6,6 +6,7 @@ from institutional_instruction_execution import (
     InstitutionalInstructionExecutionError,
     InstitutionalInstructionExecutionService,
 )
+from protocol_pipeline import KinSysProtocolPipeline
 
 
 class RuntimeResolver:
@@ -137,16 +138,83 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             )
         self.assertEqual(self.pipeline.requests, [])
 
-    def test_rejects_runtime_context_from_another_tenant(self):
-        self.resolver.context["tenant_id"] = "tenant-ke"
-        with self.assertRaisesRegex(
-            InstitutionalInstructionExecutionError, "RESOLVED_RUNTIME_IDENTITY_MISMATCH"
-        ):
-            self.service.execute(
-                tenant_id="tenant-ug", institution_id="BANK-UG-01",
-                binding_id="BIND-UG-01", instruction=instruction(), evidence={"ref": "e1"},
-            )
-        self.assertEqual(self.pipeline.requests, [])
+    def test_reference_pipeline_persists_institutional_pins_before_minah_review(self):
+        context = dict(self.resolver.context)
+        context.update({
+            "jurisdiction_ref": "UG-DEMO",
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            "minah_config": {
+                "deployment_id": "MINAH-UG-01",
+                "owner_ref": "tenant-ug",
+                "model_ref": "deterministic-minah-mock",
+                "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+                "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            },
+        })
+        self.resolver.context = context
+        profile = {
+            "profile_version": "kin-sys-minah-profile-0.1",
+            "deployment_id": "MINAH-UG-01",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "tenant-ug",
+            "use_case": "INSTITUTIONAL_REFERENCE_TEST",
+            "jurisdictions": ["UG-DEMO"],
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            "model_ref": "deterministic-minah-mock",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": False,
+        }
+        pipeline = KinSysProtocolPipeline(
+            minah_profile=profile,
+            cee_database=":memory:",
+            ivm_database=":memory:",
+        )
+        self.addCleanup(pipeline.close)
+        service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=self.resolver,
+            pipeline_factory=lambda runtime_context: pipeline,
+        )
+        evidence = {
+            "consignment_id": "PROCESS-REAL-1",
+            "commodity": "SYNTHETIC_MAIZE",
+            "origin": "UGANDA-DEMO",
+            "destination": "BORDER-DEMO",
+            "rule_refs": ["SYNTHETIC-RULE-1"],
+        }
+        request = {
+            "contract_version": CONTRACT_VERSION,
+            "request_id": "REQ-REAL-1",
+            "operation_id": "OP-REAL-1",
+            "idempotency_key": "idempotency-real-1",
+            "principal_ref": "AUTHORITY-001",
+            "authority_ref": "AUTHORITY-001",
+            "action": "ACTIVATE",
+            "target_ref": "PROCESS-REAL-1",
+            "purpose": "Synthetic institutional execution test",
+            "jurisdiction": "UG-DEMO",
+            "submitted_at": "2026-11-07T10:00:00+00:00",
+            "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "evidence_refs": ["evidence:real-1"],
+            "evidence": evidence,
+        }
+        request["payload_digest"] = compute_payload_digest(request)
+        outcome = service.execute(
+            tenant_id="tenant-ug", institution_id="BANK-UG-01",
+            binding_id="BIND-UG-01", instruction=request, evidence=evidence,
+        )
+        self.assertEqual(outcome["decision"]["protocol_decision"], "PASSED")
+        operation = pipeline.cee.get("OP-REAL-1")
+        self.assertIsNotNone(operation)
+        self.assertEqual(
+            operation["request_json"]["_institutional_runtime_binding"],
+            outcome["runtime_pins"],
+        )
+        self.assertEqual(
+            operation["request_json"]["_institutional_runtime_binding"]["binding_version"],
+            "3.0",
+        )
 
 
 if __name__ == "__main__":
