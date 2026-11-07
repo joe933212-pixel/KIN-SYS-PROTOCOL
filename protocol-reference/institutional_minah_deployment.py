@@ -326,8 +326,8 @@ class InstitutionalMinahDeploymentAdministration:
                  authority_resolver: Any, identity_provider_registry: Any):
         if not callable(getattr(authority_resolver, "resolve", None)):
             raise MinahDeploymentError("MINAH_AUTHORITY_RESOLVER_REQUIRED")
-        if not callable(getattr(identity_provider_registry, "get_provider", None)):
-            raise MinahDeploymentError("MINAH_IDENTITY_PROVIDER_REGISTRY_REQUIRED")
+        if not callable(getattr(identity_provider_registry, "resolve_active_provider", None)):
+            raise MinahDeploymentError("MINAH_ACTIVE_IDENTITY_PROVIDER_RESOLVER_REQUIRED")
         self.registry, self.authority, self.providers = registry, authority_resolver, identity_provider_registry
 
     def _authorise(self, assertion: dict[str, Any], *, tenant_id: str,
