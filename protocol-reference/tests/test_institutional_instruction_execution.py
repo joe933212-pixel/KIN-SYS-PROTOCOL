@@ -256,8 +256,12 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             actor_ref="operator:alice", request_id="recovery-real-1")
         self.assertEqual(recovered["decision"]["protocol_decision"], "PASSED")
         observations = pipeline.cee.observations("OP-REAL-1")
+        recovery_observations = [
+            item for item in observations
+            if item["kind"] == "INSTITUTIONAL_RECOVERY"
+        ]
         self.assertEqual(
-            [item["status"] for item in observations],
+            [item["status"] for item in recovery_observations],
             ["REQUESTED", "COMMITTED"],
         )
 
