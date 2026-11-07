@@ -20,7 +20,7 @@ class InstitutionalOnboardingAdministrationTests(unittest.TestCase):
         self.key = b"onboarding-test-signing-key-at-least-32-bytes"
         self.grant = {
             "grant_id": "GRANT-1", "tenant_id": "tenant-a", "status": "ACTIVE",
-            "actor_ref": "actor:registrar", "institution_id": "REGISTRY-UG",
+            "actor_ref": "actor:registrar", "institution_id": "BANK-1",
             "authority_ref": "authority:registry", "roles": ["institution_registrar"],
             "resource_types": ["institution"], "resource_ids": ["BANK-1"],
             "valid_from": 900, "valid_until": 1100, "version": "1",
@@ -84,7 +84,7 @@ class InstitutionalOnboardingAdministrationTests(unittest.TestCase):
                 event_id="evt-direct-active",record=record,
                 actor_assertion=self.assertion(),evidence_ref="evidence:incorporation")
 
-    def test_event_idempotency_and_conflict(self):
+    def test_replayed_assertion_nonce_is_rejected(self):
         args = dict(tenant_id="tenant-a",resource_type="institution",version="1.0",
             event_id="evt-register-1",record=self.record(),actor_assertion=self.assertion(),
             evidence_ref="evidence:incorporation")
@@ -92,6 +92,41 @@ class InstitutionalOnboardingAdministrationTests(unittest.TestCase):
         # Reuse is rejected at the authority boundary because the assertion nonce is single-use.
         with self.assertRaisesRegex(InstitutionalOnboardingError,"REGISTRATION_AUTHORITY_REJECTED"):
             self.admin.register(**args)
+
+    def test_same_registration_event_is_idempotent_with_fresh_authority_assertion(self):
+        first = self.admin.register(
+            tenant_id="tenant-a", resource_type="institution", version="1.0",
+            event_id="evt-idempotent", record=self.record(),
+            actor_assertion=self.assertion(), evidence_ref="evidence:incorporation")
+        second = self.admin.register(
+            tenant_id="tenant-a", resource_type="institution", version="1.0",
+            event_id="evt-idempotent", record=self.record(),
+            actor_assertion=self.assertion(), evidence_ref="evidence:incorporation")
+        self.assertTrue(first["created"])
+        self.assertFalse(second["created"])
+        self.assertEqual(len(self.admin.events(
+            tenant_id="tenant-a", resource_type="institution", resource_id="BANK-1")), 1)
+
+    def test_owned_resource_requires_existing_tenant_institution(self):
+        source = {
+            "source_ref": "law:ug:1", "source_type": "STATUTE",
+            "title": "Example Act", "publisher_ref": "publisher:ug",
+            "content_digest": "sha256:" + "a" * 64,
+            "provenance_ref": "source:official-gazette",
+            "effective_from": "2026-01-01", "effective_to": None,
+            "status": "SUBMITTED", "approval_ref": None,
+        }
+        record = {
+            "package_id": "UG-PACK-1", "version": "1.0",
+            "owner_institution_id": "UNKNOWN-BANK", "jurisdiction_ref": "UG",
+            "status": "DRAFT", "sources": [source], "approval_ref": None,
+        }
+        with self.assertRaisesRegex(InstitutionalOnboardingError,
+                                    "RESOURCE_OWNER_INSTITUTION_NOT_REGISTERED"):
+            self.admin.register(
+                tenant_id="tenant-a", resource_type="jurisdiction", version="1.0",
+                event_id="evt-owner-missing", record=record,
+                actor_assertion=self.assertion(), evidence_ref="evidence:package")
 
 
 if __name__ == "__main__":
