@@ -226,7 +226,17 @@ class InstitutionalInstructionExecutionService:
             "_institutional_runtime_binding": pins,
             # Preserve the exact effective MINAH profile used at admission.
             # Recovery must not silently continue under a substituted profile.
-            "_minah_deployment_profile": deepcopy(pipeline.minah_profile),
+            "_minah_deployment_profile": {
+                key: deepcopy(pipeline.minah_profile[key])
+                for key in (
+                    "profile_version", "deployment_id", "owner_scope", "owner_ref",
+                    "use_case", "jurisdictions", "policy_pack_version",
+                    "source_pack_version", "model_ref", "deployment_mode",
+                    "may_authorise", "mandate_ref", "mandate_version",
+                    "interface_version", "authority_profile_version",
+                )
+                if key in pipeline.minah_profile
+            },
         }
         try:
             result = pipeline.execute(internal_request)
