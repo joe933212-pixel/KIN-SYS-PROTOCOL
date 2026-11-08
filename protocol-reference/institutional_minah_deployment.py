@@ -550,5 +550,18 @@ class InstitutionalMinahDeploymentAdministration:
             return None
         return deployment
 
+    def acquire_execution_lease(self, *, tenant_id: str, deployment_id: str,
+                                ttl_seconds: int = 30) -> dict[str, Any]:
+        """Acquire a tenant-scoped execution capability for the current ACTIVE epoch."""
+        return self.registry.acquire_execution_lease(
+            tenant_id=tenant_id, deployment_id=deployment_id,
+            ttl_seconds=ttl_seconds)
+
+    def validate_execution_lease(self, *, lease: dict[str, Any]) -> dict[str, Any]:
+        return self.registry.validate_execution_lease(lease=lease)
+
+    def release_execution_lease(self, *, lease: dict[str, Any]) -> None:
+        self.registry.release_execution_lease(lease=lease)
+
     def list_events(self, *, tenant_id: str, deployment_id: str) -> list[dict[str, Any]]:
         return self.registry.list_events(tenant_id=tenant_id, deployment_id=deployment_id)
