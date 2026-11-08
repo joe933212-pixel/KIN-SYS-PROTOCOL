@@ -28,3 +28,8 @@ The PostgreSQL implementation must treat the deployment head, current version, l
 Before an adapter is considered conformant, integration tests must exercise concurrent acquisitions from independent connections/processes, lifecycle-versus-acquisition races, restart persistence, token uniqueness/monotonicity, tenant/deployment isolation, lease expiry/release, and rollback after injected failures.
 
 The schema deliberately does not claim atomicity with the separate IVM store or CEE journal. That requires a separately designed durable event/outbox and recovery protocol, tested against actual crash windows.
+## Applying migrations
+
+The repository includes `protocol-reference/postgresql_migrations.py`. It applies ordered SQL migrations in one database transaction while holding a PostgreSQL transaction-scoped advisory lock. It records each migration's SHA-256 checksum and refuses to continue if an already-applied migration file has changed. Migration files must not issue `BEGIN`, `COMMIT`, or `ROLLBACK`; transaction ownership belongs to the runner.
+
+Install the optional driver with `pip install 'psycopg[binary]>=3.2,<4'`, set `KIN_SYS_POSTGRES_DSN` to the target database connection string, then run `python protocol-reference/postgresql_migrations.py`. The caller is responsible for supplying a least-privilege migration identity, network controls, backups, and an appropriate deployment/change-management process. The runner does not create the PostgreSQL server or configure its security posture.
