@@ -63,6 +63,10 @@ class RuntimeResolver:
             raise RuntimeError("MINAH_EXECUTION_LEASE_FENCED")
         return {"status": "VALID", "execution_epoch": self.execution_epoch}
 
+    def execute_under_execution_lease(self, *, lease, action):
+        self.validate_execution_lease(lease=lease)
+        return action()
+
     def release_execution_lease(self, *, lease):
         self._leases.pop(lease.get("lease_id"), None)
 
