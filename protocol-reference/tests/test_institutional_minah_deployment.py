@@ -1,6 +1,8 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """Tests for tenant-scoped institutional MINAH deployment registration."""
+import json
 import os
+import subprocess
 import tempfile
 import time
 import threading
@@ -349,6 +351,106 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                     MinahDeploymentError, "MINAH_EXECUTION_LEASE_INVALID"
                 ):
                     self.admin.validate_execution_lease(lease=malformed)
+
+    def test_process_death_after_ivm_commit_recovers_by_durable_event_identity(self):
+        """A split-store crash after IVM commit must recover without a second transition."""
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-cross-store",
+            evidence_ref="evidence:activation")
+
+        fd, ivm_db = tempfile.mkstemp(suffix=".sqlite")
+        os.close(fd)
+        marker = ivm_db + ".committed"
+        self.addCleanup(lambda: os.path.exists(ivm_db) and os.unlink(ivm_db))
+        self.addCleanup(lambda: os.path.exists(marker) and os.unlink(marker))
+
+        from transition import ProtocolStore
+        store = ProtocolStore(database=ivm_db)
+        store.create_process(process_id="P-CROSS-STORE")
+        store.close()
+
+        lease = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        script = r"""
+import json, sys, time
+from institutional_minah_deployment import InstitutionalMinahDeploymentRegistry
+from transition import ProtocolStore
+registry_path, ivm_path, lease_json, marker = sys.argv[1:]
+lease = json.loads(lease_json)
+registry = InstitutionalMinahDeploymentRegistry(registry_path)
+store = ProtocolStore(database=ivm_path)
+def commit_ivm():
+    decision = store.execute({
+        "event_id": "E-CROSS-STORE-001",
+        "process_id": "P-CROSS-STORE",
+        "actor_id": "AUTHORITY-001",
+        "event_type": "ACTIVATE",
+        "rule_set": "LICENCE-RULES",
+        "rule_version": "1.0",
+        "execution_fence": {
+            "tenant_id": lease["tenant_id"],
+            "deployment_id": lease["deployment_id"],
+            "execution_epoch": lease["execution_epoch"],
+            "fencing_token": lease["fencing_token"],
+        },
+    })
+    assert decision.status == "ACCEPTED"
+    with open(marker, "w", encoding="utf-8") as handle:
+        handle.write("IVM_COMMITTED")
+    while True:
+        time.sleep(1)
+registry.execute_under_execution_lease(lease=lease, action=commit_ivm)
+"""
+        child = subprocess.Popen(
+            [sys.executable, "-c", script, self.db, ivm_db,
+             json.dumps(lease), marker],
+            cwd=str(ROOT),
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not os.path.exists(marker):
+            if child.poll() is not None:
+                self.fail("worker exited before committing the IVM event")
+            time.sleep(0.02)
+        self.assertTrue(os.path.exists(marker), "worker did not reach post-commit crash point")
+        child.terminate()
+        child.wait(timeout=5)
+
+        recovered_store = ProtocolStore(database=ivm_db)
+        try:
+            committed = recovered_store.event("E-CROSS-STORE-001")
+            self.assertIsNotNone(committed)
+            self.assertEqual(committed["outcome"], "ACCEPTED")
+            self.assertEqual(recovered_store.process("P-CROSS-STORE")["state_version"], 1)
+
+            # The registry transaction died before its acknowledgement/commit.
+            # A fresh lease plus the same durable instruction identity must
+            # return the IVM result, not apply a second state transition.
+            retry_lease = self.admin.acquire_execution_lease(
+                tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+            retry = recovered_store.execute({
+                "event_id": "E-CROSS-STORE-001",
+                "process_id": "P-CROSS-STORE",
+                "actor_id": "AUTHORITY-001",
+                "event_type": "ACTIVATE",
+                "rule_set": "LICENCE-RULES",
+                "rule_version": "1.0",
+                "execution_fence": {
+                    "tenant_id": retry_lease["tenant_id"],
+                    "deployment_id": retry_lease["deployment_id"],
+                    "execution_epoch": retry_lease["execution_epoch"],
+                    "fencing_token": retry_lease["fencing_token"],
+                },
+            })
+            self.assertTrue(retry.duplicate)
+            self.assertEqual(retry.status, "ACCEPTED")
+            self.assertEqual(recovered_store.process("P-CROSS-STORE")["state_version"], 1)
+            self.assertEqual(len(recovered_store.history("P-CROSS-STORE")), 1)
+            self.admin.release_execution_lease(lease=retry_lease)
+        finally:
+            recovered_store.close()
 
     def test_runtime_resolution_fails_closed_when_pinned_provider_is_suspended(self):
         self.register()
