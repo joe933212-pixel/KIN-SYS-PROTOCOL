@@ -360,7 +360,7 @@ class InstitutionalMinahDeploymentRegistry:
         expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
         try:
-            row = self.db.execute("""SELECT v.status,COALESCE(e.epoch,1) AS epoch
+            row = self.db.execute("""SELECT v.status,v.version,COALESCE(e.epoch,1) AS epoch
                 FROM minah_deployment_heads h JOIN minah_deployment_versions v
                   ON v.tenant_id=h.tenant_id AND v.deployment_id=h.deployment_id
                  AND v.version=h.current_version
@@ -385,7 +385,7 @@ class InstitutionalMinahDeploymentRegistry:
             raise
         return {"lease_id": lease_id, "lease_token": token,
                 "tenant_id": tenant_id, "deployment_id": deployment_id,
-                "execution_epoch": epoch, "expires_at": expires_at}
+                "execution_epoch": epoch, "version": row["version"], "expires_at": expires_at}
 
     def validate_execution_lease(self, *, lease: dict[str, Any]) -> dict[str, Any]:
         """Validate lease capability, expiry, ACTIVE state and current fencing epoch."""
