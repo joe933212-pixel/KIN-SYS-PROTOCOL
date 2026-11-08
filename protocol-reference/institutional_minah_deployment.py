@@ -590,6 +590,12 @@ class InstitutionalMinahDeploymentAdministration:
     def acquire_execution_lease(self, *, tenant_id: str, deployment_id: str,
                                 ttl_seconds: int = 30) -> dict[str, Any]:
         """Acquire a tenant-scoped execution capability for the current ACTIVE epoch."""
+        deployment = self.registry.get(
+            tenant_id=tenant_id, deployment_id=deployment_id)
+        if deployment is None or deployment["status"] != "ACTIVE":
+            raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_ACTIVE")
+        # Recheck the exact identity-provider pin at the commit boundary too.
+        self._check_provider(tenant_id, deployment["config"])
         return self.registry.acquire_execution_lease(
             tenant_id=tenant_id, deployment_id=deployment_id,
             ttl_seconds=ttl_seconds)
