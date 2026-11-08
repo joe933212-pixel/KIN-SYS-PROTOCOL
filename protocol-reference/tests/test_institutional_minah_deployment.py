@@ -182,6 +182,47 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                 actor_ref="actor:admin", event_id="event-reactivate",
                 evidence_ref="evidence:reactivation")
 
+    def test_lifecycle_epoch_fences_old_execution_lease_after_reactivation(self):
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-lease",
+            evidence_ref="evidence:activation")
+        lease = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        self.assertEqual(lease["version"], "2")
+        self.assertEqual(self.admin.validate_execution_lease(lease=lease)["status"], "VALID")
+
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="2", new_version="3", new_status="SUSPENDED",
+            actor_assertion=self.assertion(), event_id="event-suspend-lease",
+            evidence_ref="evidence:suspension")
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="3", new_version="4", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-reactivate-lease",
+            evidence_ref="evidence:reactivation")
+        with self.assertRaisesRegex(MinahDeploymentError, "EXECUTION_LEASE_FENCED"):
+            self.admin.validate_execution_lease(lease=lease)
+
+    def test_execution_lease_critical_section_runs_action_only_while_epoch_is_valid(self):
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-critical",
+            evidence_ref="evidence:activation")
+        lease = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        result = self.admin.execute_under_execution_lease(
+            lease=lease, action=lambda: "committed-under-current-epoch")
+        self.assertEqual(result, "committed-under-current-epoch")
+        self.admin.release_execution_lease(lease=lease)
+        with self.assertRaisesRegex(MinahDeploymentError, "EXECUTION_LEASE_RELEASED"):
+            self.admin.validate_execution_lease(lease=lease)
+
     def test_runtime_resolution_fails_closed_when_pinned_provider_is_suspended(self):
         self.register()
         self.admin.transition(tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
