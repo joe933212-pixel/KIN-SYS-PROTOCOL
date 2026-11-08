@@ -46,7 +46,7 @@ def discover_migrations(directory: Path = MIGRATIONS_DIR) -> list[tuple[str, Pat
 
 def _assert_transaction_neutral(sql: str, filename: str) -> None:
     """Keep transaction ownership in this runner, not inside migration files."""
-    if re.search(r"(?im)^\\s*(BEGIN|COMMIT|ROLLBACK)\\s*;\\s*(?:--.*)?$", sql):
+    if re.search(r"(?im)^\s*(BEGIN|COMMIT|ROLLBACK)\s*;\s*(?:--.*)?$", sql):
         raise MigrationError("POSTGRES_MIGRATION_MUST_NOT_CONTROL_TRANSACTION:" + filename)
     if not sql.strip():
         raise MigrationError("POSTGRES_MIGRATION_EMPTY:" + filename)
