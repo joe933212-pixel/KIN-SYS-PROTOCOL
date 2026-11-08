@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from transition import EventIdConflict, ProtocolStore
+from transition import EventIdConflict, ProtocolError, ProtocolStore
 
 
 class TransitionContractTests(unittest.TestCase):
@@ -32,6 +32,32 @@ class TransitionContractTests(unittest.TestCase):
         }
         event.update(overrides)
         return event
+
+    def test_downstream_fence_rejects_older_writer_after_newer_token_is_seen(self):
+        self.store.create_process(process_id="P-002")
+        newer = {
+            "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+            "execution_epoch": 4, "fencing_token": 12,
+        }
+        older = {**newer, "execution_epoch": 3, "fencing_token": 11}
+        self.store.execute(self.event(execution_fence=newer))
+        with self.assertRaisesRegex(ProtocolError, "EXECUTION_FENCE_STALE"):
+            self.store.execute(self.event(
+                event_id="E-002", process_id="P-002", execution_fence=older))
+        self.assertEqual(self.store.process("P-002")["state"], "PENDING")
+        self.assertIsNone(self.store.event("E-002"))
+
+    def test_recovery_retry_can_use_new_fence_without_changing_instruction_identity(self):
+        self.store.execute(self.event(execution_fence={
+            "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+            "execution_epoch": 4, "fencing_token": 12,
+        }))
+        retry = self.store.execute(self.event(execution_fence={
+            "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+            "execution_epoch": 4, "fencing_token": 13,
+        }))
+        self.assertTrue(retry.duplicate)
+        self.assertEqual(self.store.process("P-001")["state_version"], 1)
 
     def test_authorised_transition_commits_state_and_history(self):
         result = self.store.execute(self.event())
