@@ -162,6 +162,30 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         self.assertNotIn("minah_config", pinned)
         self.assertNotIn("endpoint_ref", str(pinned))
 
+    def test_new_instruction_fails_closed_without_minah_lifecycle_resolver(self):
+        class ResolverWithoutLifecycle:
+            def __init__(self, delegate):
+                self.delegate = delegate
+
+            def resolve(self, **kwargs):
+                return self.delegate.resolve(**kwargs)
+
+        pipeline = Pipeline()
+        service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=ResolverWithoutLifecycle(RuntimeResolver()),
+            pipeline_factory=lambda context: pipeline,
+        )
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_MINAH_EXECUTION_LIFECYCLE_RESOLVER_REQUIRED",
+        ):
+            service.execute(
+                tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                binding_id="BIND-UG-01", instruction=instruction(),
+                evidence=instruction()["evidence"],
+            )
+        self.assertEqual(pipeline.requests, [])
+
     def test_rechecks_minah_lifecycle_immediately_before_execution_dispatch(self):
         scenarios = (
             ("SUSPENDED", None, None,
