@@ -330,6 +330,55 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                 MinahDeploymentError, "EXECUTION_LEASE_FENCE_TOKEN_MISMATCH"):
             self.admin.validate_execution_lease(lease=tampered)
 
+    def test_execution_lease_and_fencing_sequence_survive_registry_reopen(self):
+        fd, database = tempfile.mkstemp(suffix=".sqlite")
+        os.close(fd)
+        first = InstitutionalMinahDeploymentRegistry(database)
+        reopened = None
+        try:
+            admin = InstitutionalMinahDeploymentAdministration(
+                registry=first, authority_resolver=self.authority,
+                identity_provider_registry=self.providers)
+            admin.register(
+                tenant_id="tenant-ug-gov", config=deployment(),
+                actor_assertion=self.assertion(), event_id="event-reopen-register",
+                evidence_ref="evidence:reopen-registration")
+            admin.transition(
+                tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+                expected_version="1", new_version="2", new_status="ACTIVE",
+                actor_assertion=self.assertion(), event_id="event-reopen-active",
+                evidence_ref="evidence:reopen-activation")
+            original = admin.acquire_execution_lease(
+                tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+            first.close()
+
+            # A fresh registry process must recover the persisted capability
+            # and continue the same deployment-scoped monotonic fence sequence.
+            reopened = InstitutionalMinahDeploymentRegistry(database)
+            self.assertEqual(
+                reopened.validate_execution_lease(lease=original)["status"], "VALID"
+            )
+            following = reopened.acquire_execution_lease(
+                tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+            self.assertGreater(following["fencing_token"], original["fencing_token"])
+            reopened.release_execution_lease(lease=original)
+            with self.assertRaisesRegex(
+                MinahDeploymentError, "MINAH_EXECUTION_LEASE_RELEASED"
+            ):
+                reopened.validate_execution_lease(lease=original)
+            self.assertEqual(
+                reopened.validate_execution_lease(lease=following)["status"], "VALID"
+            )
+        finally:
+            if reopened is not None:
+                reopened.close()
+            try:
+                first.close()
+            except Exception:
+                pass
+            if os.path.exists(database):
+                os.unlink(database)
+
     def test_execution_lease_rejects_boolean_epoch_and_fencing_claims(self):
         self.register()
         self.admin.transition(
