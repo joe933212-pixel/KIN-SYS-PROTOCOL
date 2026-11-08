@@ -511,6 +511,12 @@ store.execute({
                 ).fetchone()
                 self.assertIsNone(watermark)
 
+                # The crash-injection trigger is persistent schema state, but
+                # its Python callback belonged to the terminated process.
+                # Remove the test-only trigger before exercising normal retry.
+                reopened.db.execute("DROP TRIGGER pause_before_history")
+                reopened.db.commit()
+
                 # The token was never committed, so the same authoritative
                 # lease can safely retry the exact instruction after recovery.
                 retry = reopened.execute({
