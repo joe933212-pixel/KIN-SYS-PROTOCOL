@@ -1394,7 +1394,10 @@ os._exit(76)
             return action()
 
         result = self.pipeline.execute(request(), execution_guard=guard)
-        self.assertEqual(result["status"], "FINALIZED")
+        # The public outcome is COMMITTED; FINALIZED is the durable CEE phase.
+        self.assertEqual(result["status"], "COMMITTED")
+        operation = self.pipeline.cee.get(request()["operation_id"])
+        self.assertEqual(operation["phase"], "FINALIZED")
         stored = self.pipeline.ivm.db.execute(
             """SELECT highest_token,highest_epoch FROM execution_fences
                WHERE tenant_id=? AND deployment_id=?""",
