@@ -443,6 +443,16 @@ class InstitutionalMinahDeploymentRegistry:
         if not all(isinstance(x, str) and x for x in
                    (tenant_id, deployment_id, lease_id, token)):
             raise MinahDeploymentError("MINAH_EXECUTION_LEASE_INVALID")
+        # Python treats bool as an int (True == 1). Lease metadata is a
+        # security boundary, so reject booleans and non-integer lookalikes
+        # before comparing caller-supplied claims with persisted values.
+        execution_epoch = lease.get("execution_epoch")
+        fencing_token = lease.get("fencing_token")
+        if (isinstance(execution_epoch, bool)
+                or not isinstance(execution_epoch, int) or execution_epoch < 1
+                or isinstance(fencing_token, bool)
+                or not isinstance(fencing_token, int) or fencing_token < 1):
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_INVALID")
         token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
         row = self.db.execute("""SELECT l.epoch,l.fencing_token,l.token_digest,l.expires_at,l.released_at,
                 v.status,COALESCE(e.epoch,1) AS current_epoch
