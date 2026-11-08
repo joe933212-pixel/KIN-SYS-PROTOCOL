@@ -1067,11 +1067,7 @@ class KinSysProtocolPipeline:
             # application-level boundary before the irreversible local IVM write.
             # A lifecycle transition increments the deployment epoch and fences
             # this callback even if the original lease has not expired.
-            if execution_guard is not None:
-                if not callable(execution_guard):
-                    raise ExecutionConflict("MINAH_EXECUTION_GUARD_INVALID")
-                execution_guard()
-            decision = self.ivm.execute({
+            commit_action = lambda: self.ivm.execute({
                 "event_id": request["event_id"],
                 "process_id": request["process_id"],
                 "actor_id": request["actor_id"],
@@ -1079,6 +1075,14 @@ class KinSysProtocolPipeline:
                 "rule_set": request["rule_set"],
                 "rule_version": request["rule_version"],
             })
+            if execution_guard is not None:
+                if not callable(execution_guard):
+                    raise ExecutionConflict("MINAH_EXECUTION_GUARD_INVALID")
+                # The lease coordinator holds the deployment registry's
+                # lifecycle-write reservation while this local commit runs.
+                decision = execution_guard(commit_action)
+            else:
+                decision = commit_action()
             ivm_result = {
                 "status": decision.status,
                 "event_id": decision.event_id,
