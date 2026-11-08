@@ -12,8 +12,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 AGENT_KINDS = {"INTERNAL", "THIRD_PARTY_HOSTED", "SOVEREIGN"}
@@ -170,6 +171,19 @@ class InstitutionalMinahDeploymentRegistry:
           FOREIGN KEY (tenant_id, deployment_id, current_version)
             REFERENCES minah_deployment_versions(tenant_id, deployment_id, version)
         );
+        CREATE TABLE IF NOT EXISTS minah_deployment_epochs (
+          tenant_id TEXT NOT NULL, deployment_id TEXT NOT NULL, epoch INTEGER NOT NULL,
+          PRIMARY KEY (tenant_id, deployment_id),
+          FOREIGN KEY (tenant_id, deployment_id)
+            REFERENCES minah_deployment_heads(tenant_id, deployment_id)
+        );
+        CREATE TABLE IF NOT EXISTS minah_execution_leases (
+          lease_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, deployment_id TEXT NOT NULL,
+          epoch INTEGER NOT NULL, token_digest TEXT NOT NULL, expires_at TEXT NOT NULL,
+          released_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS minah_execution_leases_scope
+          ON minah_execution_leases(tenant_id, deployment_id, epoch, expires_at);
         CREATE TABLE IF NOT EXISTS minah_deployment_events (
           tenant_id TEXT NOT NULL, event_id TEXT NOT NULL, deployment_id TEXT NOT NULL,
           version TEXT NOT NULL, event_type TEXT NOT NULL, actor_ref TEXT NOT NULL,
@@ -179,6 +193,10 @@ class InstitutionalMinahDeploymentRegistry:
             REFERENCES minah_deployment_versions(tenant_id, deployment_id, version)
         );
         """)
+        # Backfill epoch 1 for deployments created before lease fencing existed.
+        self.db.execute("""INSERT OR IGNORE INTO minah_deployment_epochs
+            (tenant_id,deployment_id,epoch)
+            SELECT tenant_id,deployment_id,1 FROM minah_deployment_heads""")
 
     def close(self) -> None:
         self.db.close()
@@ -207,6 +225,8 @@ class InstitutionalMinahDeploymentRegistry:
                 (tenant_id, clean["deployment_id"], clean["version"], "PENDING", body, digest, now))
             self.db.execute("INSERT INTO minah_deployment_heads VALUES(?,?,?)",
                 (tenant_id, clean["deployment_id"], clean["version"]))
+            self.db.execute("INSERT INTO minah_deployment_epochs VALUES(?,?,?)",
+                (tenant_id, clean["deployment_id"], 1))
             self.db.execute("INSERT INTO minah_deployment_events VALUES(?,?,?,?,?,?,?,?,?)",
                 (tenant_id, event_id, clean["deployment_id"], clean["version"],
                  "MINAH_DEPLOYMENT_REGISTERED", actor_ref, evidence_ref,
@@ -246,6 +266,8 @@ class InstitutionalMinahDeploymentRegistry:
                 (tenant_id, deployment_id, clean["version"], "PENDING", body, digest, now))
             self.db.execute("UPDATE minah_deployment_heads SET current_version=? WHERE tenant_id=? AND deployment_id=? AND current_version=?",
                 (clean["version"], tenant_id, deployment_id, expected_version))
+            self.db.execute("UPDATE minah_deployment_epochs SET epoch=epoch+1 WHERE tenant_id=? AND deployment_id=?",
+                (tenant_id, deployment_id))
             self.db.execute("INSERT INTO minah_deployment_events VALUES(?,?,?,?,?,?,?,?,?)",
                 (tenant_id, event_id, deployment_id, clean["version"],
                  "MINAH_DEPLOYMENT_REVISED", actor_ref, evidence_ref,
@@ -291,6 +313,9 @@ class InstitutionalMinahDeploymentRegistry:
                 (tenant_id, deployment_id, new_version, new_status, body, digest, now))
             self.db.execute("UPDATE minah_deployment_heads SET current_version=? WHERE tenant_id=? AND deployment_id=? AND current_version=?",
                 (new_version, tenant_id, deployment_id, expected_version))
+            # Every lifecycle transition fences all leases issued under the prior epoch.
+            self.db.execute("UPDATE minah_deployment_epochs SET epoch=epoch+1 WHERE tenant_id=? AND deployment_id=?",
+                (tenant_id, deployment_id))
             self.db.execute("INSERT INTO minah_deployment_events VALUES(?,?,?,?,?,?,?,?,?)",
                 (tenant_id, event_id, deployment_id, new_version, "MINAH_DEPLOYMENT_" + new_status,
                  actor_ref, evidence_ref,
@@ -307,16 +332,109 @@ class InstitutionalMinahDeploymentRegistry:
     def get(self, *, tenant_id: str, deployment_id: str) -> dict[str, Any] | None:
         _identifier(tenant_id, "tenant_id")
         _identifier(deployment_id, "deployment_id")
-        row = self.db.execute("""SELECT v.version,v.status,v.config_json,v.digest,v.created_at
+        row = self.db.execute("""SELECT v.version,v.status,v.config_json,v.digest,v.created_at,
+                COALESCE(e.epoch,1) AS execution_epoch
             FROM minah_deployment_heads h JOIN minah_deployment_versions v
             ON v.tenant_id=h.tenant_id AND v.deployment_id=h.deployment_id AND v.version=h.current_version
+            LEFT JOIN minah_deployment_epochs e
+              ON e.tenant_id=h.tenant_id AND e.deployment_id=h.deployment_id
             WHERE h.tenant_id=? AND h.deployment_id=?""", (tenant_id, deployment_id)).fetchone()
         if row is None:
             return None
         return {"tenant_id": tenant_id, "deployment_id": deployment_id,
                 "version": row["version"], "status": row["status"],
                 "config": json.loads(row["config_json"]), "digest": row["digest"],
-                "created_at": row["created_at"]}
+                "created_at": row["created_at"],
+                "execution_epoch": row["execution_epoch"]}
+
+    def acquire_execution_lease(self, *, tenant_id: str, deployment_id: str,
+                                ttl_seconds: int = 30) -> dict[str, Any]:
+        """Atomically lease the current ACTIVE deployment epoch for execution."""
+        _identifier(tenant_id, "tenant_id")
+        _identifier(deployment_id, "deployment_id")
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or not 1 <= ttl_seconds <= 300:
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_TTL_INVALID")
+        token = secrets.token_urlsafe(32)
+        lease_id = secrets.token_urlsafe(18)
+        now = datetime.now(timezone.utc)
+        expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.db.execute("""SELECT v.status,COALESCE(e.epoch,1) AS epoch
+                FROM minah_deployment_heads h JOIN minah_deployment_versions v
+                  ON v.tenant_id=h.tenant_id AND v.deployment_id=h.deployment_id
+                 AND v.version=h.current_version
+                LEFT JOIN minah_deployment_epochs e
+                  ON e.tenant_id=h.tenant_id AND e.deployment_id=h.deployment_id
+                WHERE h.tenant_id=? AND h.deployment_id=?""",
+                (tenant_id, deployment_id)).fetchone()
+            if row is None:
+                raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_FOUND")
+            if row["status"] != "ACTIVE":
+                raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_ACTIVE")
+            epoch = int(row["epoch"])
+            self.db.execute("""INSERT INTO minah_execution_leases
+                (lease_id,tenant_id,deployment_id,epoch,token_digest,expires_at,released_at)
+                VALUES(?,?,?,?,?,?,NULL)""",
+                (lease_id, tenant_id, deployment_id, epoch,
+                 hashlib.sha256(token.encode("utf-8")).hexdigest(), expires_at))
+            self.db.execute("COMMIT")
+        except Exception:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+        return {"lease_id": lease_id, "lease_token": token,
+                "tenant_id": tenant_id, "deployment_id": deployment_id,
+                "execution_epoch": epoch, "expires_at": expires_at}
+
+    def validate_execution_lease(self, *, lease: dict[str, Any]) -> dict[str, Any]:
+        """Validate lease capability, expiry, ACTIVE state and current fencing epoch."""
+        if not isinstance(lease, dict):
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_INVALID")
+        tenant_id, deployment_id = lease.get("tenant_id"), lease.get("deployment_id")
+        lease_id, token = lease.get("lease_id"), lease.get("lease_token")
+        if not all(isinstance(x, str) and x for x in
+                   (tenant_id, deployment_id, lease_id, token)):
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_INVALID")
+        token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        row = self.db.execute("""SELECT l.epoch,l.token_digest,l.expires_at,l.released_at,
+                v.status,COALESCE(e.epoch,1) AS current_epoch
+            FROM minah_execution_leases l
+            JOIN minah_deployment_heads h
+              ON h.tenant_id=l.tenant_id AND h.deployment_id=l.deployment_id
+            JOIN minah_deployment_versions v
+              ON v.tenant_id=h.tenant_id AND v.deployment_id=h.deployment_id
+             AND v.version=h.current_version
+            LEFT JOIN minah_deployment_epochs e
+              ON e.tenant_id=h.tenant_id AND e.deployment_id=h.deployment_id
+            WHERE l.lease_id=? AND l.tenant_id=? AND l.deployment_id=?""",
+            (lease_id, tenant_id, deployment_id)).fetchone()
+        if row is None or not secrets.compare_digest(row["token_digest"], token_digest):
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_INVALID")
+        if row["released_at"] is not None:
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_RELEASED")
+        if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_EXPIRED")
+        if row["status"] != "ACTIVE":
+            raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_ACTIVE")
+        if int(row["epoch"]) != int(row["current_epoch"]):
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_FENCED")
+        if lease.get("execution_epoch") != int(row["epoch"]):
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_EPOCH_MISMATCH")
+        return {"lease_id": lease_id, "execution_epoch": int(row["epoch"]),
+                "status": "VALID", "expires_at": row["expires_at"]}
+
+    def release_execution_lease(self, *, lease: dict[str, Any]) -> None:
+        """Idempotently release a lease without restoring a fenced epoch."""
+        if not isinstance(lease, dict):
+            return
+        lease_id, token = lease.get("lease_id"), lease.get("lease_token")
+        if not isinstance(lease_id, str) or not isinstance(token, str):
+            return
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        self.db.execute("""UPDATE minah_execution_leases SET released_at=?
+            WHERE lease_id=? AND token_digest=? AND released_at IS NULL""",
+            (datetime.now(timezone.utc).isoformat(), lease_id, digest))
 
     def list_events(self, *, tenant_id: str, deployment_id: str) -> list[dict[str, Any]]:
         _identifier(tenant_id, "tenant_id")
