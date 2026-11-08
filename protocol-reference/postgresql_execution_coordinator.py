@@ -22,7 +22,8 @@ class PostgreSQLInstitutionalExecutionCoordinator:
     """Shared PostgreSQL implementation of the execution coordinator contract.
 
     connection_factory must return a fresh psycopg 3 connection. The adapter
-    owns each connection it opens and closes it after each operation.
+    owns each connection it opens and closes it after each operation. The
+    factory must return a fresh, idle connection with no open transaction.
     """
 
     def __init__(self, connection_factory: Callable[[], Any]):
