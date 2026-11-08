@@ -258,7 +258,7 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
 
         def suspend():
             try:
-                outcomes.append(("transition", second.transition(
+                outcomes.append(("transition", self.registry.transition(
                     tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
                     expected_version="2", new_version="3", new_status="SUSPENDED",
                     actor_ref="actor:admin", event_id="event-suspend-cross-connection",
