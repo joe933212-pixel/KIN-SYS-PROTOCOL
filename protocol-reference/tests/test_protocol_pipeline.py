@@ -15,6 +15,7 @@ from protocol_pipeline import (
 )
 from minah_profile_governance import APPROVAL_VERSION, MinahApprovalViolation, profile_digest
 from governed_contracts import compute_payload_digest
+from transition import ProtocolError
 
 
 def request(**overrides):
@@ -1406,6 +1407,41 @@ os._exit(76)
         self.assertIsNotNone(stored)
         self.assertEqual(stored["highest_token"], 21)
         self.assertEqual(stored["highest_epoch"], 6)
+
+    def test_downstream_fence_rejects_newer_token_from_older_lifecycle_epoch(self):
+        def guarded(fence):
+            def guard(action):
+                action._kin_sys_execution_fence = dict(fence)
+                return action()
+            return guard
+
+        self.pipeline.execute(
+            request(operation_id="FENCE-EPOCH-NEWER", event_id="EV-FENCE-EPOCH-NEWER"),
+            execution_guard=guarded({
+                "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+                "execution_epoch": 6, "fencing_token": 22,
+            }),
+        )
+
+        stale_request = request(
+            operation_id="FENCE-EPOCH-STALE", event_id="EV-FENCE-EPOCH-STALE",
+            process_id="PROC-FENCE-EPOCH-STALE",
+        )
+        with self.assertRaisesRegex(ProtocolError, "EXECUTION_FENCE_STALE"):
+            self.pipeline.execute(
+                stale_request,
+                execution_guard=guarded({
+                    "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+                    "execution_epoch": 5, "fencing_token": 23,
+                }),
+            )
+        self.assertIsNone(self.pipeline.ivm.event("EV-FENCE-EPOCH-STALE"))
+        self.assertEqual(
+            self.pipeline.ivm.process("PROC-FENCE-EPOCH-STALE")["state"], "PENDING"
+        )
+        self.assertEqual(
+            self.pipeline.cee.get("FENCE-EPOCH-STALE")["phase"], "COMMITTING"
+        )
 
     def test_recovery_runs_structural_integrity_checks_before_reading_operation(self):
         self.pipeline._assert_store_integrity()
