@@ -157,7 +157,7 @@ class Pipeline:
         if callable(self.before_execution_guard):
             self.before_execution_guard()
         if execution_guard is not None:
-            execution_guard()
+            execution_guard(lambda: True)
         self.committed = True
         return {
             "operation_id": request["operation_id"],
