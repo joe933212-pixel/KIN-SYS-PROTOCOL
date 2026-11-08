@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -104,7 +105,7 @@ class PostgreSQLInstitutionalExecutionCoordinator:
             raise MinahDeploymentError("MINAH_EXECUTION_LEASE_TTL_INVALID")
         token, lease_id = secrets.token_urlsafe(32), secrets.token_urlsafe(18)
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -157,7 +158,7 @@ class PostgreSQLInstitutionalExecutionCoordinator:
         }
 
     def validate_execution_lease(self, *, lease: dict[str, Any]) -> dict[str, Any]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     return self._validate_locked(cursor, lease)
@@ -167,7 +168,7 @@ class PostgreSQLInstitutionalExecutionCoordinator:
     ) -> Any:
         if not callable(action):
             raise MinahDeploymentError("MINAH_EXECUTION_ACTION_INVALID")
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     self._validate_locked(cursor, lease)
@@ -183,7 +184,7 @@ class PostgreSQLInstitutionalExecutionCoordinator:
         if not isinstance(lease_id, str) or not isinstance(token, str):
             return
         digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
