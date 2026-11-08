@@ -712,12 +712,16 @@ class InstitutionalInstructionExecutionService:
             def recovery_execution_guard(action: Callable[[], Any]) -> Any:
                 lease = acquire_lease(
                     tenant_id=tenant_id, deployment_id=pins["minah_deployment_id"])
-                if (lease.get("version") != pins["minah_runtime_version"]
+                if (not isinstance(lease, dict)
+                        or lease.get("version") != pins["minah_runtime_version"]
                         or lease.get("execution_epoch") != expected_execution_epoch
                         or isinstance(lease.get("fencing_token"), bool)
                         or not isinstance(lease.get("fencing_token"), int)
                         or lease.get("fencing_token") < 1):
-                    release_lease(lease=lease)
+                    try:
+                        release_lease(lease=lease)
+                    except Exception:
+                        pass
                     raise InstitutionalInstructionExecutionError(
                         "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH")
                 try:
@@ -732,7 +736,13 @@ class InstitutionalInstructionExecutionService:
                     raise InstitutionalInstructionExecutionError(
                         "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED") from exc
                 finally:
-                    release_lease(lease=lease)
+                    # Lease release is cleanup, not the recovery outcome. A
+                    # coordinator outage during release must not mask a
+                    # successfully reconciled durable operation.
+                    try:
+                        release_lease(lease=lease)
+                    except Exception:
+                        pass
             recovered = recovery_method(
                 operation_id, execution_guard=recovery_execution_guard)
             if not isinstance(recovered, dict):
