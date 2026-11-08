@@ -28,7 +28,8 @@ class PostgreSQLInstitutionalMinahDeploymentRegistry:
     """PostgreSQL implementation of registration, revision and lifecycle APIs.
 
     connection_factory must return a fresh psycopg 3 connection. Connections
-    are closed after each operation. Authority/identity authentication remains
+    are closed after each operation; the factory must return a fresh, idle
+    connection with no open transaction. Authority/identity authentication remains
     the responsibility of InstitutionalMinahDeploymentAdministration.
     """
 
