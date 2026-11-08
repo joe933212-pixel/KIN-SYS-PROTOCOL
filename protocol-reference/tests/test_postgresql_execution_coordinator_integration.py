@@ -6,6 +6,7 @@ import os
 import sys
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,6 +84,17 @@ class PostgreSQLExecutionCoordinatorIntegrationTests(unittest.TestCase):
         )
         self.assertGreater(second["fencing_token"], first["fencing_token"])
         self.assertEqual(self.coordinator_a.validate_execution_lease(lease=first)["status"], "VALID")
+
+    def test_concurrent_workers_receive_distinct_monotonic_fencing_tokens(self):
+        def acquire(_):
+            return self.coordinator_a.acquire_execution_lease(
+                tenant_id=self.tenant, deployment_id=self.deployment
+            )["fencing_token"]
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            tokens = list(pool.map(acquire, range(8)))
+        self.assertEqual(len(set(tokens)), 8)
+        self.assertEqual(sorted(tokens), list(range(min(tokens), min(tokens) + 8)))
 
     def test_lifecycle_epoch_change_fences_existing_lease(self):
         lease = self.coordinator_a.acquire_execution_lease(
