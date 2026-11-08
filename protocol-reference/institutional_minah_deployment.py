@@ -433,10 +433,14 @@ class InstitutionalMinahDeploymentRegistry:
             raise MinahDeploymentError("MINAH_EXECUTION_LEASE_RELEASED")
         if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
             raise MinahDeploymentError("MINAH_EXECUTION_LEASE_EXPIRED")
-        if row["status"] != "ACTIVE":
-            raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_ACTIVE")
+        # Check the fencing epoch before lifecycle status. A lease issued
+        # under an older epoch remains specifically FENCED after suspension,
+        # rather than being reported merely as not-active. This distinction
+        # is important to callers reconciling stale execution capabilities.
         if int(row["epoch"]) != int(row["current_epoch"]):
             raise MinahDeploymentError("MINAH_EXECUTION_LEASE_FENCED")
+        if row["status"] != "ACTIVE":
+            raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_ACTIVE")
         if lease.get("execution_epoch") != int(row["epoch"]):
             raise MinahDeploymentError("MINAH_EXECUTION_LEASE_EPOCH_MISMATCH")
         return {"lease_id": lease_id, "execution_epoch": int(row["epoch"]),
