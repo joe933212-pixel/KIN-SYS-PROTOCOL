@@ -409,14 +409,20 @@ registry.execute_under_execution_lease(lease=lease, action=commit_ivm)
              json.dumps(lease), marker],
             cwd=str(ROOT),
         )
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not os.path.exists(marker):
-            if child.poll() is not None:
-                self.fail("worker exited before committing the IVM event")
-            time.sleep(0.02)
-        self.assertTrue(os.path.exists(marker), "worker did not reach post-commit crash point")
-        child.terminate()
-        child.wait(timeout=5)
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not os.path.exists(marker):
+                if child.poll() is not None:
+                    self.fail("worker exited before committing the IVM event")
+                time.sleep(0.02)
+            self.assertTrue(os.path.exists(marker), "worker did not reach post-commit crash point")
+        finally:
+            if child.poll() is None:
+                try:
+                    child.terminate()
+                except ProcessLookupError:
+                    pass
+            child.wait(timeout=5)
 
         recovered_store = ProtocolStore(database=ivm_db)
         try:
