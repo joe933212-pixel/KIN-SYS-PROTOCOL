@@ -255,8 +255,16 @@ class ProtocolStore:
                        WHERE tenant_id=? AND deployment_id=?""",
                     (tenant_id, deployment_id),
                 ).fetchone()
-                if current_fence is not None and fencing_token < int(current_fence["highest_token"]):
-                    raise ProtocolError("EXECUTION_FENCE_STALE")
+                if current_fence is not None:
+                    highest_token = int(current_fence["highest_token"])
+                    highest_epoch = int(current_fence["highest_epoch"])
+                    # Both dimensions are monotonic. A fabricated newer token
+                    # must not make an older lifecycle epoch authoritative.
+                    if (fencing_token < highest_token
+                            or execution_epoch < highest_epoch
+                            or (fencing_token == highest_token
+                                and execution_epoch != highest_epoch)):
+                        raise ProtocolError("EXECUTION_FENCE_STALE")
                 self.db.execute(
                     """INSERT INTO execution_fences
                        (tenant_id,deployment_id,highest_token,highest_epoch)
