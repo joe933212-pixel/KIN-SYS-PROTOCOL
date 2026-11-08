@@ -310,6 +310,63 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                 lease=lease, action=lambda: invoked.append("must-not-run"))
         self.assertEqual(invoked, [])
 
+    def test_concurrent_lease_acquisition_serializes_fencing_sequence_across_processes(self):
+        # Separate OS processes must coordinate through the durable SQLite
+        # authority; a Python lock shared only within one process is insufficient.
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-process-leases",
+            evidence_ref="evidence:activation")
+
+        gate = self.db + ".start"
+        self.addCleanup(lambda: os.path.exists(gate) and os.unlink(gate))
+        worker_count = 8
+        script = r"""
+import json, os, sys, time
+from institutional_minah_deployment import InstitutionalMinahDeploymentRegistry
+database, gate, index = sys.argv[1:]
+deadline = time.monotonic() + 10
+while not os.path.exists(gate):
+    if time.monotonic() >= deadline:
+        raise SystemExit("coordinator start gate timed out")
+    time.sleep(0.005)
+registry = InstitutionalMinahDeploymentRegistry(database)
+try:
+    lease = registry.acquire_execution_lease(
+        tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+    print(json.dumps(lease, sort_keys=True))
+finally:
+    registry.close()
+"""
+        workers = [
+            subprocess.Popen(
+                [sys.executable, "-c", script, self.db, gate, str(index)],
+                cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True)
+            for index in range(worker_count)
+        ]
+        leases = []
+        for worker in workers:
+            stdout, stderr = worker.communicate(timeout=15)
+            self.assertEqual(worker.returncode, 0, stderr)
+            leases.append(json.loads(stdout.strip()))
+
+        with open(gate, "w", encoding="utf-8") as handle:
+            handle.write("go")
+
+        tokens = [lease["fencing_token"] for lease in leases]
+        self.assertEqual(len(leases), worker_count)
+        self.assertEqual(len(set(tokens)), worker_count)
+        self.assertEqual(
+            sorted(tokens), list(range(min(tokens), min(tokens) + worker_count)))
+        for lease in leases:
+            self.assertEqual(
+                self.registry.validate_execution_lease(lease=lease)["status"],
+                "VALID")
+            self.registry.release_execution_lease(lease=lease)
+
     def test_concurrent_lease_acquisition_serializes_fencing_sequence_across_connections(self):
         # Separate registry connections model independent workers contending
         # for one durable coordinator database. Each acquisition must commit
