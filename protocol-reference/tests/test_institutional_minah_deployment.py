@@ -529,6 +529,44 @@ registry.execute_under_execution_lease(lease=lease, action=commit_ivm)
                 actor_assertion=assertion, event_id="event-second", evidence_ref="evidence:second")
         self.assertIsNone(self.registry.get(tenant_id="tenant-ug-gov", deployment_id="minah-ug-002"))
 
+    def test_sqlite_registry_structurally_satisfies_coordinator_contract(self):
+        from institutional_execution_coordination import (
+            InstitutionalExecutionCoordinator, execution_scope,
+        )
+
+        self.assertIsInstance(self.registry, InstitutionalExecutionCoordinator)
+        self.register()
+        self.admin.transition(tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-contract",
+            evidence_ref="evidence:activation")
+
+        # Exercise the service through the provider-neutral contract rather
+        # than depending on SQLite-specific internals.
+        coordinator: InstitutionalExecutionCoordinator = self.registry
+        lease = coordinator.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        self.assertEqual(execution_scope(lease).tenant_id, "tenant-ug-gov")
+        self.assertEqual(execution_scope(lease).deployment_id, "minah-ug-001")
+        self.assertEqual(coordinator.validate_execution_lease(lease=lease)["status"], "VALID")
+        observed = []
+        result = coordinator.execute_under_execution_lease(
+            lease=lease, action=lambda: observed.append("guarded") or "committed")
+        self.assertEqual(result, "committed")
+        self.assertEqual(observed, ["guarded"])
+        coordinator.release_execution_lease(lease=lease)
+        with self.assertRaisesRegex(MinahDeploymentError, "LEASE_RELEASED"):
+            coordinator.validate_execution_lease(lease=lease)
+
+    def test_execution_scope_rejects_missing_or_empty_isolation_keys(self):
+        from institutional_execution_coordination import execution_scope
+
+        for claims in (None, {}, {"tenant_id": "tenant-a"},
+                       {"tenant_id": "", "deployment_id": "minah-a"}):
+            with self.subTest(claims=claims):
+                with self.assertRaises(ValueError):
+                    execution_scope(claims)
+
 
 if __name__ == "__main__":
     unittest.main()
