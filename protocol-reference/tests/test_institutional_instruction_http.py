@@ -53,7 +53,11 @@ class RuntimeResolver:
 
 
 class ActiveMinahResolver:
-    """Synthetic live deployment registry used by recovery lifecycle checks."""
+    """Synthetic live deployment registry used by execution and recovery tests."""
+
+    def __init__(self):
+        self.execution_epoch = 1
+        self.leases = {}
 
     def resolve_active(self, *, tenant_id, deployment_id):
         if tenant_id != "tenant-ug" or deployment_id != "MINAH-UG-01":
@@ -62,6 +66,7 @@ class ActiveMinahResolver:
             "tenant_id": "tenant-ug",
             "deployment_id": "MINAH-UG-01",
             "version": "9.0",
+            "execution_epoch": self.execution_epoch,
             "status": "ACTIVE",
             "config": {
                 "deployment_id": "MINAH-UG-01",
@@ -72,6 +77,31 @@ class ActiveMinahResolver:
                 "source_pack_version": "UG-SOURCES:2.0",
             },
         }
+
+    def acquire_execution_lease(self, *, tenant_id, deployment_id):
+        deployment = self.resolve_active(
+            tenant_id=tenant_id, deployment_id=deployment_id)
+        if deployment is None or deployment["status"] != "ACTIVE":
+            raise RuntimeError("MINAH_DEPLOYMENT_NOT_ACTIVE")
+        lease = {
+            "lease_id": "http-test-lease",
+            "lease_token": "http-test-token",
+            "tenant_id": tenant_id,
+            "deployment_id": deployment_id,
+            "execution_epoch": self.execution_epoch,
+            "version": deployment["version"],
+        }
+        self.leases[lease["lease_id"]] = dict(lease)
+        return lease
+
+    def execute_under_execution_lease(self, *, lease, action):
+        current = self.leases.get(lease.get("lease_id"))
+        if current != lease or lease.get("execution_epoch") != self.execution_epoch:
+            raise RuntimeError("MINAH_EXECUTION_LEASE_FENCED")
+        return action()
+
+    def release_execution_lease(self, *, lease):
+        self.leases.pop(lease.get("lease_id"), None)
 
 
 class Journal:
@@ -119,7 +149,7 @@ class Pipeline:
         self.cee = Journal()
         self.recoveries = []
 
-    def execute(self, request):
+    def execute(self, request, *, execution_guard=None):
         self.requests.append(dict(request))
         result = {
             "operation_id": request["operation_id"],
@@ -128,14 +158,18 @@ class Pipeline:
             "funds_moved": False,
             "private_token": "must-not-leak",
         }
-        self.cee.operations[request["operation_id"]] = {
-            "operation_id": request["operation_id"],
-            "request_json": dict(request),
-            "request_digest": "sha256:synthetic-test-fingerprint",
-            "phase": "FINALIZED",
-            "result_json": dict(result),
-        }
-        return result
+        def commit_synthetic_result():
+            self.cee.operations[request["operation_id"]] = {
+                "operation_id": request["operation_id"],
+                "request_json": dict(request),
+                "request_digest": "sha256:synthetic-test-fingerprint",
+                "phase": "FINALIZED",
+                "result_json": dict(result),
+            }
+            return result
+        if execution_guard is not None:
+            return execution_guard(commit_synthetic_result)
+        return commit_synthetic_result()
 
     def inspect(self, operation_id):
         operation = self.cee.get(operation_id)
@@ -143,12 +177,16 @@ class Pipeline:
             return None
         return {"operation_id": operation_id, "phase": operation["phase"], "resumable": False}
 
-    def recover(self, operation_id):
+    def recover(self, operation_id, *, execution_guard=None):
         self.recoveries.append(operation_id)
         operation = self.cee.get(operation_id)
         if operation is None:
             return {"operation_id": operation_id, "status": "UNKNOWN", "reason": "OPERATION_NOT_FOUND"}
-        return dict(operation["result_json"])
+        def reconcile():
+            return dict(operation["result_json"])
+        if execution_guard is not None:
+            return execution_guard(reconcile)
+        return reconcile()
 
 
 def make_instruction():
