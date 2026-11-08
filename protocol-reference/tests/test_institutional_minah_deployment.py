@@ -3,6 +3,7 @@
 import os
 import tempfile
 import time
+import threading
 import unittest
 import sys
 from pathlib import Path
@@ -222,6 +223,90 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
         self.admin.release_execution_lease(lease=lease)
         with self.assertRaisesRegex(MinahDeploymentError, "EXECUTION_LEASE_RELEASED"):
             self.admin.validate_execution_lease(lease=lease)
+
+    def test_independent_registry_connections_share_fencing_and_commit_serialization(self):
+        # Two independently opened connections model separate worker processes
+        # using the same durable SQLite file. This is not a networked database
+        # or a claim of multi-region distributed coordination.
+        second = InstitutionalMinahDeploymentRegistry(self.db)
+        self.addCleanup(second.close)
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-cross-connection",
+            evidence_ref="evidence:activation")
+        lease = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+
+        entered = threading.Event()
+        release = threading.Event()
+        outcomes = []
+
+        def protected_commit():
+            entered.set()
+            if not release.wait(timeout=5):
+                raise AssertionError("test did not release protected commit")
+            return "committed"
+
+        def execute():
+            try:
+                outcomes.append(("execute", second.execute_under_execution_lease(
+                    lease=lease, action=protected_commit)))
+            except Exception as exc:
+                outcomes.append(("execute_error", str(exc)))
+
+        def suspend():
+            try:
+                outcomes.append(("transition", second.transition(
+                    tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+                    expected_version="2", new_version="3", new_status="SUSPENDED",
+                    actor_ref="actor:admin", event_id="event-suspend-cross-connection",
+                    evidence_ref="evidence:suspension")))
+            except Exception as exc:
+                outcomes.append(("transition_error", str(exc)))
+
+        execution_thread = threading.Thread(target=execute)
+        transition_thread = threading.Thread(target=suspend)
+        execution_thread.start()
+        self.assertTrue(entered.wait(timeout=5))
+        transition_thread.start()
+        time.sleep(0.1)
+        self.assertTrue(transition_thread.is_alive(),
+                        "lifecycle transition must wait for protected commit transaction")
+        release.set()
+        execution_thread.join(timeout=5)
+        transition_thread.join(timeout=5)
+        self.assertFalse(execution_thread.is_alive())
+        self.assertFalse(transition_thread.is_alive())
+        self.assertIn(("execute", "committed"), outcomes)
+        self.assertTrue(any(item[0] == "transition" for item in outcomes))
+        with self.assertRaisesRegex(MinahDeploymentError, "EXECUTION_LEASE_FENCED"):
+            second.validate_execution_lease(lease=lease)
+
+    def test_lease_acquired_on_one_connection_is_fenced_by_transition_on_another(self):
+        second = InstitutionalMinahDeploymentRegistry(self.db)
+        self.addCleanup(second.close)
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-shared-epoch",
+            evidence_ref="evidence:activation")
+        lease = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        second.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="2", new_version="3", new_status="SUSPENDED",
+            actor_ref="actor:admin", event_id="event-suspend-shared-epoch",
+            evidence_ref="evidence:suspension")
+        with self.assertRaisesRegex(MinahDeploymentError, "EXECUTION_LEASE_FENCED"):
+            self.admin.validate_execution_lease(lease=lease)
+        invoked = []
+        with self.assertRaisesRegex(MinahDeploymentError, "EXECUTION_LEASE_FENCED"):
+            self.admin.execute_under_execution_lease(
+                lease=lease, action=lambda: invoked.append("must-not-run"))
+        self.assertEqual(invoked, [])
 
     def test_runtime_resolution_fails_closed_when_pinned_provider_is_suspended(self):
         self.register()
