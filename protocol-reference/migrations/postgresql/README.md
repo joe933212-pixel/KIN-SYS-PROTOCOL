@@ -25,6 +25,9 @@ head and epoch rows. A lifecycle transition therefore invalidates leases issued
 under the prior epoch. The coordinator's guarded callback holds those rows
 locked until callback completion. Connection ownership is explicit: each
 operation closes the fresh connection supplied by its connection factory.
+Both adapters require the factory to return a fresh, idle connection with no
+transaction already open. If session setup such as `SET search_path` is run
+before returning the connection, that setup must be committed first.
 
 
 The repository now includes a PostgreSQL execution lease adapter at
