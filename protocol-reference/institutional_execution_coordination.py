@@ -71,9 +71,12 @@ class InstitutionalExecutionCoordinator(Protocol):
     - Keep the lease capability secret out of logs, events, traces and durable
       business-instruction payloads. Persist only a verifier/digest as needed.
 
-    The current SQLite registry structurally implements this interface for
-    local reference testing. Structural conformance does not certify shared,
-    networked, multi-process or production coordination.
+    The SQLite registry implements this interface for local reference testing.
+    PostgreSQLInstitutionalExecutionCoordinator provides an initial shared
+    PostgreSQL lease authority when all workers use the same database and
+    lifecycle writers follow the shared head/epoch row-lock protocol. Neither
+    implementation alone certifies production readiness, failover behavior,
+    or atomicity with a separate IVM/CEE store.
     """
 
     def acquire_execution_lease(
