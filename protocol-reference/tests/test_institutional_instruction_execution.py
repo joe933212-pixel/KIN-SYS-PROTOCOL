@@ -79,6 +79,7 @@ class RuntimeResolver:
             "tenant_id": tenant_id,
             "deployment_id": deployment_id,
             "version": self.context.get("minah_runtime_version"),
+            "execution_epoch": self.execution_epoch,
             "status": self.minah_status,
             "config": dict(getattr(
                 self, "live_minah_config", self.context.get("minah_config", {})
@@ -122,7 +123,9 @@ class ActiveMinahResolver:
                 or current.get("deployment_id") != deployment_id
                 or current.get("status") != "ACTIVE"):
             return None
-        return dict(current)
+        current = dict(current)
+        current["execution_epoch"] = self.execution_epoch
+        return current
 
 
 class Pipeline:
@@ -226,7 +229,7 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             self.resolver, "execution_epoch", self.resolver.execution_epoch + 1)
         with self.assertRaisesRegex(
             InstitutionalInstructionExecutionError,
-            "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED",
+            "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH",
         ):
             self.service.execute(
                 tenant_id="tenant-ug", institution_id="BANK-UG-01",
