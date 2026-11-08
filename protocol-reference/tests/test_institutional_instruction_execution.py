@@ -143,6 +143,7 @@ class Pipeline:
     def __init__(self):
         self.requests = []
         self.before_execution_guard = None
+        self.committed = False
 
     def execute(self, request, *, execution_guard=None):
         self.requests.append(dict(request))
@@ -150,6 +151,7 @@ class Pipeline:
             self.before_execution_guard()
         if execution_guard is not None:
             execution_guard()
+        self.committed = True
         return {
             "operation_id": request["operation_id"],
             "status": "COMMITTED",
@@ -212,6 +214,23 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         self.assertEqual(self.pipeline.requests[0]["jurisdiction"], "UG")
         self.assertNotIn("minah_config", pinned)
         self.assertNotIn("endpoint_ref", str(pinned))
+
+    def test_fencing_epoch_change_after_dispatch_blocks_before_commit(self):
+        # Simulate a suspension/revocation racing after lease acquisition but
+        # before the protected IVM commit boundary.
+        self.pipeline.before_execution_guard = lambda: setattr(
+            self.resolver, "execution_epoch", self.resolver.execution_epoch + 1)
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED",
+        ):
+            self.service.execute(
+                tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                binding_id="BIND-UG-01", instruction=instruction(),
+                evidence={"document_ref": "evidence:case-1001"},
+            )
+        self.assertFalse(self.pipeline.committed)
+        self.assertEqual(len(self.resolver._leases), 0)
 
     def test_new_instruction_fails_closed_without_minah_lifecycle_resolver(self):
         class ResolverWithoutLifecycle:
