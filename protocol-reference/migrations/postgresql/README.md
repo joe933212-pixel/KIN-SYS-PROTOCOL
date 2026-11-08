@@ -12,6 +12,21 @@ Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE
 
 ## Current implementation status
 
+The repository now includes `postgresql_minah_deployment_registry.py`,
+which implements tenant-scoped registration, immutable version revision,
+lifecycle transitions, current-deployment reads and audit-event reads against
+this schema. Lifecycle mutations lock the deployment head and update the
+current version, lifecycle epoch and audit event in one PostgreSQL transaction.
+The first-registration path also uses a transaction-scoped advisory lock to
+serialize concurrent creation attempts for the same tenant/deployment.
+
+The PostgreSQL execution coordinator and lifecycle registry share the same
+head and epoch rows. A lifecycle transition therefore invalidates leases issued
+under the prior epoch. The coordinator's guarded callback holds those rows
+locked until callback completion. Connection ownership is explicit: each
+operation closes the fresh connection supplied by its connection factory.
+
+
 The repository now includes a PostgreSQL execution lease adapter at
 protocol-reference/postgresql_execution_coordinator.py. It implements shared
 lease acquisition, authoritative validation, guarded callback execution, and
