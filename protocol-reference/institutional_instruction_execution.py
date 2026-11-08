@@ -23,6 +23,7 @@ from governed_contracts import (
 from institutional_runtime_binding import (
     InstitutionalRuntimeBindingError,
 )
+from institutional_minah_deployment import MinahDeploymentError
 from protocol_pipeline import _safe_minah_profile_snapshot
 
 
@@ -321,7 +322,7 @@ class InstitutionalInstructionExecutionService:
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH")
             try:
                 return execute_under_lease(lease=lease, action=action)
-            except Exception as exc:
+            except MinahDeploymentError as exc:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED") from exc
             finally:
@@ -707,7 +708,7 @@ class InstitutionalInstructionExecutionService:
                         "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH")
                 try:
                     return execute_under_lease(lease=lease, action=action)
-                except Exception as exc:
+                except MinahDeploymentError as exc:
                     raise InstitutionalInstructionExecutionError(
                         "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED") from exc
                 finally:
