@@ -550,7 +550,8 @@ class KinSysProtocolPipeline:
                     "REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY"
                 )
 
-    def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
+    def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False,
+                execution_guard: Any | None = None) -> dict[str, Any]:
         self._validate(request)
         operation_id = request["operation_id"]
         # Existing operations may need recovery after the approval expires. For a
@@ -1062,6 +1063,14 @@ class KinSysProtocolPipeline:
                         "reason": "IVM_EVENT_ALREADY_DURABLE; RECONCILE_EXISTING_OUTCOME",
                     },
                 )
+            # Institutional execution leases are revalidated at the last
+            # application-level boundary before the irreversible local IVM write.
+            # A lifecycle transition increments the deployment epoch and fences
+            # this callback even if the original lease has not expired.
+            if execution_guard is not None:
+                if not callable(execution_guard):
+                    raise ExecutionConflict("MINAH_EXECUTION_GUARD_INVALID")
+                execution_guard()
             decision = self.ivm.execute({
                 "event_id": request["event_id"],
                 "process_id": request["process_id"],
@@ -1131,6 +1140,7 @@ class KinSysProtocolPipeline:
 
     def recover(
         self, operation_id: str, expected_request: dict[str, Any] | None = None,
+        *, execution_guard: Any | None = None,
     ) -> dict[str, Any]:
         """Resume an existing operation only from durable, recoverable lifecycle state.
 
@@ -1209,7 +1219,7 @@ class KinSysProtocolPipeline:
 
         # execute() reconstructs the pinned request and revalidates the current
         # profile approval before any protected transition that is not already durable.
-        return self.execute(request_without_pins)
+        return self.execute(request_without_pins, execution_guard=execution_guard)
 
     def inspect(self, operation_id: str) -> dict[str, Any] | None:
         """Read a lifecycle snapshot without mutating or resuming the operation."""
