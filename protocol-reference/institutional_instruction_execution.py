@@ -313,7 +313,10 @@ class InstitutionalInstructionExecutionService:
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_UNAVAILABLE") from exc
             if (not isinstance(lease, dict)
                     or lease.get("version") != pins["minah_runtime_version"]
-                    or lease.get("execution_epoch") != expected_execution_epoch):
+                    or lease.get("execution_epoch") != expected_execution_epoch
+                    or isinstance(lease.get("fencing_token"), bool)
+                    or not isinstance(lease.get("fencing_token"), int)
+                    or lease.get("fencing_token") < 1):
                 try:
                     release_lease(lease=lease)
                 except Exception:
@@ -321,6 +324,14 @@ class InstitutionalInstructionExecutionService:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH")
             try:
+                # Carry the durable monotonic fence to the downstream IVM
+                # commit adapter; the adapter persists/rejects stale tokens.
+                setattr(action, "_kin_sys_execution_fence", {
+                    "tenant_id": tenant_id,
+                    "deployment_id": pins["minah_deployment_id"],
+                    "execution_epoch": expected_execution_epoch,
+                    "fencing_token": lease["fencing_token"],
+                })
                 return execute_under_lease(lease=lease, action=action)
             except MinahDeploymentError as exc:
                 raise InstitutionalInstructionExecutionError(
@@ -702,11 +713,20 @@ class InstitutionalInstructionExecutionService:
                 lease = acquire_lease(
                     tenant_id=tenant_id, deployment_id=pins["minah_deployment_id"])
                 if (lease.get("version") != pins["minah_runtime_version"]
-                        or lease.get("execution_epoch") != expected_execution_epoch):
+                        or lease.get("execution_epoch") != expected_execution_epoch
+                        or isinstance(lease.get("fencing_token"), bool)
+                        or not isinstance(lease.get("fencing_token"), int)
+                        or lease.get("fencing_token") < 1):
                     release_lease(lease=lease)
                     raise InstitutionalInstructionExecutionError(
                         "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH")
                 try:
+                    setattr(action, "_kin_sys_execution_fence", {
+                        "tenant_id": tenant_id,
+                        "deployment_id": pins["minah_deployment_id"],
+                        "execution_epoch": expected_execution_epoch,
+                        "fencing_token": lease["fencing_token"],
+                    })
                     return execute_under_lease(lease=lease, action=action)
                 except MinahDeploymentError as exc:
                     raise InstitutionalInstructionExecutionError(
