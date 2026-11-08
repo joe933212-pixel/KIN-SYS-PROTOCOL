@@ -43,6 +43,28 @@ class RuntimeResolver:
         self.calls = []
         self.minah = self
         self.minah_status = "ACTIVE"
+        self.execution_epoch = 1
+        self._leases = {}
+
+    def acquire_execution_lease(self, *, tenant_id, deployment_id):
+        if self.minah_status != "ACTIVE":
+            raise RuntimeError("MINAH_DEPLOYMENT_NOT_ACTIVE")
+        lease = {"lease_id": "test-lease", "lease_token": "test-token",
+                 "tenant_id": tenant_id, "deployment_id": deployment_id,
+                 "execution_epoch": self.execution_epoch,
+                 "version": self.context.get("minah_runtime_version")}
+        self._leases[lease["lease_id"]] = lease
+        return dict(lease)
+
+    def validate_execution_lease(self, *, lease):
+        if (self.minah_status != "ACTIVE"
+                or lease.get("execution_epoch") != self.execution_epoch
+                or self._leases.get(lease.get("lease_id"), {}).get("lease_token") != lease.get("lease_token")):
+            raise RuntimeError("MINAH_EXECUTION_LEASE_FENCED")
+        return {"status": "VALID", "execution_epoch": self.execution_epoch}
+
+    def release_execution_lease(self, *, lease):
+        self._leases.pop(lease.get("lease_id"), None)
 
     def resolve_active(self, *, tenant_id, deployment_id):
         if (tenant_id != self.context.get("tenant_id")
@@ -67,6 +89,28 @@ class RuntimeResolver:
 class ActiveMinahResolver:
     def __init__(self, deployment):
         self.deployment = dict(deployment)
+        self.execution_epoch = 1
+        self._leases = {}
+
+    def acquire_execution_lease(self, *, tenant_id, deployment_id):
+        if self.deployment.get("status") != "ACTIVE":
+            raise RuntimeError("MINAH_DEPLOYMENT_NOT_ACTIVE")
+        lease = {"lease_id": "active-test-lease", "lease_token": "active-test-token",
+                 "tenant_id": tenant_id, "deployment_id": deployment_id,
+                 "execution_epoch": self.execution_epoch,
+                 "version": self.deployment.get("version")}
+        self._leases[lease["lease_id"]] = dict(lease)
+        return lease
+
+    def validate_execution_lease(self, *, lease):
+        if (self.deployment.get("status") != "ACTIVE"
+                or lease.get("execution_epoch") != self.execution_epoch
+                or lease.get("lease_id") not in self._leases):
+            raise RuntimeError("MINAH_EXECUTION_LEASE_FENCED")
+        return {"status": "VALID", "execution_epoch": self.execution_epoch}
+
+    def release_execution_lease(self, *, lease):
+        self._leases.pop(lease.get("lease_id"), None)
 
     def resolve_active(self, *, tenant_id, deployment_id):
         current = self.deployment
@@ -98,9 +142,14 @@ class Pipeline:
 
     def __init__(self):
         self.requests = []
+        self.before_execution_guard = None
 
-    def execute(self, request):
+    def execute(self, request, *, execution_guard=None):
         self.requests.append(dict(request))
+        if callable(self.before_execution_guard):
+            self.before_execution_guard()
+        if execution_guard is not None:
+            execution_guard()
         return {
             "operation_id": request["operation_id"],
             "status": "COMMITTED",
