@@ -1381,6 +1381,29 @@ os._exit(76)
                 finally:
                     restarted.close()
 
+    def test_institutional_execution_guard_propagates_fence_to_ivm_store(self):
+        fence = {
+            "tenant_id": "tenant-ug",
+            "deployment_id": "MINAH-UG-01",
+            "execution_epoch": 6,
+            "fencing_token": 21,
+        }
+
+        def guard(action):
+            action._kin_sys_execution_fence = dict(fence)
+            return action()
+
+        result = self.pipeline.execute(request(), execution_guard=guard)
+        self.assertEqual(result["status"], "FINALIZED")
+        stored = self.pipeline.ivm.db.execute(
+            """SELECT highest_token,highest_epoch FROM execution_fences
+               WHERE tenant_id=? AND deployment_id=?""",
+            ("tenant-ug", "MINAH-UG-01"),
+        ).fetchone()
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["highest_token"], 21)
+        self.assertEqual(stored["highest_epoch"], 6)
+
     def test_recovery_runs_structural_integrity_checks_before_reading_operation(self):
         self.pipeline._assert_store_integrity()
         self.assertEqual(self.pipeline.recover("NO-SUCH-OPERATION")["status"], "UNKNOWN")
