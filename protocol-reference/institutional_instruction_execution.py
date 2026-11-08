@@ -162,6 +162,45 @@ class InstitutionalInstructionExecutionService:
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_PIPELINE_PROFILE_MISMATCH:may_authorise")
 
+    def _assert_minah_deployment_execution_eligible(
+            self, tenant_id: str, pins: dict[str, str],
+            pipeline_profile: dict[str, Any]) -> None:
+        """Recheck the exact MINAH deployment immediately before dispatch."""
+        resolver = self.minah_deployment_resolver
+        resolve_active = getattr(resolver, "resolve_active", None)
+        if not callable(resolve_active):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_EXECUTION_LIFECYCLE_RESOLVER_REQUIRED")
+        try:
+            deployment = resolve_active(
+                tenant_id=tenant_id, deployment_id=pins["minah_deployment_id"])
+        except Exception as exc:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_UNAVAILABLE") from exc
+        if not isinstance(deployment, dict) or deployment.get("status") != "ACTIVE":
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_NOT_ACTIVE")
+        if (deployment.get("tenant_id") != tenant_id
+                or deployment.get("deployment_id") != pins["minah_deployment_id"]):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_IDENTITY_MISMATCH")
+        if deployment.get("version") != pins["minah_runtime_version"]:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_VERSION_MISMATCH")
+        config = deployment.get("config")
+        if not isinstance(config, dict):
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_CONFIGURATION_INVALID")
+        config_fields = (
+            "deployment_id", "owner_ref", "model_ref", "jurisdictions",
+            "policy_pack_version", "source_pack_version", "mandate_ref",
+            "mandate_version", "interface_version", "authority_profile_version",
+        )
+        for field in config_fields:
+            if field in pipeline_profile and config.get(field) != pipeline_profile[field]:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_CONFIGURATION_MISMATCH:" + field)
+
     def execute(self, *, tenant_id: str, institution_id: str, binding_id: str,
                 instruction: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
         if not all(isinstance(value, str) and value.strip()
@@ -242,6 +281,11 @@ class InstitutionalInstructionExecutionService:
                 pipeline.minah_profile
             ),
         }
+        # Resolve lifecycle state again at the last application-level point
+        # before dispatch. This narrows (but cannot atomically eliminate) the
+        # race with a concurrent suspension or revocation.
+        self._assert_minah_deployment_execution_eligible(
+            tenant_id, pins, internal_request["_minah_deployment_profile"])
         try:
             result = pipeline.execute(internal_request)
         except InstitutionalInstructionExecutionError:
