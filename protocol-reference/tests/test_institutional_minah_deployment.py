@@ -310,6 +310,58 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                 lease=lease, action=lambda: invoked.append("must-not-run"))
         self.assertEqual(invoked, [])
 
+    def test_concurrent_lease_acquisition_serializes_fencing_sequence_across_connections(self):
+        # Separate registry connections model independent workers contending
+        # for one durable coordinator database. Each acquisition must commit
+        # one unique fencing token; no connection-local counter is sufficient.
+        second = InstitutionalMinahDeploymentRegistry(self.db)
+        self.addCleanup(second.close)
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-concurrent-leases",
+            evidence_ref="evidence:activation")
+
+        worker_count = 12
+        start = threading.Barrier(worker_count)
+        leases = []
+        failures = []
+        result_lock = threading.Lock()
+
+        def acquire(index):
+            registry = self.registry if index % 2 == 0 else second
+            try:
+                start.wait(timeout=5)
+                lease = registry.acquire_execution_lease(
+                    tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+                with result_lock:
+                    leases.append(lease)
+            except Exception as exc:
+                with result_lock:
+                    failures.append(exc)
+
+        workers = [
+            threading.Thread(target=acquire, args=(index,))
+            for index in range(worker_count)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=10)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers),
+                        "concurrent lease acquisition workers did not finish")
+        self.assertEqual(failures, [])
+        self.assertEqual(len(leases), worker_count)
+        tokens = [lease["fencing_token"] for lease in leases]
+        self.assertEqual(len(set(tokens)), worker_count)
+        self.assertEqual(sorted(tokens), list(range(min(tokens), min(tokens) + worker_count)))
+        for lease in leases:
+            self.assertEqual(
+                second.validate_execution_lease(lease=lease)["status"], "VALID")
+            self.registry.release_execution_lease(lease=lease)
+
     def test_execution_lease_fencing_tokens_are_monotonic_and_tamper_evident(self):
         self.register()
         self.admin.transition(
