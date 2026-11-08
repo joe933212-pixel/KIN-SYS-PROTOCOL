@@ -190,8 +190,14 @@ class InstitutionalMinahDeploymentRegistry:
         );
         CREATE TABLE IF NOT EXISTS minah_execution_leases (
           lease_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, deployment_id TEXT NOT NULL,
-          epoch INTEGER NOT NULL, token_digest TEXT NOT NULL, expires_at TEXT NOT NULL,
-          released_at TEXT
+          epoch INTEGER NOT NULL, fencing_token INTEGER NOT NULL DEFAULT 0,
+          token_digest TEXT NOT NULL, expires_at TEXT NOT NULL, released_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS minah_deployment_fence_sequences (
+          tenant_id TEXT NOT NULL, deployment_id TEXT NOT NULL, last_token INTEGER NOT NULL,
+          PRIMARY KEY (tenant_id, deployment_id),
+          FOREIGN KEY (tenant_id, deployment_id)
+            REFERENCES minah_deployment_heads(tenant_id, deployment_id)
         );
         CREATE INDEX IF NOT EXISTS minah_execution_leases_scope
           ON minah_execution_leases(tenant_id, deployment_id, epoch, expires_at);
@@ -204,6 +210,16 @@ class InstitutionalMinahDeploymentRegistry:
             REFERENCES minah_deployment_versions(tenant_id, deployment_id, version)
         );
         """)
+        # Add the per-lease monotonic fencing counter for databases created by
+        # earlier prototype revisions. SQLite table upgrades are additive.
+        lease_columns = {row["name"] for row in self.db.execute(
+            "PRAGMA table_info(minah_execution_leases)").fetchall()}
+        if "fencing_token" not in lease_columns:
+            self.db.execute(
+                "ALTER TABLE minah_execution_leases ADD COLUMN fencing_token INTEGER NOT NULL DEFAULT 0")
+        self.db.execute("""INSERT OR IGNORE INTO minah_deployment_fence_sequences
+            (tenant_id,deployment_id,last_token)
+            SELECT tenant_id,deployment_id,0 FROM minah_deployment_heads""")
         # Backfill epoch 1 for deployments created before lease fencing existed.
         self.db.execute("""INSERT OR IGNORE INTO minah_deployment_epochs
             (tenant_id,deployment_id,epoch)
@@ -240,6 +256,8 @@ class InstitutionalMinahDeploymentRegistry:
                 (tenant_id, clean["deployment_id"], clean["version"]))
             self.db.execute("INSERT INTO minah_deployment_epochs VALUES(?,?,?)",
                 (tenant_id, clean["deployment_id"], 1))
+            self.db.execute("INSERT INTO minah_deployment_fence_sequences VALUES(?,?,?)",
+                (tenant_id, clean["deployment_id"], 0))
             self.db.execute("INSERT INTO minah_deployment_events VALUES(?,?,?,?,?,?,?,?,?)",
                 (tenant_id, event_id, clean["deployment_id"], clean["version"],
                  "MINAH_DEPLOYMENT_REGISTERED", actor_ref, evidence_ref,
@@ -390,10 +408,20 @@ class InstitutionalMinahDeploymentRegistry:
             if row["status"] != "ACTIVE":
                 raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_ACTIVE")
             epoch = int(row["epoch"])
+            self.db.execute("""UPDATE minah_deployment_fence_sequences
+                SET last_token=last_token+1 WHERE tenant_id=? AND deployment_id=?""",
+                (tenant_id, deployment_id))
+            sequence = self.db.execute("""SELECT last_token
+                FROM minah_deployment_fence_sequences
+                WHERE tenant_id=? AND deployment_id=?""",
+                (tenant_id, deployment_id)).fetchone()
+            if sequence is None:
+                raise MinahDeploymentError("MINAH_EXECUTION_FENCE_SEQUENCE_UNAVAILABLE")
+            fencing_token = int(sequence["last_token"])
             self.db.execute("""INSERT INTO minah_execution_leases
-                (lease_id,tenant_id,deployment_id,epoch,token_digest,expires_at,released_at)
-                VALUES(?,?,?,?,?,?,NULL)""",
-                (lease_id, tenant_id, deployment_id, epoch,
+                (lease_id,tenant_id,deployment_id,epoch,fencing_token,token_digest,expires_at,released_at)
+                VALUES(?,?,?,?,?,?,?,NULL)""",
+                (lease_id, tenant_id, deployment_id, epoch, fencing_token,
                  hashlib.sha256(token.encode("utf-8")).hexdigest(), expires_at))
             self.db.execute("COMMIT")
         except Exception:
@@ -402,7 +430,8 @@ class InstitutionalMinahDeploymentRegistry:
             raise
         return {"lease_id": lease_id, "lease_token": token,
                 "tenant_id": tenant_id, "deployment_id": deployment_id,
-                "execution_epoch": epoch, "version": row["version"], "expires_at": expires_at}
+                "execution_epoch": epoch, "fencing_token": fencing_token,
+                "version": row["version"], "expires_at": expires_at}
 
     @_serialized_registry_method
     def validate_execution_lease(self, *, lease: dict[str, Any]) -> dict[str, Any]:
@@ -415,7 +444,7 @@ class InstitutionalMinahDeploymentRegistry:
                    (tenant_id, deployment_id, lease_id, token)):
             raise MinahDeploymentError("MINAH_EXECUTION_LEASE_INVALID")
         token_digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-        row = self.db.execute("""SELECT l.epoch,l.token_digest,l.expires_at,l.released_at,
+        row = self.db.execute("""SELECT l.epoch,l.fencing_token,l.token_digest,l.expires_at,l.released_at,
                 v.status,COALESCE(e.epoch,1) AS current_epoch
             FROM minah_execution_leases l
             JOIN minah_deployment_heads h
@@ -443,7 +472,10 @@ class InstitutionalMinahDeploymentRegistry:
             raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_ACTIVE")
         if lease.get("execution_epoch") != int(row["epoch"]):
             raise MinahDeploymentError("MINAH_EXECUTION_LEASE_EPOCH_MISMATCH")
+        if lease.get("fencing_token") != int(row["fencing_token"]):
+            raise MinahDeploymentError("MINAH_EXECUTION_LEASE_FENCE_TOKEN_MISMATCH")
         return {"lease_id": lease_id, "execution_epoch": int(row["epoch"]),
+                "fencing_token": int(row["fencing_token"]),
                 "status": "VALID", "expires_at": row["expires_at"]}
 
     @_serialized_registry_method
