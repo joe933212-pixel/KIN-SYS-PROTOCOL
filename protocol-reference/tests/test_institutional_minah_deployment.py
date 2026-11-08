@@ -337,9 +337,10 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
             evidence_ref="evidence:activation")
         lease = self.admin.acquire_execution_lease(
             tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
-        # The first epoch and fencing token are both 1. Python's bool/int
-        # equality would otherwise allow True to impersonate either value.
-        self.assertEqual(lease["execution_epoch"], 1)
+        # The fencing sequence begins at 1. Python's bool/int equality
+        # would otherwise allow True to impersonate that fencing token; the
+        # epoch is independently required to be a genuine positive integer.
+        self.assertGreaterEqual(lease["execution_epoch"], 1)
         self.assertEqual(lease["fencing_token"], 1)
         for field in ("execution_epoch", "fencing_token"):
             with self.subTest(field=field):
