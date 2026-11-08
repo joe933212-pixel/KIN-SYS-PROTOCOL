@@ -62,6 +62,41 @@ class TransitionContractTests(unittest.TestCase):
         self.assertEqual(self.store.process("P-002")["state"], "PENDING")
         self.assertIsNone(self.store.event("E-002"))
 
+    def test_fence_sequences_are_isolated_by_tenant_and_deployment(self):
+        self.store.create_process(process_id="P-002")
+        self.store.create_process(process_id="P-003")
+        shared_deployment_other_tenant = {
+            "tenant_id": "tenant-ke", "deployment_id": "MINAH-UG-01",
+            "execution_epoch": 1, "fencing_token": 1,
+        }
+        other_deployment_same_tenant = {
+            "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-02",
+            "execution_epoch": 1, "fencing_token": 1,
+        }
+        first = {
+            "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+            "execution_epoch": 1, "fencing_token": 1,
+        }
+
+        self.assertEqual(
+            self.store.execute(self.event(execution_fence=first)).status,
+            "ACCEPTED",
+        )
+        self.assertEqual(
+            self.store.execute(self.event(
+                event_id="E-002", process_id="P-002",
+                execution_fence=shared_deployment_other_tenant,
+            )).status,
+            "ACCEPTED",
+        )
+        self.assertEqual(
+            self.store.execute(self.event(
+                event_id="E-003", process_id="P-003",
+                execution_fence=other_deployment_same_tenant,
+            )).status,
+            "ACCEPTED",
+        )
+
     def test_recovery_retry_can_use_new_fence_without_changing_instruction_identity(self):
         self.store.execute(self.event(execution_fence={
             "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
