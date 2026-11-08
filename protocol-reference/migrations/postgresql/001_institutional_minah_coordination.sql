@@ -3,7 +3,6 @@
 -- lease and fencing authority. This migration is not a runtime adapter.
 -- Apply only through a controlled migration runner after review.
 
-BEGIN;
 
 CREATE TABLE IF NOT EXISTS minah_deployment_versions (
     tenant_id TEXT NOT NULL,
@@ -80,4 +79,3 @@ CREATE TABLE IF NOT EXISTS minah_deployment_events (
         ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
-COMMIT;
