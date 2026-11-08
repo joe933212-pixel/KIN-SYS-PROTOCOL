@@ -347,14 +347,14 @@ finally:
                 text=True)
             for index in range(worker_count)
         ]
+        with open(gate, "w", encoding="utf-8") as handle:
+            handle.write("go")
+
         leases = []
         for worker in workers:
             stdout, stderr = worker.communicate(timeout=15)
             self.assertEqual(worker.returncode, 0, stderr)
             leases.append(json.loads(stdout.strip()))
-
-        with open(gate, "w", encoding="utf-8") as handle:
-            handle.write("go")
 
         tokens = [lease["fencing_token"] for lease in leases]
         self.assertEqual(len(leases), worker_count)
