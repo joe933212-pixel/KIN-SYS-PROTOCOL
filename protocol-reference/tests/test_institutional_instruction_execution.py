@@ -54,7 +54,9 @@ class RuntimeResolver:
             "deployment_id": deployment_id,
             "version": self.context.get("minah_runtime_version"),
             "status": self.minah_status,
-            "config": dict(self.context.get("minah_config", {})),
+            "config": dict(getattr(
+                self, "live_minah_config", self.context.get("minah_config", {})
+            )),
         }
 
     def resolve(self, **kwargs):
@@ -207,7 +209,12 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
                     if version is not None:
                         resolver.context["minah_runtime_version"] = version
                     if model_ref is not None:
-                        resolver.context["minah_config"]["model_ref"] = model_ref
+                        # Keep the admission context and pipeline profile pinned;
+                        # mutate only the independently resolved live deployment.
+                        resolver.live_minah_config = dict(
+                            resolver.context["minah_config"]
+                        )
+                        resolver.live_minah_config["model_ref"] = model_ref
                     return pipeline
 
                 service = InstitutionalInstructionExecutionService(
