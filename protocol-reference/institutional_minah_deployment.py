@@ -14,6 +14,7 @@ import json
 import re
 import secrets
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -78,6 +79,14 @@ def _canonical(value: Any) -> str:
                           ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise MinahDeploymentError("MINAH_DEPLOYMENT_NOT_CANONICAL") from exc
+
+
+def _serialized_registry_method(method):
+    """Serialize use of the registry's shared SQLite connection per process."""
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 def _validate(config: Any, tenant_id: str) -> dict[str, Any]:
@@ -154,7 +163,9 @@ class InstitutionalMinahDeploymentRegistry:
     """SQLite append-only version store with tenant-local current deployment head."""
 
     def __init__(self, database: str):
-        self.db = sqlite3.connect(database, timeout=10.0, isolation_level=None)
+        self._lock = threading.RLock()
+        self.db = sqlite3.connect(
+            database, timeout=10.0, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA busy_timeout=10000")
@@ -198,6 +209,7 @@ class InstitutionalMinahDeploymentRegistry:
             (tenant_id,deployment_id,epoch)
             SELECT tenant_id,deployment_id,1 FROM minah_deployment_heads""")
 
+    @_serialized_registry_method
     def close(self) -> None:
         self.db.close()
 
@@ -208,6 +220,7 @@ class InstitutionalMinahDeploymentRegistry:
         _identifier(actor_ref, "actor_ref")
         _identifier(evidence_ref, "evidence_ref")
 
+    @_serialized_registry_method
     def register(self, *, tenant_id: str, config: dict[str, Any], event_id: str,
                  actor_ref: str, evidence_ref: str) -> dict[str, Any]:
         self._event_fields(tenant_id, event_id, actor_ref, evidence_ref)
@@ -239,6 +252,7 @@ class InstitutionalMinahDeploymentRegistry:
         return {"deployment_id": clean["deployment_id"], "version": clean["version"],
                 "status": "PENDING", "digest": digest}
 
+    @_serialized_registry_method
     def revise(self, *, tenant_id: str, deployment_id: str, expected_version: str,
                config: dict[str, Any], event_id: str, actor_ref: str,
                evidence_ref: str) -> dict[str, Any]:
@@ -280,6 +294,7 @@ class InstitutionalMinahDeploymentRegistry:
         return {"deployment_id": deployment_id, "version": clean["version"],
                 "status": "PENDING", "digest": digest}
 
+    @_serialized_registry_method
     def transition(self, *, tenant_id: str, deployment_id: str, expected_version: str,
                    new_version: str, new_status: str, actor_ref: str,
                    event_id: str, evidence_ref: str) -> dict[str, Any]:
@@ -329,6 +344,7 @@ class InstitutionalMinahDeploymentRegistry:
         return {"deployment_id": deployment_id, "version": new_version,
                 "status": new_status, "digest": digest}
 
+    @_serialized_registry_method
     def get(self, *, tenant_id: str, deployment_id: str) -> dict[str, Any] | None:
         _identifier(tenant_id, "tenant_id")
         _identifier(deployment_id, "deployment_id")
@@ -347,6 +363,7 @@ class InstitutionalMinahDeploymentRegistry:
                 "created_at": row["created_at"],
                 "execution_epoch": row["execution_epoch"]}
 
+    @_serialized_registry_method
     def acquire_execution_lease(self, *, tenant_id: str, deployment_id: str,
                                 ttl_seconds: int = 30) -> dict[str, Any]:
         """Atomically lease the current ACTIVE deployment epoch for execution."""
@@ -387,6 +404,7 @@ class InstitutionalMinahDeploymentRegistry:
                 "tenant_id": tenant_id, "deployment_id": deployment_id,
                 "execution_epoch": epoch, "version": row["version"], "expires_at": expires_at}
 
+    @_serialized_registry_method
     def validate_execution_lease(self, *, lease: dict[str, Any]) -> dict[str, Any]:
         """Validate lease capability, expiry, ACTIVE state and current fencing epoch."""
         if not isinstance(lease, dict):
@@ -424,6 +442,7 @@ class InstitutionalMinahDeploymentRegistry:
         return {"lease_id": lease_id, "execution_epoch": int(row["epoch"]),
                 "status": "VALID", "expires_at": row["expires_at"]}
 
+    @_serialized_registry_method
     def execute_under_execution_lease(self, *, lease: dict[str, Any],
                                       action: Any) -> Any:
         """Serialize a protected commit against concurrent lifecycle transitions."""
@@ -440,6 +459,7 @@ class InstitutionalMinahDeploymentRegistry:
                 self.db.execute("ROLLBACK")
             raise
 
+    @_serialized_registry_method
     def release_execution_lease(self, *, lease: dict[str, Any]) -> None:
         """Idempotently release a lease without restoring a fenced epoch."""
         if not isinstance(lease, dict):
@@ -452,6 +472,7 @@ class InstitutionalMinahDeploymentRegistry:
             WHERE lease_id=? AND token_digest=? AND released_at IS NULL""",
             (datetime.now(timezone.utc).isoformat(), lease_id, digest))
 
+    @_serialized_registry_method
     def list_events(self, *, tenant_id: str, deployment_id: str) -> list[dict[str, Any]]:
         _identifier(tenant_id, "tenant_id")
         _identifier(deployment_id, "deployment_id")
