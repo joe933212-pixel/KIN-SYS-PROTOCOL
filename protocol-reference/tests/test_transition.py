@@ -97,6 +97,37 @@ class TransitionContractTests(unittest.TestCase):
             "ACCEPTED",
         )
 
+    def test_fence_watermark_rolls_back_with_failed_transition(self):
+        self.store.create_process(process_id="P-002")
+        scope = {"tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01"}
+        self.store.execute(self.event(execution_fence={
+            **scope, "execution_epoch": 2, "fencing_token": 10,
+        }))
+
+        # Fence advancement and the business transition share one SQLite
+        # transaction. A failure after fence persistence must roll both back.
+        with self.assertRaisesRegex(RuntimeError, "INJECTED_FAILURE_BEFORE_COMMIT"):
+            self.store.execute(self.event(
+                event_id="E-FAILED", process_id="P-002",
+                execution_fence={
+                    **scope, "execution_epoch": 2, "fencing_token": 12,
+                },
+            ), fail_before_commit=True)
+
+        self.assertEqual(self.store.process("P-002")["state"], "PENDING")
+        self.assertIsNone(self.store.event("E-FAILED"))
+        self.assertEqual(self.store.history("P-002"), [])
+
+        # Token 11 remains valid: failed token 12 was never committed.
+        result = self.store.execute(self.event(
+            event_id="E-RETRY", process_id="P-002",
+            execution_fence={
+                **scope, "execution_epoch": 2, "fencing_token": 11,
+            },
+        ))
+        self.assertEqual(result.status, "ACCEPTED")
+        self.assertEqual(self.store.process("P-002")["state_version"], 1)
+
     def test_recovery_retry_can_use_new_fence_without_changing_instruction_identity(self):
         self.store.execute(self.event(execution_fence={
             "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
