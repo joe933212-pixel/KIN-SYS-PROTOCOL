@@ -457,5 +457,79 @@ while True:
             finally:
                 reopened.close()
 
+
+    def test_process_termination_rolls_back_fence_watermark_and_allows_safe_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = os.path.join(directory, "protocol.sqlite")
+            marker = os.path.join(directory, "fence-before-commit.marker")
+            setup = ProtocolStore(database=database)
+            setup.create_process(process_id="P-001")
+            setup.close()
+
+            fence = {
+                "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+                "execution_epoch": 7, "fencing_token": 21,
+            }
+            script = r"""
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from transition import ProtocolStore
+store = ProtocolStore(database=sys.argv[2])
+def pause_at_crash_point():
+    with open(sys.argv[3], "w", encoding="utf-8") as marker:
+        marker.write("fence and business writes staged before commit")
+    while True:
+        time.sleep(0.05)
+store.db.create_function("pause_at_crash_point", 0, pause_at_crash_point)
+store.db.execute(
+    "CREATE TRIGGER pause_before_history BEFORE INSERT ON transition_history "
+    "BEGIN SELECT pause_at_crash_point(); END"
+)
+store.db.commit()
+store.execute({
+    "event_id": "E-001", "process_id": "P-001",
+    "actor_id": "AUTHORITY-001", "event_type": "ACTIVATE",
+    "rule_set": "LICENCE-RULES", "rule_version": "1.0",
+    "execution_fence": {
+        "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+        "execution_epoch": 7, "fencing_token": 21
+    }
+})
+"""
+            self._terminate_child_at_marker(script, database, marker, -15)
+
+            reopened = ProtocolStore(database=database)
+            try:
+                self.assertEqual(reopened.process("P-001")["state"], "PENDING")
+                self.assertEqual(reopened.process("P-001")["state_version"], 0)
+                self.assertIsNone(reopened.event("E-001"))
+                self.assertEqual(reopened.history("P-001"), [])
+                watermark = reopened.db.execute(
+                    "SELECT highest_token, highest_epoch FROM execution_fences "
+                    "WHERE tenant_id=? AND deployment_id=?",
+                    ("tenant-ug", "MINAH-UG-01"),
+                ).fetchone()
+                self.assertIsNone(watermark)
+
+                # The token was never committed, so the same authoritative
+                # lease can safely retry the exact instruction after recovery.
+                retry = reopened.execute({
+                    "event_id": "E-001", "process_id": "P-001",
+                    "actor_id": "AUTHORITY-001", "event_type": "ACTIVATE",
+                    "rule_set": "LICENCE-RULES", "rule_version": "1.0",
+                    "execution_fence": fence,
+                })
+                self.assertEqual(retry.status, "ACCEPTED")
+                self.assertEqual(reopened.process("P-001")["state_version"], 1)
+                self.assertEqual(len(reopened.history("P-001")), 1)
+                committed = reopened.db.execute(
+                    "SELECT highest_token, highest_epoch FROM execution_fences "
+                    "WHERE tenant_id=? AND deployment_id=?",
+                    ("tenant-ug", "MINAH-UG-01"),
+                ).fetchone()
+                self.assertEqual(tuple(committed), (21, 7))
+            finally:
+                reopened.close()
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
