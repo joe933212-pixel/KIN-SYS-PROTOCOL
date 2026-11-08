@@ -89,6 +89,7 @@ class ActiveMinahResolver:
             "tenant_id": tenant_id,
             "deployment_id": deployment_id,
             "execution_epoch": self.execution_epoch,
+            "fencing_token": len(self.leases) + 1,
             "version": deployment["version"],
         }
         self.leases[lease["lease_id"]] = dict(lease)
