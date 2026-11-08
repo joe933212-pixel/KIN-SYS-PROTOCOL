@@ -260,10 +260,12 @@ class ProtocolStore:
                     highest_epoch = int(current_fence["highest_epoch"])
                     # Both dimensions are monotonic. A fabricated newer token
                     # must not make an older lifecycle epoch authoritative.
-                    if (fencing_token < highest_token
-                            or execution_epoch < highest_epoch
-                            or (fencing_token == highest_token
-                                and execution_epoch != highest_epoch)):
+                    # A fencing token is a one-use monotonic capability for
+                    # a new downstream commit. Equal-token reuse is not safe:
+                    # duplicate instruction retries are handled above by the
+                    # durable event identity and never need to consume the
+                    # fence again. A distinct event must present a newer token.
+                    if fencing_token <= highest_token or execution_epoch < highest_epoch:
                         raise ProtocolError("EXECUTION_FENCE_STALE")
                 self.db.execute(
                     """INSERT INTO execution_fences
