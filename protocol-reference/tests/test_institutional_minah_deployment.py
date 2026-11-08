@@ -362,6 +362,40 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                 second.validate_execution_lease(lease=lease)["status"], "VALID")
             self.registry.release_execution_lease(lease=lease)
 
+    def test_fencing_sequence_survives_suspend_and_reactivation_epoch_change(self):
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-reactivation",
+            evidence_ref="evidence:activation")
+        original = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="2", new_version="3", new_status="SUSPENDED",
+            actor_assertion=self.assertion(), event_id="event-suspend-reactivation",
+            evidence_ref="evidence:suspension")
+        with self.assertRaisesRegex(MinahDeploymentError, "EXECUTION_LEASE_FENCED"):
+            self.admin.validate_execution_lease(lease=original)
+
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="3", new_version="4", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-reactivate",
+            evidence_ref="evidence:reactivation")
+        renewed = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+
+        self.assertGreater(renewed["execution_epoch"], original["execution_epoch"])
+        self.assertGreater(renewed["fencing_token"], original["fencing_token"])
+        self.assertEqual(
+            self.admin.validate_execution_lease(lease=renewed)["status"], "VALID")
+        with self.assertRaisesRegex(MinahDeploymentError, "EXECUTION_LEASE_FENCED"):
+            self.admin.execute_under_execution_lease(
+                lease=original, action=lambda: self.fail("stale lease executed"))
+
     def test_execution_lease_fencing_tokens_are_monotonic_and_tamper_evident(self):
         self.register()
         self.admin.transition(
