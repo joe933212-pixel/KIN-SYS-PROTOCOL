@@ -41,6 +41,21 @@ class RuntimeResolver:
             },
         }
         self.calls = []
+        self.minah = self
+        self.minah_status = "ACTIVE"
+
+    def resolve_active(self, *, tenant_id, deployment_id):
+        if (tenant_id != self.context.get("tenant_id")
+                or deployment_id != self.context.get("minah_deployment_id")
+                or self.minah_status != "ACTIVE"):
+            return None
+        return {
+            "tenant_id": tenant_id,
+            "deployment_id": deployment_id,
+            "version": self.context.get("minah_runtime_version"),
+            "status": self.minah_status,
+            "config": dict(self.context.get("minah_config", {})),
+        }
 
     def resolve(self, **kwargs):
         self.calls.append(kwargs)
@@ -146,6 +161,44 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         self.assertEqual(self.pipeline.requests[0]["jurisdiction"], "UG")
         self.assertNotIn("minah_config", pinned)
         self.assertNotIn("endpoint_ref", str(pinned))
+
+    def test_rechecks_minah_lifecycle_immediately_before_execution_dispatch(self):
+        scenarios = (
+            ("SUSPENDED", None, None,
+             "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_NOT_ACTIVE"),
+            ("REVOKED", None, None,
+             "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_NOT_ACTIVE"),
+            ("ACTIVE", "10.0", None,
+             "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_VERSION_MISMATCH"),
+            ("ACTIVE", None, "replacement-model",
+             "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_CONFIGURATION_MISMATCH:model_ref"),
+        )
+        for status, version, model_ref, expected_error in scenarios:
+            with self.subTest(status=status, version=version, model_ref=model_ref):
+                resolver = RuntimeResolver()
+                pipeline = Pipeline()
+
+                def build_pipeline(_context):
+                    resolver.minah_status = status
+                    if version is not None:
+                        resolver.context["minah_runtime_version"] = version
+                    if model_ref is not None:
+                        resolver.context["minah_config"]["model_ref"] = model_ref
+                    return pipeline
+
+                service = InstitutionalInstructionExecutionService(
+                    runtime_binding_resolver=resolver,
+                    pipeline_factory=build_pipeline,
+                )
+                with self.assertRaisesRegex(
+                    InstitutionalInstructionExecutionError, expected_error
+                ):
+                    service.execute(
+                        tenant_id="tenant-ug", institution_id="BANK-UG-01",
+                        binding_id="BIND-UG-01", instruction=instruction(),
+                        evidence=instruction()["evidence"],
+                    )
+                self.assertEqual(pipeline.requests, [])
 
     def test_rejects_pipeline_without_inspectable_minah_profile(self):
         class UnprofiledPipeline(Pipeline):
@@ -386,8 +439,15 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
 
         # An executor without a live lifecycle resolver cannot resume an
         # operation merely because its original in-memory pipeline still exists.
+        class RuntimeResolverWithoutMinah:
+            def __init__(self, delegate):
+                self.delegate = delegate
+
+            def resolve(self, **kwargs):
+                return self.delegate.resolve(**kwargs)
+
         unguarded_service = InstitutionalInstructionExecutionService(
-            runtime_binding_resolver=self.resolver,
+            runtime_binding_resolver=RuntimeResolverWithoutMinah(self.resolver),
             pipeline_factory=lambda runtime_context: pipeline,
             # Resolve the already-persisted operation so this assertion reaches
             # the lifecycle gate rather than returning "original runtime missing".
