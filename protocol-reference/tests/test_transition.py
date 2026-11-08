@@ -47,6 +47,21 @@ class TransitionContractTests(unittest.TestCase):
         self.assertEqual(self.store.process("P-002")["state"], "PENDING")
         self.assertIsNone(self.store.event("E-002"))
 
+    def test_downstream_fence_rejects_reuse_of_token_for_a_distinct_event(self):
+        self.store.create_process(process_id="P-002")
+        fence = {
+            "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
+            "execution_epoch": 4, "fencing_token": 12,
+        }
+        self.store.execute(self.event(execution_fence=fence))
+        # The same lease/fence cannot authorise a second business event, even
+        # when the second process is otherwise independently eligible.
+        with self.assertRaisesRegex(ProtocolError, "EXECUTION_FENCE_STALE"):
+            self.store.execute(self.event(
+                event_id="E-002", process_id="P-002", execution_fence=fence))
+        self.assertEqual(self.store.process("P-002")["state"], "PENDING")
+        self.assertIsNone(self.store.event("E-002"))
+
     def test_recovery_retry_can_use_new_fence_without_changing_instruction_identity(self):
         self.store.execute(self.event(execution_fence={
             "tenant_id": "tenant-ug", "deployment_id": "MINAH-UG-01",
