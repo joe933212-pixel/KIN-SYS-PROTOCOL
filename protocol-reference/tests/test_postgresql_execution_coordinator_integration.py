@@ -43,6 +43,11 @@ class PostgreSQLExecutionCoordinatorIntegrationTests(unittest.TestCase):
                     self.sql.Identifier(self.schema)
                 )
             )
+            # Leave the fresh connection idle. The production adapters own
+            # their transactions; an uncommitted SET search_path would make
+            # connection.transaction() a nested savepoint whose outer
+            # transaction is rolled back when the adapter closes the connection.
+            connection.commit()
             return connection
 
         self.connect = connect
