@@ -374,6 +374,12 @@ class TransitionContractTests(unittest.TestCase):
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=5)
+            # The child is intentionally terminated at the crash marker.
+            # Close captured streams after it exits to avoid ResourceWarnings.
+            if child.stdout is not None:
+                child.stdout.close()
+            if child.stderr is not None:
+                child.stderr.close()
 
     def test_process_termination_before_commit_recovers_without_partial_effect(self):
         with tempfile.TemporaryDirectory() as directory:
