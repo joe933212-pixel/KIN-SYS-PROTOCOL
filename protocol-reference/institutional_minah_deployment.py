@@ -424,6 +424,22 @@ class InstitutionalMinahDeploymentRegistry:
         return {"lease_id": lease_id, "execution_epoch": int(row["epoch"]),
                 "status": "VALID", "expires_at": row["expires_at"]}
 
+    def execute_under_execution_lease(self, *, lease: dict[str, Any],
+                                      action: Any) -> Any:
+        """Serialize a protected commit against concurrent lifecycle transitions."""
+        if not callable(action):
+            raise MinahDeploymentError("MINAH_EXECUTION_ACTION_INVALID")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self.validate_execution_lease(lease=lease)
+            result = action()
+            self.db.execute("COMMIT")
+            return result
+        except Exception:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
     def release_execution_lease(self, *, lease: dict[str, Any]) -> None:
         """Idempotently release a lease without restoring a fenced epoch."""
         if not isinstance(lease, dict):
@@ -559,6 +575,11 @@ class InstitutionalMinahDeploymentAdministration:
 
     def validate_execution_lease(self, *, lease: dict[str, Any]) -> dict[str, Any]:
         return self.registry.validate_execution_lease(lease=lease)
+
+    def execute_under_execution_lease(self, *, lease: dict[str, Any],
+                                      action: Any) -> Any:
+        return self.registry.execute_under_execution_lease(
+            lease=lease, action=action)
 
     def release_execution_lease(self, *, lease: dict[str, Any]) -> None:
         self.registry.release_execution_lease(lease=lease)
