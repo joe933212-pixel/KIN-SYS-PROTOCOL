@@ -291,8 +291,9 @@ class InstitutionalInstructionExecutionService:
         acquire_lease = getattr(resolver, "acquire_execution_lease", None)
         validate_lease = getattr(resolver, "validate_execution_lease", None)
         release_lease = getattr(resolver, "release_execution_lease", None)
+        execute_under_lease = getattr(resolver, "execute_under_execution_lease", None)
         if not all(callable(method) for method in
-                   (acquire_lease, validate_lease, release_lease)):
+                   (acquire_lease, validate_lease, release_lease, execute_under_lease)):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_MINAH_EXECUTION_LEASE_COORDINATOR_REQUIRED")
         try:
@@ -310,9 +311,9 @@ class InstitutionalInstructionExecutionService:
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_MINAH_EXECUTION_LEASE_VERSION_MISMATCH")
 
-        def execution_guard() -> None:
+        def execution_guard(action: Callable[[], Any]) -> Any:
             try:
-                validate_lease(lease=lease)
+                return execute_under_lease(lease=lease, action=action)
             except Exception as exc:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED") from exc
@@ -682,8 +683,9 @@ class InstitutionalInstructionExecutionService:
             acquire_lease = getattr(resolver, "acquire_execution_lease", None)
             validate_lease = getattr(resolver, "validate_execution_lease", None)
             release_lease = getattr(resolver, "release_execution_lease", None)
+            execute_under_lease = getattr(resolver, "execute_under_execution_lease", None)
             if not all(callable(method) for method in
-                       (acquire_lease, validate_lease, release_lease)):
+                       (acquire_lease, validate_lease, release_lease, execute_under_lease)):
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_COORDINATOR_REQUIRED")
             lease = acquire_lease(
@@ -692,9 +694,9 @@ class InstitutionalInstructionExecutionService:
                 release_lease(lease=lease)
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_VERSION_MISMATCH")
-            def recovery_execution_guard() -> None:
+            def recovery_execution_guard(action: Callable[[], Any]) -> Any:
                 try:
-                    validate_lease(lease=lease)
+                    return execute_under_lease(lease=lease, action=action)
                 except Exception as exc:
                     raise InstitutionalInstructionExecutionError(
                         "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED") from exc
