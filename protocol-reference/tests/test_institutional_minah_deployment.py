@@ -328,6 +328,27 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                 MinahDeploymentError, "EXECUTION_LEASE_FENCE_TOKEN_MISMATCH"):
             self.admin.validate_execution_lease(lease=tampered)
 
+    def test_execution_lease_rejects_boolean_epoch_and_fencing_claims(self):
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-boolean-claims",
+            evidence_ref="evidence:activation")
+        lease = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        # The first epoch and fencing token are both 1. Python's bool/int
+        # equality would otherwise allow True to impersonate either value.
+        self.assertEqual(lease["execution_epoch"], 1)
+        self.assertEqual(lease["fencing_token"], 1)
+        for field in ("execution_epoch", "fencing_token"):
+            with self.subTest(field=field):
+                malformed = dict(lease, **{field: True})
+                with self.assertRaisesRegex(
+                    MinahDeploymentError, "MINAH_EXECUTION_LEASE_INVALID"
+                ):
+                    self.admin.validate_execution_lease(lease=malformed)
+
     def test_runtime_resolution_fails_closed_when_pinned_provider_is_suspended(self):
         self.register()
         self.admin.transition(tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
