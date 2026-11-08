@@ -164,8 +164,8 @@ class InstitutionalInstructionExecutionService:
 
     def _assert_minah_deployment_execution_eligible(
             self, tenant_id: str, pins: dict[str, str],
-            pipeline_profile: dict[str, Any]) -> None:
-        """Recheck the exact MINAH deployment immediately before dispatch."""
+            pipeline_profile: dict[str, Any]) -> int:
+        """Recheck and pin the exact MINAH deployment epoch before dispatch."""
         resolver = self.minah_deployment_resolver
         resolve_active = getattr(resolver, "resolve_active", None)
         if not callable(resolve_active):
@@ -200,6 +200,11 @@ class InstitutionalInstructionExecutionService:
             if field in pipeline_profile and config.get(field) != pipeline_profile[field]:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_EXECUTION_DEPLOYMENT_CONFIGURATION_MISMATCH:" + field)
+        epoch = deployment.get("execution_epoch")
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_EXECUTION_EPOCH_UNAVAILABLE")
+        return epoch
 
     def execute(self, *, tenant_id: str, institution_id: str, binding_id: str,
                 instruction: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
@@ -285,38 +290,45 @@ class InstitutionalInstructionExecutionService:
         # active deployment epoch. The pipeline revalidates this fencing token
         # immediately before its IVM write; lifecycle transitions increment the
         # epoch and invalidate every outstanding lease.
-        self._assert_minah_deployment_execution_eligible(
+        expected_execution_epoch = self._assert_minah_deployment_execution_eligible(
             tenant_id, pins, internal_request["_minah_deployment_profile"])
         resolver = self.minah_deployment_resolver
         acquire_lease = getattr(resolver, "acquire_execution_lease", None)
-        validate_lease = getattr(resolver, "validate_execution_lease", None)
         release_lease = getattr(resolver, "release_execution_lease", None)
         execute_under_lease = getattr(resolver, "execute_under_execution_lease", None)
         if not all(callable(method) for method in
-                   (acquire_lease, validate_lease, release_lease, execute_under_lease)):
+                   (acquire_lease, release_lease, execute_under_lease)):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_MINAH_EXECUTION_LEASE_COORDINATOR_REQUIRED")
-        try:
-            lease = acquire_lease(
-                tenant_id=tenant_id, deployment_id=pins["minah_deployment_id"])
-        except Exception as exc:
-            raise InstitutionalInstructionExecutionError(
-                "INSTITUTIONAL_MINAH_EXECUTION_LEASE_UNAVAILABLE") from exc
-        if (not isinstance(lease, dict)
-                or lease.get("version") != pins["minah_runtime_version"]):
-            try:
-                release_lease(lease=lease)
-            except Exception:
-                pass
-            raise InstitutionalInstructionExecutionError(
-                "INSTITUTIONAL_MINAH_EXECUTION_LEASE_VERSION_MISMATCH")
 
         def execution_guard(action: Callable[[], Any]) -> Any:
+            # Acquire only at the protected commit boundary, after MINAH,
+            # identity and authority work, so model latency cannot consume TTL.
+            try:
+                lease = acquire_lease(
+                    tenant_id=tenant_id, deployment_id=pins["minah_deployment_id"])
+            except Exception as exc:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_MINAH_EXECUTION_LEASE_UNAVAILABLE") from exc
+            if (not isinstance(lease, dict)
+                    or lease.get("version") != pins["minah_runtime_version"]
+                    or lease.get("execution_epoch") != expected_execution_epoch):
+                try:
+                    release_lease(lease=lease)
+                except Exception:
+                    pass
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH")
             try:
                 return execute_under_lease(lease=lease, action=action)
             except Exception as exc:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED") from exc
+            finally:
+                try:
+                    release_lease(lease=lease)
+                except Exception:
+                    pass
 
         try:
             result = pipeline.execute(internal_request, execution_guard=execution_guard)
@@ -329,13 +341,6 @@ class InstitutionalInstructionExecutionService:
                 raise InstitutionalInstructionExecutionError(reason) from exc
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_GOVERNED_EXECUTION_FAILED") from exc
-        finally:
-            try:
-                release_lease(lease=lease)
-            except Exception:
-                # The capability expires independently; a release failure must
-                # never convert a committed protocol result into a false failure.
-                pass
         if not isinstance(result, dict):
             raise InstitutionalInstructionExecutionError(
                 "INSTITUTIONAL_PIPELINE_RESPONSE_INVALID")
@@ -548,7 +553,7 @@ class InstitutionalInstructionExecutionService:
 
     def _assert_minah_deployment_recovery_eligible(
             self, tenant_id: str, pins: dict[str, str],
-            stored_profile: dict[str, Any]) -> None:
+            stored_profile: dict[str, Any]) -> int:
         resolver = self.minah_deployment_resolver
         resolve_active = getattr(resolver, "resolve_active", None)
         if not callable(resolve_active):
@@ -583,6 +588,11 @@ class InstitutionalInstructionExecutionService:
             if field in stored_profile and config.get(field) != stored_profile[field]:
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_DEPLOYMENT_CONFIGURATION_MISMATCH:" + field)
+        epoch = deployment.get("execution_epoch")
+        if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 1:
+            raise InstitutionalInstructionExecutionError(
+                "INSTITUTIONAL_MINAH_EXECUTION_EPOCH_UNAVAILABLE")
+        return epoch
 
     def inspect(self, *, tenant_id: str, operation_id: str,
                 institution_id: str | None = None) -> dict[str, Any] | None:
@@ -677,34 +687,33 @@ class InstitutionalInstructionExecutionService:
             if not isinstance(stored_profile, dict):
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_ORIGINAL_MINAH_PROFILE_UNAVAILABLE")
-            self._assert_minah_deployment_recovery_eligible(
+            expected_execution_epoch = self._assert_minah_deployment_recovery_eligible(
                 tenant_id, pins, stored_profile)
             resolver = self.minah_deployment_resolver
             acquire_lease = getattr(resolver, "acquire_execution_lease", None)
-            validate_lease = getattr(resolver, "validate_execution_lease", None)
             release_lease = getattr(resolver, "release_execution_lease", None)
             execute_under_lease = getattr(resolver, "execute_under_execution_lease", None)
             if not all(callable(method) for method in
-                       (acquire_lease, validate_lease, release_lease, execute_under_lease)):
+                       (acquire_lease, release_lease, execute_under_lease)):
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_MINAH_EXECUTION_LEASE_COORDINATOR_REQUIRED")
-            lease = acquire_lease(
-                tenant_id=tenant_id, deployment_id=pins["minah_deployment_id"])
-            if lease.get("version") != pins["minah_runtime_version"]:
-                release_lease(lease=lease)
-                raise InstitutionalInstructionExecutionError(
-                    "INSTITUTIONAL_MINAH_EXECUTION_LEASE_VERSION_MISMATCH")
             def recovery_execution_guard(action: Callable[[], Any]) -> Any:
+                lease = acquire_lease(
+                    tenant_id=tenant_id, deployment_id=pins["minah_deployment_id"])
+                if (lease.get("version") != pins["minah_runtime_version"]
+                        or lease.get("execution_epoch") != expected_execution_epoch):
+                    release_lease(lease=lease)
+                    raise InstitutionalInstructionExecutionError(
+                        "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH")
                 try:
                     return execute_under_lease(lease=lease, action=action)
                 except Exception as exc:
                     raise InstitutionalInstructionExecutionError(
                         "INSTITUTIONAL_MINAH_EXECUTION_LEASE_FENCED") from exc
-            try:
-                recovered = recovery_method(
-                    operation_id, execution_guard=recovery_execution_guard)
-            finally:
-                release_lease(lease=lease)
+                finally:
+                    release_lease(lease=lease)
+            recovered = recovery_method(
+                operation_id, execution_guard=recovery_execution_guard)
             if not isinstance(recovered, dict):
                 raise InstitutionalInstructionExecutionError(
                     "INSTITUTIONAL_RECOVERY_RESPONSE_INVALID")
