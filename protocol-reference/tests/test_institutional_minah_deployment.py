@@ -308,6 +308,26 @@ class InstitutionalMinahDeploymentTests(unittest.TestCase):
                 lease=lease, action=lambda: invoked.append("must-not-run"))
         self.assertEqual(invoked, [])
 
+    def test_execution_lease_fencing_tokens_are_monotonic_and_tamper_evident(self):
+        self.register()
+        self.admin.transition(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
+            expected_version="1", new_version="2", new_status="ACTIVE",
+            actor_assertion=self.assertion(), event_id="event-active-sequence",
+            evidence_ref="evidence:activation")
+        first = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        second = self.admin.acquire_execution_lease(
+            tenant_id="tenant-ug-gov", deployment_id="minah-ug-001")
+        self.assertGreater(second["fencing_token"], first["fencing_token"])
+        self.assertEqual(
+            self.admin.validate_execution_lease(lease=second)["fencing_token"],
+            second["fencing_token"])
+        tampered = dict(second, fencing_token=first["fencing_token"])
+        with self.assertRaisesRegex(
+                MinahDeploymentError, "EXECUTION_LEASE_FENCE_TOKEN_MISMATCH"):
+            self.admin.validate_execution_lease(lease=tampered)
+
     def test_runtime_resolution_fails_closed_when_pinned_provider_is_suspended(self):
         self.register()
         self.admin.transition(tenant_id="tenant-ug-gov", deployment_id="minah-ug-001",
