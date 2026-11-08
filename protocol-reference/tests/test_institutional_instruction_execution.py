@@ -52,6 +52,7 @@ class RuntimeResolver:
         lease = {"lease_id": "test-lease", "lease_token": "test-token",
                  "tenant_id": tenant_id, "deployment_id": deployment_id,
                  "execution_epoch": self.execution_epoch,
+                 "fencing_token": len(self._leases) + 1,
                  "version": self.context.get("minah_runtime_version")}
         self._leases[lease["lease_id"]] = lease
         return dict(lease)
@@ -103,6 +104,7 @@ class ActiveMinahResolver:
         lease = {"lease_id": "active-test-lease", "lease_token": "active-test-token",
                  "tenant_id": tenant_id, "deployment_id": deployment_id,
                  "execution_epoch": self.execution_epoch,
+                 "fencing_token": len(self._leases) + 1,
                  "version": self.deployment.get("version")}
         self._leases[lease["lease_id"]] = dict(lease)
         return lease
