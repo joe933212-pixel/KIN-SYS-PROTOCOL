@@ -1067,14 +1067,24 @@ class KinSysProtocolPipeline:
             # application-level boundary before the irreversible local IVM write.
             # A lifecycle transition increments the deployment epoch and fences
             # this callback even if the original lease has not expired.
-            commit_action = lambda: self.ivm.execute({
-                "event_id": request["event_id"],
-                "process_id": request["process_id"],
-                "actor_id": request["actor_id"],
-                "event_type": request["event_type"],
-                "rule_set": request["rule_set"],
-                "rule_version": request["rule_version"],
-            })
+            def commit_action() -> Any:
+                ivm_event = {
+                    "event_id": request["event_id"],
+                    "process_id": request["process_id"],
+                    "actor_id": request["actor_id"],
+                    "event_type": request["event_type"],
+                    "rule_set": request["rule_set"],
+                    "rule_version": request["rule_version"],
+                }
+                # The downstream IVM store persists the highest observed
+                # per-deployment fencing token and rejects older writers.
+                # This is a durable downstream guard, complementary to the
+                # coordinator's authoritative lease validation.
+                execution_fence = getattr(
+                    commit_action, "_kin_sys_execution_fence", None)
+                if execution_fence is not None:
+                    ivm_event["execution_fence"] = dict(execution_fence)
+                return self.ivm.execute(ivm_event)
             if execution_guard is not None:
                 if not callable(execution_guard):
                     raise ExecutionConflict("MINAH_EXECUTION_GUARD_INVALID")
