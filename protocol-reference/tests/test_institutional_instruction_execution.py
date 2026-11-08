@@ -114,6 +114,10 @@ class ActiveMinahResolver:
             raise RuntimeError("MINAH_EXECUTION_LEASE_FENCED")
         return {"status": "VALID", "execution_epoch": self.execution_epoch}
 
+    def execute_under_execution_lease(self, *, lease, action):
+        self.validate_execution_lease(lease=lease)
+        return action()
+
     def release_execution_lease(self, *, lease):
         self._leases.pop(lease.get("lease_id"), None)
 
@@ -223,8 +227,8 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         self.assertNotIn("endpoint_ref", str(pinned))
 
     def test_fencing_epoch_change_after_dispatch_blocks_before_commit(self):
-        # Simulate a suspension/revocation racing after lease acquisition but
-        # before the protected IVM commit boundary.
+        # Simulate a lifecycle epoch change after admission but before the protected
+        # commit boundary acquires its short-lived lease.
         self.pipeline.before_execution_guard = lambda: setattr(
             self.resolver, "execution_epoch", self.resolver.execution_epoch + 1)
         with self.assertRaisesRegex(
