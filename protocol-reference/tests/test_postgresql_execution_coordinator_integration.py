@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 DSN = os.environ.get("KIN_SYS_POSTGRES_TEST_DSN")
 from postgresql_migrations import apply_migrations
 from postgresql_execution_coordinator import PostgreSQLInstitutionalExecutionCoordinator
+from postgresql_minah_deployment_registry import PostgreSQLInstitutionalMinahDeploymentRegistry
 from institutional_minah_deployment import MinahDeploymentError
 
 
@@ -105,6 +106,32 @@ class PostgreSQLExecutionCoordinatorIntegrationTests(unittest.TestCase):
                 "UPDATE minah_deployment_epochs SET epoch=epoch+1 WHERE tenant_id=%s AND deployment_id=%s",
                 (self.tenant, self.deployment),
             )
+        with self.assertRaisesRegex(MinahDeploymentError, "LEASE_FENCED"):
+            self.coordinator_b.validate_execution_lease(lease=lease)
+
+    def test_postgresql_lifecycle_transition_and_epoch_fencing_share_authority(self):
+        lease = self.coordinator_a.acquire_execution_lease(
+            tenant_id=self.tenant, deployment_id=self.deployment
+        )
+        registry = PostgreSQLInstitutionalMinahDeploymentRegistry(self.connect)
+        result = registry.transition(
+            tenant_id=self.tenant,
+            deployment_id=self.deployment,
+            expected_version="v1",
+            new_version="v2",
+            new_status="SUSPENDED",
+            actor_ref="operator_1",
+            event_id="event_suspend_1",
+            evidence_ref="approval_1",
+        )
+        self.assertEqual(result["status"], "SUSPENDED")
+        self.assertEqual(result["execution_epoch"], 2)
+        current = registry.get(tenant_id=self.tenant, deployment_id=self.deployment)
+        self.assertEqual(current["version"], "v2")
+        self.assertEqual(current["status"], "SUSPENDED")
+        self.assertEqual(len(registry.list_events(
+            tenant_id=self.tenant, deployment_id=self.deployment
+        )), 1)
         with self.assertRaisesRegex(MinahDeploymentError, "LEASE_FENCED"):
             self.coordinator_b.validate_execution_lease(lease=lease)
 
