@@ -648,6 +648,42 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
                 pipeline.minah_profile.clear()
                 pipeline.minah_profile.update(original_profile)
 
+        # Exercise the institutional recovery guard at its protected boundary.
+        # A coordinator outage during lease cleanup must not erase a durable
+        # recovery result, while a malformed lease must still fail closed.
+        def guarded_recovery(operation_id, *, execution_guard):
+            return execution_guard(lambda: {
+                "operation_id": operation_id,
+                "status": "COMMITTED",
+                "reason": "SYNTHETIC_RECOVERY",
+            })
+
+        pipeline.recover = guarded_recovery
+        active_minah.release_execution_lease = lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("COORDINATOR_RELEASE_UNAVAILABLE")
+        )
+        cleanup_failure_result = service.recover(
+            tenant_id="tenant-ug", operation_id="OP-REAL-1",
+            actor_ref="operator:alice", request_id="recovery-release-failure",
+        )
+        self.assertEqual(
+            cleanup_failure_result["decision"]["protocol_decision"], "PASSED"
+        )
+
+        active_minah.acquire_execution_lease = lambda **kwargs: {
+            "version": "9.0",
+            "execution_epoch": 1,
+            "fencing_token": True,
+        }
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_MINAH_EXECUTION_LEASE_EPOCH_OR_VERSION_MISMATCH",
+        ):
+            service.recover(
+                tenant_id="tenant-ug", operation_id="OP-REAL-1",
+                actor_ref="operator:alice", request_id="recovery-malformed-lease",
+            )
+
 
     def test_recovery_never_resolves_a_new_active_binding_when_original_runtime_is_unavailable(self):
         resolver = RuntimeResolver()
