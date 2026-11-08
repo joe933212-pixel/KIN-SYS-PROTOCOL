@@ -42,7 +42,12 @@ def _canonical(value: Any) -> str:
 
 
 def _request_digest(event: dict[str, Any]) -> str:
-    return hashlib.sha256(_canonical(event).encode("utf-8")).hexdigest()
+    # Execution fencing is transport/coordination metadata, not part of the
+    # business instruction identity. A recovery retry may carry a newer lease
+    # token while retaining the exact same idempotent instruction.
+    stable = {key: value for key, value in event.items()
+              if key != "execution_fence"}
+    return hashlib.sha256(_canonical(stable).encode("utf-8")).hexdigest()
 
 
 class ProtocolStore:
@@ -85,6 +90,13 @@ class ProtocolStore:
                 rule_version TEXT NOT NULL,
                 FOREIGN KEY(event_id) REFERENCES events(event_id),
                 FOREIGN KEY(process_id) REFERENCES processes(process_id)
+            );
+            CREATE TABLE IF NOT EXISTS execution_fences (
+                tenant_id TEXT NOT NULL,
+                deployment_id TEXT NOT NULL,
+                highest_token INTEGER NOT NULL,
+                highest_epoch INTEGER NOT NULL,
+                PRIMARY KEY (tenant_id, deployment_id)
             );
             """
         )
@@ -221,6 +233,38 @@ class ProtocolStore:
                 return Decision(
                     status="REJECTED", event_id=event["event_id"],
                     process_id=event["process_id"], reason=reason,
+                )
+
+            execution_fence = event.get("execution_fence")
+            if execution_fence is not None:
+                if not isinstance(execution_fence, dict):
+                    raise ProtocolError("EXECUTION_FENCE_INVALID")
+                tenant_id = execution_fence.get("tenant_id")
+                deployment_id = execution_fence.get("deployment_id")
+                execution_epoch = execution_fence.get("execution_epoch")
+                fencing_token = execution_fence.get("fencing_token")
+                if (not isinstance(tenant_id, str) or not tenant_id
+                        or not isinstance(deployment_id, str) or not deployment_id
+                        or isinstance(execution_epoch, bool)
+                        or not isinstance(execution_epoch, int) or execution_epoch < 1
+                        or isinstance(fencing_token, bool)
+                        or not isinstance(fencing_token, int) or fencing_token < 1):
+                    raise ProtocolError("EXECUTION_FENCE_INVALID")
+                current_fence = self.db.execute(
+                    """SELECT highest_token,highest_epoch FROM execution_fences
+                       WHERE tenant_id=? AND deployment_id=?""",
+                    (tenant_id, deployment_id),
+                ).fetchone()
+                if current_fence is not None and fencing_token < int(current_fence["highest_token"]):
+                    raise ProtocolError("EXECUTION_FENCE_STALE")
+                self.db.execute(
+                    """INSERT INTO execution_fences
+                       (tenant_id,deployment_id,highest_token,highest_epoch)
+                       VALUES(?,?,?,?)
+                       ON CONFLICT(tenant_id,deployment_id) DO UPDATE SET
+                         highest_token=MAX(execution_fences.highest_token,excluded.highest_token),
+                         highest_epoch=MAX(execution_fences.highest_epoch,excluded.highest_epoch)""",
+                    (tenant_id, deployment_id, fencing_token, execution_epoch),
                 )
 
             from_state = process["state"]
