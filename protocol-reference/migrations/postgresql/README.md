@@ -10,11 +10,23 @@ Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE
 - lease capabilities represented by verifier digests, never plaintext tokens;
 - append-only deployment events with tenant-scoped event identity.
 
-## Important status
+## Current implementation status
 
-This is a schema foundation only. The SQLite registry remains the current executable reference implementation. No PostgreSQL runtime adapter, migration runner, connection-pool policy, or production deployment guarantee is provided by this SQL file.
+The repository now includes a PostgreSQL execution lease adapter at
+protocol-reference/postgresql_execution_coordinator.py. It implements shared
+lease acquisition, authoritative validation, guarded callback execution, and
+idempotent release against these tables. It accepts a connection factory and
+expects psycopg 3 connections. The adapter does not yet replace the complete
+SQLite deployment registry: PostgreSQL registration, revision, lifecycle
+administration, authority-gated onboarding, connection-pool operations, and
+production deployment controls remain separate work.
 
-## Required transaction protocol for the future adapter
+The PostgreSQL integration tests exercise independent coordinator instances
+against the same real database, persistent monotonic fencing, epoch invalidation,
+guarded callbacks, and release. The CI PostgreSQL service is a test dependency,
+not a production database deployment.
+
+## Required transaction protocol for lifecycle writers
 
 The PostgreSQL implementation must treat the deployment head, current version, lifecycle epoch, and fencing sequence as one authoritative coordination boundary.
 
@@ -22,10 +34,11 @@ The PostgreSQL implementation must treat the deployment head, current version, l
 2. While holding that lock, it must read the current version/status/epoch, reject non-`ACTIVE` deployments, increment the fencing sequence, and insert the lease. The sequence increment and lease insert must commit together.
 3. Lifecycle revision, suspension, reactivation, and revocation must take the same lock and update the version head/status and epoch in the same transaction. A lease must never be issued against a lifecycle state that is concurrently being invalidated.
 4. Lease validation must compare the capability digest, expiry, release state, current lifecycle status, epoch, and persisted fencing token. Caller-provided claims are not authoritative.
-5. A guarded database action must use the same PostgreSQL transaction and connection as the lease validation when the protected state is PostgreSQL-owned. A callback that writes to another database is not made atomic by this mechanism.
-6. Independent workers must share the same PostgreSQL authority. Per-node databases, asynchronous replicas, or a Python protocol-interface check do not establish this property.
+5. The current adapter holds locks on the deployment head, epoch, and lease rows while its guarded callback runs. A lifecycle writer must lock the same head and epoch rows and increment the epoch in the same transaction as its version/status update. The adapter cannot enforce the behavior of an external lifecycle writer.
+6. A callback that writes to another database is not made atomic by this mechanism. The adapter serializes the callback against lifecycle writers at the PostgreSQL authority, but it does not create a distributed transaction with IVM or CEE.
+7. Independent workers must share the same PostgreSQL authority. Per-node databases, asynchronous replicas, or a Python protocol-interface check do not establish this property.
 
-Before an adapter is considered conformant, integration tests must exercise concurrent acquisitions from independent connections/processes, lifecycle-versus-acquisition races, restart persistence, token uniqueness/monotonicity, tenant/deployment isolation, lease expiry/release, and rollback after injected failures.
+The current adapter is an initial executable increment, not a complete conformance claim. Remaining tests include true concurrent acquisition races, lifecycle-versus-acquisition races, expiry, tenant/deployment isolation, and rollback after injected failures. A production rollout additionally requires review of PostgreSQL roles, TLS, pool sizing, timeouts, observability, backup/restore, failover semantics, and operational recovery.
 
 The schema deliberately does not claim atomicity with the separate IVM store or CEE journal. That requires a separately designed durable event/outbox and recovery protocol, tested against actual crash windows.
 ## Applying migrations
