@@ -3,7 +3,9 @@
 
 Legacy HMAC assertions remain available for local/internal reference use.
 Federated assertions use Ed25519 and an explicit issuer trust-key loader.
-Neither path authenticates a human or independently establishes legal authority.
+Both profiles resolve grants through a trusted store contract; federated
+assertions require receiver-accepted issuer-signed grant provenance. Neither
+path authenticates a human or independently establishes legal authority.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ import re
 import sqlite3
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 
 class AuthorityResolutionError(ValueError):
@@ -34,6 +36,19 @@ GRANT_FIELDS = {
     "approval_ref",
 }
 MAX_ASSERTION_TTL_SECONDS = 300
+
+
+class VerifiedAuthorityGrantStore(Protocol):
+    """Trusted store contract used by the resolver; bare grant callbacks are not accepted."""
+
+    def load_verified_grant(
+        self, tenant_id: str, grant_id: str, *,
+        require_federated_provenance: bool,
+        public_key_loader: Callable[[str], bytes] | None,
+        clock: Callable[[], float],
+    ) -> dict[str, Any] | None:
+        """Load the current grant head and verify retained federation provenance when present."""
+        ...
 
 
 def canonical_json(value: Any) -> bytes:
@@ -154,15 +169,16 @@ class InstitutionalAuthorityResolver:
     """
     def __init__(
         self, *,
-        grant_loader: Callable[[str, str], dict[str, Any] | None],
+        grant_store: VerifiedAuthorityGrantStore,
         consume_nonce: Callable[..., bool],
         verification_keys: dict[str, bytes] | None = None,
         trust_key_loader: Callable[[str, str], dict[str, Any] | None] | None = None,
         public_key_loader: Callable[[str], bytes] | None = None,
         clock: Callable[[], float] = time.time,
     ):
-        if not callable(grant_loader) or not callable(consume_nonce):
-            raise AuthorityResolutionError("TRUST_CONFIGURATION_INCOMPLETE")
+        if (not callable(getattr(grant_store, "load_verified_grant", None))
+                or not callable(consume_nonce)):
+            raise AuthorityResolutionError("VERIFIED_GRANT_STORE_REQUIRED")
         keys = verification_keys or {}
         for key_id, key in keys.items():
             if not isinstance(key_id, str) or not key_id.strip():
@@ -176,7 +192,7 @@ class InstitutionalAuthorityResolver:
         self._keys = dict(keys)
         self._trust_key_loader = trust_key_loader
         self._public_key_loader = public_key_loader
-        self._grant_loader = grant_loader
+        self._grant_store = grant_store
         self._consume_nonce = consume_nonce
         self._clock = clock
 
@@ -258,7 +274,17 @@ class InstitutionalAuthorityResolver:
         if not re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", claims["nonce"]):
             raise AuthorityResolutionError("INVALID_ASSERTION_NONCE")
 
-        grant = self._grant_loader(tenant_id, claims["grant_id"])
+        try:
+            grant = self._grant_store.load_verified_grant(
+                tenant_id, claims["grant_id"],
+                require_federated_provenance=(algorithm == "Ed25519"),
+                public_key_loader=self._public_key_loader,
+                clock=self._clock,
+            )
+        except AuthorityResolutionError:
+            raise
+        except Exception as exc:
+            raise AuthorityResolutionError("AUTHORITY_GRANT_PROVENANCE_INVALID") from exc
         if not isinstance(grant, dict) or set(grant) != GRANT_FIELDS:
             raise AuthorityResolutionError("AUTHORITY_GRANT_NOT_FOUND_OR_MALFORMED")
         if (grant["tenant_id"] != tenant_id or grant["grant_id"] != claims["grant_id"]

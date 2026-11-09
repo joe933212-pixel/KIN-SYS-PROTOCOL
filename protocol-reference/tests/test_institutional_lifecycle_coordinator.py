@@ -12,6 +12,23 @@ from institutional_lifecycle_coordinator import (
 from institutional_registry import InstitutionalRegistry
 
 
+
+class _MemoryGrantStore:
+    """Test-only local grant store; it cannot serve federated assertions."""
+
+    def __init__(self, grant):
+        self.grant = grant
+
+    def load_verified_grant(self, tenant_id, grant_id, *,
+                            require_federated_provenance,
+                            public_key_loader, clock):
+        if require_federated_provenance:
+            raise ValueError("FEDERATED_GRANT_PROVENANCE_REQUIRED")
+        if tenant_id != self.grant["tenant_id"] or grant_id != self.grant["grant_id"]:
+            return None
+        return dict(self.grant)
+
+
 class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
     def setUp(self):
         handle, self.path = tempfile.mkstemp(suffix=".sqlite")
@@ -37,12 +54,10 @@ class InstitutionalLifecycleCoordinatorTests(unittest.TestCase):
             "approval_ref": "approval:grant-3",
         }
         self.nonces = InMemoryNonceGuard()
+        self.grant_store = _MemoryGrantStore(self.grant)
         self.resolver = InstitutionalAuthorityResolver(
             verification_keys={"issuer-key-1": self.key},
-            grant_loader=lambda tenant, grant_id: (
-                self.grant if tenant == self.grant["tenant_id"]
-                and grant_id == self.grant["grant_id"] else None
-            ),
+            grant_store=self.grant_store,
             consume_nonce=self.nonces.consume,
             clock=lambda: 1000,
         )

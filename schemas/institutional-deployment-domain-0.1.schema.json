@@ -480,7 +480,8 @@
         "grant_version",
         "grant_digest",
         "issuer_envelope",
-        "acceptance"
+        "acceptance",
+        "created_at"
       ],
       "properties": {
         "tenant_id": {
@@ -501,6 +502,10 @@
         },
         "acceptance": {
           "$ref": "#/$defs/receiverGrantAcceptance"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
         }
       }
     },
@@ -522,7 +527,18 @@
           ],
           "properties": {
             "grant": {
-              "$ref": "#/$defs/authorityGrant"
+              "allOf": [
+                {
+                  "$ref": "#/$defs/authorityGrant"
+                },
+                {
+                  "properties": {
+                    "status": {
+                      "const": "PENDING"
+                    }
+                  }
+                }
+              ]
             },
             "key_id": {
               "$ref": "#/$defs/s"
@@ -563,7 +579,19 @@
           "pattern": "^[a-f0-9]{64}$"
         },
         "receiver_approval": {
-          "type": "object"
+          "type": "object",
+          "required": [
+            "actor_ref",
+            "approval_ref"
+          ],
+          "properties": {
+            "actor_ref": {
+              "$ref": "#/$defs/s"
+            },
+            "approval_ref": {
+              "$ref": "#/$defs/s"
+            }
+          }
         }
       }
     },

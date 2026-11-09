@@ -7,6 +7,7 @@ The registry does not itself authenticate issuers or verify grant signatures.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -286,6 +287,134 @@ class InstitutionalTrustRegistry:
                WHERE h.tenant_id=? AND h.grant_id=?""",
             (tenant_id, grant_id)).fetchone()
         return json.loads(row["payload_json"]) if row else None
+
+
+    def load_verified_grant(
+        self, tenant_id: str, grant_id: str, *,
+        require_federated_provenance: bool,
+        public_key_loader: Any,
+        clock: Any,
+    ) -> dict[str, Any] | None:
+        """Load the current grant and verify any retained issuer-signed provenance.
+
+        Local HMAC grants may be used without an issuer envelope only when the
+        resolver explicitly selects its local/internal profile. Federated
+        assertions require a receiver-accepted issuer-signed grant. Whenever
+        provenance exists, it is revalidated against the receiver's current
+        trust root, public key, immutable grant snapshot, digest and acceptance
+        audit event.
+        """
+        self._tenant(tenant_id)
+        _required_identifier(grant_id, "INVALID_GRANT_ID")
+        if type(require_federated_provenance) is not bool or not callable(clock):
+            raise TrustRegistryError("VERIFIED_GRANT_REQUEST_INVALID")
+
+        self.db.execute("BEGIN")
+        try:
+            row = self.db.execute(
+                """SELECT v.payload_json FROM authority_grant_heads h
+                   JOIN authority_grant_versions v
+                     ON v.tenant_id=h.tenant_id AND v.grant_id=h.grant_id
+                    AND v.version=h.current_version
+                   WHERE h.tenant_id=? AND h.grant_id=?""",
+                (tenant_id, grant_id),
+            ).fetchone()
+            if row is None:
+                self.db.execute("COMMIT")
+                return None
+
+            grant = json.loads(row["payload_json"])
+            self._validate_grant(grant)
+            if grant["status"] != "ACTIVE":
+                self.db.execute("COMMIT")
+                return grant
+
+            provenance = self.db.execute(
+                """SELECT grant_digest,issuer_envelope_json,acceptance_json
+                   FROM accepted_grant_provenance
+                   WHERE tenant_id=? AND grant_id=? AND version=?""",
+                (tenant_id, grant_id, grant["version"]),
+            ).fetchone()
+            if provenance is None:
+                if require_federated_provenance:
+                    raise TrustRegistryError("FEDERATED_GRANT_PROVENANCE_REQUIRED")
+                self.db.execute("COMMIT")
+                return grant
+
+            if not callable(public_key_loader):
+                raise TrustRegistryError("GRANT_PUBLIC_KEY_RESOLVER_REQUIRED")
+
+            from institutional_grant_provenance import (
+                canonical_grant_bytes, verify_authority_grant,
+            )
+
+            envelope = json.loads(provenance["issuer_envelope_json"])
+            acceptance = json.loads(provenance["acceptance_json"])
+            issuer_grant = verify_authority_grant(
+                envelope, tenant_id=tenant_id,
+                trust_key_loader=self.load_trust_key,
+                public_key_loader=public_key_loader,
+                clock=clock,
+            )
+            accepted_snapshot = dict(issuer_grant, status="ACTIVE")
+            if accepted_snapshot != grant:
+                raise TrustRegistryError("GRANT_PROVENANCE_SNAPSHOT_MISMATCH")
+
+            digest = hashlib.sha256(canonical_grant_bytes(issuer_grant)).hexdigest()
+            if provenance["grant_digest"] != digest:
+                raise TrustRegistryError("GRANT_PROVENANCE_DIGEST_MISMATCH")
+
+            acceptance_fields = {
+                "receiver_institution_id", "grant_id", "grant_version",
+                "grant_digest", "receiver_approval",
+            }
+            if not isinstance(acceptance, dict) or set(acceptance) != acceptance_fields:
+                raise TrustRegistryError("GRANT_ACCEPTANCE_RECORD_INVALID")
+            approval = acceptance["receiver_approval"]
+            if not isinstance(approval, dict):
+                raise TrustRegistryError("GRANT_ACCEPTANCE_APPROVAL_INVALID")
+            approval_actor = approval.get("actor_ref")
+            approval_ref = approval.get("approval_ref")
+            _required_identifier(approval_actor, "GRANT_ACCEPTANCE_ACTOR_INVALID")
+            _required_identifier(approval_ref, "GRANT_ACCEPTANCE_EVIDENCE_INVALID")
+            if (
+                acceptance["receiver_institution_id"] != grant["institution_id"]
+                or acceptance["grant_id"] != grant["grant_id"]
+                or acceptance["grant_version"] != grant["version"]
+                or acceptance["grant_digest"] != digest
+            ):
+                raise TrustRegistryError("GRANT_ACCEPTANCE_SCOPE_MISMATCH")
+
+            events = self.db.execute(
+                """SELECT actor_ref,evidence_ref,payload_json
+                   FROM authority_grant_events
+                   WHERE tenant_id=? AND grant_id=? AND version=?
+                     AND event_type='FEDERATED_GRANT_ACCEPTED'""",
+                (tenant_id, grant_id, grant["version"]),
+            ).fetchall()
+            if len(events) != 1:
+                raise TrustRegistryError("GRANT_ACCEPTANCE_AUDIT_EVENT_MISSING_OR_AMBIGUOUS")
+            event = events[0]
+            expected_payload = {
+                "grant_digest": digest,
+                "issuer_envelope": envelope,
+                "acceptance": acceptance,
+            }
+            if json.loads(event["payload_json"]) != expected_payload:
+                raise TrustRegistryError("GRANT_ACCEPTANCE_AUDIT_PAYLOAD_MISMATCH")
+            if event["actor_ref"] != approval_actor or event["evidence_ref"] != approval_ref:
+                raise TrustRegistryError("GRANT_ACCEPTANCE_AUDIT_CONTEXT_MISMATCH")
+
+            self.db.execute("COMMIT")
+            return grant
+        except TrustRegistryError:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+        except Exception as exc:
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise TrustRegistryError("GRANT_PROVENANCE_VERIFICATION_FAILED") from exc
 
     def list_grant_events(self, *, tenant_id: str, grant_id: str) -> list[dict[str, Any]]:
         self._tenant(tenant_id)

@@ -110,5 +110,98 @@ class PersistentGrantAcceptanceTests(unittest.TestCase):
             self.accept(event_id="grant-accepted-02")
 
 
+
+    def test_verified_grant_store_revalidates_issuer_signature_digest_and_audit(self):
+        self.accept()
+        loaded = self.registry.load_verified_grant(
+            "tenant-receiver", "GRANT-ACCEPT-01",
+            require_federated_provenance=True,
+            public_key_loader=lambda ref: (
+                self.public_bytes if ref == "public:key-01" else None),
+            clock=lambda: 150,
+        )
+        self.assertEqual(loaded, dict(self.grant, status="ACTIVE"))
+
+        self.registry.db.execute(
+            """UPDATE accepted_grant_provenance SET grant_digest=?
+               WHERE tenant_id=? AND grant_id=? AND version=?""",
+            ("0" * 64, "tenant-receiver", "GRANT-ACCEPT-01", "1"),
+        )
+        with self.assertRaisesRegex(TrustRegistryError, "GRANT_PROVENANCE_DIGEST_MISMATCH"):
+            self.registry.load_verified_grant(
+                "tenant-receiver", "GRANT-ACCEPT-01",
+                require_federated_provenance=True,
+                public_key_loader=lambda ref: self.public_bytes,
+                clock=lambda: 150,
+            )
+
+    def test_federated_resolution_rejects_active_grant_without_signed_provenance(self):
+        self.registry.create_grant_version(
+            tenant_id="tenant-receiver",
+            grant=dict(self.grant, grant_id="LOCAL-GRANT-01", status="ACTIVE"),
+            event_id="local-grant-created", actor_ref="actor:local-approver",
+            evidence_ref="evidence:local-approval",
+        )
+        with self.assertRaisesRegex(TrustRegistryError, "FEDERATED_GRANT_PROVENANCE_REQUIRED"):
+            self.registry.load_verified_grant(
+                "tenant-receiver", "LOCAL-GRANT-01",
+                require_federated_provenance=True,
+                public_key_loader=lambda ref: self.public_bytes,
+                clock=lambda: 150,
+            )
+
+    def test_federated_grant_revision_requires_fresh_signed_provenance(self):
+        self.accept()
+        current = self.registry.load_grant("tenant-receiver", "GRANT-ACCEPT-01")
+        revised = dict(current, version="2", roles=["reviewer", "approver"])
+        self.registry.create_grant_revision(
+            tenant_id="tenant-receiver", grant_id="GRANT-ACCEPT-01",
+            expected_version="1", grant=revised,
+            event_id="grant-revised-02", actor_ref="actor:bank-approver",
+            evidence_ref="approval:grant-revision",
+        )
+        with self.assertRaisesRegex(TrustRegistryError, "FEDERATED_GRANT_PROVENANCE_REQUIRED"):
+            self.registry.load_verified_grant(
+                "tenant-receiver", "GRANT-ACCEPT-01",
+                require_federated_provenance=True,
+                public_key_loader=lambda ref: self.public_bytes,
+                clock=lambda: 150,
+            )
+
+    def test_issuer_trust_revocation_invalidates_previously_accepted_grant_provenance(self):
+        self.accept()
+        self.registry.revoke_trusted_issuer(
+            tenant_id="tenant-receiver",
+            issuer_institution_id="NATIONAL-REGISTRY",
+            actor_ref="actor:trust-admin", evidence_ref="evidence:trust-revocation",
+            event_id="issuer-trust-revoked",
+        )
+        with self.assertRaisesRegex(TrustRegistryError, "GRANT_PROVENANCE_VERIFICATION_FAILED"):
+            self.registry.load_verified_grant(
+                "tenant-receiver", "GRANT-ACCEPT-01",
+                require_federated_provenance=True,
+                public_key_loader=lambda ref: self.public_bytes,
+                clock=lambda: 150,
+            )
+
+    def test_acceptance_audit_context_tampering_is_detected(self):
+        self.accept()
+        self.registry.db.execute(
+            """UPDATE accepted_grant_provenance SET acceptance_json=?
+               WHERE tenant_id=? AND grant_id=? AND version=?""",
+            ('{"receiver_institution_id":"BANK-UG-01","grant_id":"GRANT-ACCEPT-01",'
+             '"grant_version":"1","grant_digest":"' + "0" * 64 + '",'
+             '"receiver_approval":{"actor_ref":"actor:attacker",'
+             '"approval_ref":"approval:forged"}}',
+             "tenant-receiver", "GRANT-ACCEPT-01", "1"),
+        )
+        with self.assertRaisesRegex(TrustRegistryError, "GRANT_ACCEPTANCE_SCOPE_MISMATCH"):
+            self.registry.load_verified_grant(
+                "tenant-receiver", "GRANT-ACCEPT-01",
+                require_federated_provenance=True,
+                public_key_loader=lambda ref: self.public_bytes,
+                clock=lambda: 150,
+            )
+
 if __name__ == "__main__":
     unittest.main()
