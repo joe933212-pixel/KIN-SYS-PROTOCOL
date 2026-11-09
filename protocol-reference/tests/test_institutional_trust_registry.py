@@ -369,9 +369,10 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(TrustRegistryConflict, "TRUST_KEY_ID_ALREADY_REGISTERED"):
             self.registry.register_trust_key(**args)
         args["key_id"] = "issuer-key-2"
-        args["algorithm"] = "homemade-signature"
-        with self.assertRaisesRegex(TrustRegistryError, "UNSUPPORTED_TRUST_KEY_ALGORITHM"):
-            self.registry.register_trust_key(**args)
+        for unsupported in ("homemade-signature", "HMAC-SHA256"):
+            args["algorithm"] = unsupported
+            with self.assertRaisesRegex(TrustRegistryError, "UNSUPPORTED_TRUST_KEY_ALGORITHM"):
+                self.registry.register_trust_key(**args)
 
 
 if __name__ == "__main__":

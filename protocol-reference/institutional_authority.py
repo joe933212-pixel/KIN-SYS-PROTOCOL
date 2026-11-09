@@ -161,11 +161,13 @@ class SQLiteNonceGuard:
 class InstitutionalAuthorityResolver:
     """Verify HMAC-local or Ed25519-federated assertions and delegated grants.
 
-    trust_key_loader(tenant_id, key_id) returns a currently trusted key record
-    containing issuer_institution_id, algorithm, status, valid_from,
-    valid_until and public_key_ref. public_key_loader(ref) returns raw 32-byte
-    Ed25519 public key bytes. Both loaders must enforce the receiving
-    institution's trust policy and resolve references from trusted custody.
+    grant_store must implement VerifiedAuthorityGrantStore; arbitrary grant
+    callbacks are not accepted. trust_key_loader(tenant_id, key_id) returns a
+    currently trusted key record containing issuer_institution_id, algorithm,
+    status, valid_from, valid_until and public_key_ref. public_key_loader(ref)
+    returns raw 32-byte Ed25519 public key bytes. Both key loaders must enforce
+    the receiving institution's trust policy and resolve references from
+    trusted custody.
     """
     def __init__(
         self, *,

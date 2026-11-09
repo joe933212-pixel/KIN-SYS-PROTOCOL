@@ -22,7 +22,7 @@ GRANT_FIELDS = {
 }
 GRANT_STATUSES = {"PENDING", "ACTIVE", "SUSPENDED", "REVOKED"}
 KEY_STATUSES = {"ACTIVE", "SUSPENDED", "REVOKED"}
-KEY_ALGORITHMS = {"Ed25519", "HMAC-SHA256"}
+KEY_ALGORITHMS = {"Ed25519"}
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
@@ -271,11 +271,11 @@ class InstitutionalTrustRegistry:
             event_type="GRANT_REVOKED")
 
     def load_grant(self, tenant_id: str, grant_id: str) -> dict[str, Any] | None:
-        """Resolver-compatible loader; returns only the current grant head.
+        """Return the current grant head for administrative inspection.
 
-        Returning the current head (rather than arbitrary historical versions)
-        makes a grant revision or revocation invalidate assertions pinned to an
-        older version. The resolver still compares the assertion's version.
+        Authorization code must use load_verified_grant(), which enforces the
+        current-version pin and revalidates retained issuer-signed provenance.
+        This lower-level method does not verify a federated envelope.
         """
         self._tenant(tenant_id)
         _required_identifier(grant_id, "INVALID_GRANT_ID")

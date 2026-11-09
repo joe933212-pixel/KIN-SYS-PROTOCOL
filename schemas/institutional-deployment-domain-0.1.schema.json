@@ -449,8 +449,7 @@
         },
         "algorithm": {
           "enum": [
-            "Ed25519",
-            "HMAC-SHA256"
+            "Ed25519"
           ]
         },
         "public_key_ref": {
