@@ -39,12 +39,27 @@ class InstitutionalDomainHttpTests(unittest.TestCase):
             "resource_types":["institution"], "resource_ids":["BANK-HTTP"],
         }
         self.nonces=InMemoryNonceGuard()
+        class StaticVerifiedGrantStore:
+            """Explicit local-HMAC test double for the resolver's trusted store contract."""
+            def load_verified_grant(
+                self, tenant_id, grant_id, *, require_federated_provenance,
+                public_key_loader, clock,
+            ):
+                if require_federated_provenance:
+                    return None
+                if tenant_id != "tenant-http":
+                    return None
+                if grant_id == "GRANT-HTTP":
+                    return dict(registrar_grant)
+                if grant_id == "GRANT-VERIFIER":
+                    return dict(verifier_grant)
+                return None
+
+        registrar_grant = self.grant
+        verifier_grant = self.verifier_grant
         self.resolver=InstitutionalAuthorityResolver(
             verification_keys={"key-http":self.key},
-            grant_loader=lambda tenant, grant: (
-                self.grant if tenant=="tenant-http" and grant=="GRANT-HTTP"
-                else self.verifier_grant if tenant=="tenant-http" and grant=="GRANT-VERIFIER"
-                else None),
+            grant_store=StaticVerifiedGrantStore(),
             consume_nonce=self.nonces.consume,clock=lambda:1000)
         self.counter=0
         class Session:
