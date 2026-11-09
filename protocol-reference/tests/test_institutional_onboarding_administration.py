@@ -43,9 +43,22 @@ class InstitutionalOnboardingAdministrationTests(unittest.TestCase):
             "issuer_institution_id": "REGISTRY-UG", "approval_ref": "approval:grant",
         }
         self.nonces = InMemoryNonceGuard()
+        class StaticVerifiedGrantStore:
+            """Explicit local-HMAC test double for the resolver's trusted store contract."""
+            def load_verified_grant(
+                self, tenant_id, grant_id, *, require_federated_provenance,
+                public_key_loader, clock,
+            ):
+                if require_federated_provenance:
+                    return None
+                if tenant_id == "tenant-a" and grant_id == "GRANT-1":
+                    return dict(self_grant)
+                return None
+
+        self_grant = self.grant
         resolver = InstitutionalAuthorityResolver(
             verification_keys={"key-1": self.key},
-            grant_loader=lambda tenant, grant: self.grant if tenant == "tenant-a" and grant == "GRANT-1" else None,
+            grant_store=StaticVerifiedGrantStore(),
             consume_nonce=self.nonces.consume, clock=lambda: 1000,
         )
         self.verifier = EvidenceVerifier()
