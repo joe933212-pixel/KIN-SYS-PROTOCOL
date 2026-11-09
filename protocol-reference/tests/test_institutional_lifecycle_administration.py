@@ -55,12 +55,22 @@ class InstitutionalLifecycleAdministrationTests(unittest.TestCase):
             "approval_ref": "approval:grant",
         }
         self.nonces = InMemoryNonceGuard()
+        class StaticVerifiedGrantStore:
+            """Explicit local-HMAC test double for the resolver's trusted store contract."""
+            def load_verified_grant(
+                self, tenant_id, grant_id, *, require_federated_provenance,
+                public_key_loader, clock,
+            ):
+                if require_federated_provenance:
+                    return None
+                if tenant_id == "tenant-lifecycle" and grant_id == "GRANT-LIFECYCLE-01":
+                    return dict(self_grant)
+                return None
+
+        self_grant = self.grant
         self.resolver = InstitutionalAuthorityResolver(
             verification_keys={"lifecycle-key": self.key},
-            grant_loader=lambda tenant, grant: (
-                self.grant if tenant == "tenant-lifecycle"
-                and grant == "GRANT-LIFECYCLE-01" else None
-            ),
+            grant_store=StaticVerifiedGrantStore(),
             consume_nonce=self.nonces.consume, clock=lambda: 1000,
         )
         self.verifier = EvidenceVerifier()
