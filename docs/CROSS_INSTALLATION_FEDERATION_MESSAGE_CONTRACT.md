@@ -47,3 +47,14 @@ Implemented here: canonical signed envelope creation, receiver-side cryptographi
 Not yet implemented: network transport, authenticated installation discovery, outbound delivery/retry queues, durable message inbox/outbox, acknowledgement protocol, receiver-side execution orchestration, cross-installation operation status, cross-store recovery, and end-to-end testing with two independently configured runtime stacks. The current tests use generated Ed25519 keys and test doubles; they are not evidence of live federation or production readiness.
 
 The next engineering increment should build two isolated installation fixtures with separate registries, trust stores, identity policies, MINAH pipelines and CEE journals. A signed message should cross the boundary, be verified by the receiver, and then enter only the receiver's local governed execution path. Tests must prove both sides retain separate decision rights and audit histories.
+
+
+## Receiver-local execution adapter
+
+`protocol-reference/institutional_federated_receiver.py` adds the next boundary: after successful envelope verification, it selects the receiver tenant, institution and binding exclusively from receiver-local configuration and passes the digest-verified instruction and its evidence to the injected local governed execution service. The expected production integration is the existing `InstitutionalInstructionExecutionService`, which resolves the active receiver binding, pins its own identity provider/jurisdiction/MINAH deployment and enforces the local MINAH, identity, authority, CEE and final-decision execution order.
+
+The adapter never uses origin claims to select the receiving institution or binding. It does not translate a verified message into approval; a receiver-side rejection remains a receiver-side rejection. Its unit tests use a recording executor to prove routing and fail-closed behavior. They do not yet instantiate two complete production-configured execution stacks.
+
+## Next integration test target
+
+The next test increment must instantiate two isolated installation configurations and connect each adapter to its own real institutional execution service, registry, MINAH deployment resolver, identity provider, authority grant store and CEE/IVM persistence. It must prove that a receiver-local jurisdiction or authority rejection does not alter the origin's history, and that an acknowledgement is correlated to the original message/operation without sharing decision authority.
