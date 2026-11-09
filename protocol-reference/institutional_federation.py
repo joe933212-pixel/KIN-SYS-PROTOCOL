@@ -218,3 +218,24 @@ def verify_cross_installation_instruction(
         "authority_inherited": False,
         "execution_authorised": False,
     }
+
+
+def sqlite_nonce_consumer(guard: Any) -> Callable[[str, str, str, int], bool]:
+    """Adapt SQLiteNonceGuard to federation's installation-scoped replay key.
+
+    The supplied guard must expose its existing atomic consume(tenant, nonce,
+    expires_at) method. This is suitable only where all receiver workers share
+    the same SQLite file; it is not a multi-host distributed replay service.
+    """
+    consume = getattr(guard, "consume", None)
+    if not callable(consume):
+        raise FederationMessageError("FEDERATION_REPLAY_GUARD_INVALID")
+
+    def scoped(receiver_tenant_id: str, issuer_installation_id: str,
+               nonce: str, expires_at: int) -> bool:
+        scope = hashlib.sha256(
+            (issuer_installation_id + "\\0" + nonce).encode("utf-8")
+        ).hexdigest()
+        return consume(receiver_tenant_id, "federation:" + scope, expires_at)
+
+    return scoped
