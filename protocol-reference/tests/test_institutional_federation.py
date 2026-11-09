@@ -156,6 +156,32 @@ class CrossInstallationFederationTests(unittest.TestCase):
         with self.assertRaisesRegex(FederationMessageError, "ISSUER_NOT_TRUSTED"):
             self.verify(trust_key_loader=lambda tenant, key: None)
 
+
+    def test_replay_guard_unavailability_fails_closed(self):
+        def unavailable(*args):
+            raise RuntimeError("store unavailable")
+        with self.assertRaisesRegex(FederationMessageError, "REPLAY_GUARD_UNAVAILABLE"):
+            self.verify(consume_nonce=unavailable)
+
+    def test_sqlite_nonce_adapter_scopes_nonce_by_issuer_installation(self):
+        from institutional_federation import sqlite_nonce_consumer
+
+        class Guard:
+            def __init__(self):
+                self.seen = set()
+
+            def consume(self, tenant, nonce, expiry):
+                if (tenant, nonce) in self.seen:
+                    return False
+                self.seen.add((tenant, nonce))
+                return True
+
+        guard = Guard()
+        consumer = sqlite_nonce_consumer(guard)
+        self.assertTrue(consumer("tenant-rw", "INSTALL-UG-01", "same-nonce", 100))
+        self.assertFalse(consumer("tenant-rw", "INSTALL-UG-01", "same-nonce", 100))
+        self.assertTrue(consumer("tenant-rw", "INSTALL-KE-01", "same-nonce", 100))
+
     def test_invalid_instruction_digest_cannot_be_signed(self):
         invalid = make_instruction()
         invalid["purpose"] = "tampered after digest"
