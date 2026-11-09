@@ -85,3 +85,12 @@ The model currently covers two independent decision stages, stage-specific actor
 ## Scope warning
 
 These are research prototypes, not production runtimes. They use local SQLite databases and caller-supplied actor/rule context. They do not implement cryptographic authentication, networking, distributed consensus, or full CISA/IVM/CEE conformance. The target architecture has one execution path: IVM runs within CEE and executes CISA-defined machine semantics; CEE is not a parallel executor. Process termination tests exercise local process failure, not power-loss durability. A passing test suite is evidence only for the cases actually run; unsupported workflow cases are not passes.
+
+
+## Cross-installation federation message boundary
+
+`protocol-reference/institutional_federation.py` introduces the first signed cross-installation instruction handoff primitive. The origin signs a canonical Ed25519 envelope bound to the exact destination installation and institution, message/operation identity, expiry, nonce and digest-verified instruction. The receiver independently checks its local issuer trust key, issuer/key binding, validity windows, signature, destination and freshness, then consumes a receiver-local replay nonce. The existing `SQLiteNonceGuard` can be adapted with `sqlite_nonce_consumer` for a shared local SQLite file; separate per-host files are not distributed replay protection.
+
+Successful verification is not authorisation or execution. The returned result explicitly says `authority_inherited=false` and `execution_authorised=false`. The receiving institution must still apply its own identity, authority, jurisdiction and deployment policies and pass the instruction through its own MINAH → CEE → Final Decision path. See `docs/CROSS_INSTALLATION_FEDERATION_MESSAGE_CONTRACT.md` and `protocol-reference/tests/test_institutional_federation.py`.
+
+This is the message-security boundary only. Network delivery, authenticated installation discovery, inbox/outbox durability, acknowledgements, receiver-side execution orchestration, cross-installation status tracking and end-to-end tests using two independently configured installations remain outstanding. It is not yet a live federation implementation or production certification.
