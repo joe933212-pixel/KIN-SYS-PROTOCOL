@@ -50,7 +50,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.admin.close()
 
     def test_repository_migration_applies_and_is_idempotent_on_postgresql(self):
-        self.assertEqual(apply_migrations(self.connection), ["001"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002"])
         self.assertEqual(apply_migrations(self.connection), [])
         row = self.connection.execute(
             "SELECT version, filename, checksum_sha256 "
@@ -58,6 +58,16 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row[0], "001")
         self.assertEqual(row[1], "001_institutional_minah_coordination.sql")
+        versions = self.connection.execute(
+            "SELECT version, filename FROM kin_sys_schema_migrations ORDER BY version"
+        ).fetchall()
+        self.assertEqual(
+            versions,
+            [
+                ("001", "001_institutional_minah_coordination.sql"),
+                ("002", "002_federation_nonce_guard.sql"),
+            ],
+        )
         tables = {
             item[0] for item in self.connection.execute(
                 "SELECT tablename FROM pg_tables WHERE schemaname = %s",
@@ -66,9 +76,10 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         }
         self.assertIn("minah_execution_leases", tables)
         self.assertIn("minah_deployment_heads", tables)
+        self.assertIn("consumed_federation_nonces", tables)
 
     def test_postgresql_rejects_changed_applied_migration_checksum(self):
-        self.assertEqual(apply_migrations(self.connection), ["001"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002"])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             original = discover_migrations()[0][1].read_text(encoding="utf-8")
