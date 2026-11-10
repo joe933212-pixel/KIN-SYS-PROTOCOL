@@ -679,9 +679,20 @@ class InstitutionalInstructionExecutionService:
                 "VERIFIED_TENANT_AND_OPERATION_REQUIRED")
         found = self._find_pinned_pipeline(tenant_id, operation_id, institution_id)
         if found is None:
+            # A configured durable resolver can authoritatively report that
+            # this operation is absent. Without one, an empty process cache
+            # after restart cannot distinguish "not executed" from "committed
+            # in a journal this process cannot locate".
+            with self._pipeline_lock:
+                has_cached_pipelines = bool(self._pipelines)
+            reason = (
+                "OPERATION_NOT_FOUND"
+                if self.operation_pipeline_resolver is not None or has_cached_pipelines
+                else "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE"
+            )
             return {
                 "operation_id": operation_id, "status": "UNKNOWN",
-                "reason": "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE",
+                "reason": reason,
                 "recovery_required": True, "production_ready": False,
             }
         pipeline, operation, pins, request = found
