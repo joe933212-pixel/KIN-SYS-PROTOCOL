@@ -11,7 +11,7 @@ from contextlib import closing
 from typing import Any, Callable
 
 
-MAX_NONCE_TTL_SECONDS = 300
+MAX_NONCE_TTL_SECONDS = 330  # 300-second message lifetime plus 30-second clock skew
 
 
 class PostgreSQLNonceGuardError(RuntimeError):
