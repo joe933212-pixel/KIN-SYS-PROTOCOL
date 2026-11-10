@@ -281,3 +281,28 @@ def postgresql_nonce_consumer(guard: Any) -> Callable[[str, str, str, int], bool
         return consume(receiver_tenant_id, "federation:" + scope, expires_at)
 
     return scoped
+
+
+def postgresql_inbox_acceptor(
+    inbox: Any,
+) -> Callable[..., dict[str, Any]]:
+    """Adapt PostgreSQLFederationInbox.accept_authenticated for verification.
+
+    The inbox and nonce tables must be in the same PostgreSQL database and
+    transaction domain. This callback is invoked only after signature and
+    trust verification has succeeded.
+    """
+    accept = getattr(inbox, "accept_authenticated", None)
+    if not callable(accept):
+        raise FederationMessageError("FEDERATION_INBOX_ACCEPTOR_INVALID")
+
+    def persist(**message: Any) -> dict[str, Any]:
+        try:
+            return accept(**message)
+        except Exception as exc:
+            code = str(exc)
+            if code == "FEDERATION_MESSAGE_REPLAYED":
+                raise FederationMessageError(code) from exc
+            raise FederationMessageError("FEDERATION_INBOX_PERSISTENCE_FAILED") from exc
+
+    return persist
