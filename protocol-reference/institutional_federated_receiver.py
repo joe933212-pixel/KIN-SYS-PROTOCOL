@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from institutional_federation import (
     FederationMessageError,
+    postgresql_inbox_acceptor,
     verify_cross_installation_instruction,
 )
 
@@ -31,6 +32,9 @@ class InstitutionalFederatedInstructionReceiver:
         consume_nonce: Callable | None = None,
         clock: Callable,
         accept_verified_message: Callable | None = None,
+        inbox: Any | None = None,
+        inbox_worker_id: str | None = None,
+        inbox_lease_seconds: int = 60,
     ):
         for field, value in (
             ("receiver_tenant_id", receiver_tenant_id),
@@ -52,9 +56,24 @@ class InstitutionalFederatedInstructionReceiver:
             if not callable(callback):
                 raise FederatedInstructionReceiverError(
                     "RECEIVER_CALLBACK_REQUIRED:" + name)
+        if inbox is not None:
+            required_inbox_methods = ("accept_authenticated", "claim", "complete", "fail", "get")
+            if any(not callable(getattr(inbox, name, None)) for name in required_inbox_methods):
+                raise FederatedInstructionReceiverError("RECEIVER_DURABLE_INBOX_INVALID")
+            if not isinstance(inbox_worker_id, str) or not inbox_worker_id.strip():
+                raise FederatedInstructionReceiverError("RECEIVER_INBOX_WORKER_ID_REQUIRED")
+            if type(inbox_lease_seconds) is not int or not 1 <= inbox_lease_seconds <= 3600:
+                raise FederatedInstructionReceiverError("RECEIVER_INBOX_LEASE_DURATION_INVALID")
+            if accept_verified_message is not None:
+                raise FederatedInstructionReceiverError(
+                    "RECEIVER_INBOX_ACCEPTOR_MUST_BE_DERIVED_FROM_INBOX")
+            accept_verified_message = postgresql_inbox_acceptor(inbox)
         if callable(consume_nonce) == callable(accept_verified_message):
             raise FederatedInstructionReceiverError(
                 "RECEIVER_EXACTLY_ONE_REPLAY_ACCEPTOR_REQUIRED")
+        if accept_verified_message is not None and inbox is None:
+            raise FederatedInstructionReceiverError(
+                "RECEIVER_DURABLE_INBOX_REQUIRED_FOR_ATOMIC_ACCEPTANCE")
         self.receiver_tenant_id = receiver_tenant_id
         self.receiver_installation_id = receiver_installation_id
         self.receiver_institution_id = receiver_institution_id
@@ -64,6 +83,9 @@ class InstitutionalFederatedInstructionReceiver:
         self.public_key_loader = public_key_loader
         self.consume_nonce = consume_nonce
         self.accept_verified_message = accept_verified_message
+        self.inbox = inbox
+        self.inbox_worker_id = inbox_worker_id
+        self.inbox_lease_seconds = inbox_lease_seconds
         self.clock = clock
 
     def receive(self, envelope: dict[str, Any]) -> dict[str, Any]:
@@ -85,10 +107,44 @@ class InstitutionalFederatedInstructionReceiver:
 
         acceptance = verified.get("inbox_acceptance")
         if isinstance(acceptance, dict) and acceptance.get("inserted") is not True:
-            # A redelivery must not execute the local instruction a second
-            # time. The caller should retrieve or publish the durable status.
-            raise FederatedInstructionReceiverError(
-                "FEDERATED_MESSAGE_ALREADY_DURABLY_ACCEPTED")
+            if self.inbox is None:
+                raise FederatedInstructionReceiverError(
+                    "FEDERATED_MESSAGE_ALREADY_DURABLY_ACCEPTED")
+            existing = self.inbox.get(
+                receiver_tenant_id=self.receiver_tenant_id,
+                issuer_installation_id=verified["issuer_installation_id"],
+                message_id=verified["message_id"],
+            )
+            if existing is None:
+                raise FederatedInstructionReceiverError("FEDERATION_INBOX_RECORD_MISSING")
+            if existing.get("status") == "COMPLETED" and isinstance(existing.get("response"), dict):
+                response = dict(existing["response"])
+                response["duplicate_delivery"] = True
+                response["delivery_status"] = "COMPLETED"
+                return response
+            return {
+                "message_id": verified["message_id"],
+                "operation_id": verified["operation_id"],
+                "receiver_installation_id": self.receiver_installation_id,
+                "receiver_institution_id": self.receiver_institution_id,
+                "message_verified": True,
+                "duplicate_delivery": True,
+                "delivery_status": existing.get("status", "UNKNOWN"),
+                "acknowledgement_status": "PENDING",
+                "production_ready": False,
+            }
+
+        inbox_claim = None
+        if self.inbox is not None:
+            inbox_claim = self.inbox.claim(
+                receiver_tenant_id=self.receiver_tenant_id,
+                issuer_installation_id=verified["issuer_installation_id"],
+                message_id=verified["message_id"],
+                worker_id=self.inbox_worker_id,
+                lease_seconds=self.inbox_lease_seconds,
+            )
+            if inbox_claim is None:
+                raise FederatedInstructionReceiverError("FEDERATION_INBOX_CLAIM_UNAVAILABLE")
 
         instruction = verified["instruction"]
         evidence = instruction.get("evidence")
@@ -124,7 +180,7 @@ class InstitutionalFederatedInstructionReceiver:
                 or decision.get("request_id") != instruction.get("request_id")):
             raise FederatedInstructionReceiverError(
                 "RECEIVER_LOCAL_DECISION_BINDING_MISMATCH")
-        return {
+        response = {
             "message_id": verified["message_id"],
             "operation_id": verified["operation_id"],
             "origin_installation_id": verified["issuer_installation_id"],
@@ -137,6 +193,32 @@ class InstitutionalFederatedInstructionReceiver:
             "receiver_execution_authorised_by_origin": False,
             "receiver_decision": decision,
             "receiver_result": local.get("result", {}),
-            "receiver_runtime_pins": local.get("runtime_pins", {}),
+            "delivery_status": "COMPLETED",
+            "duplicate_delivery": False,
             "production_ready": False,
         }
+        if self.inbox is not None:
+            decision_ref = decision.get("cee_execution_ref")
+            if not isinstance(decision_ref, str) or not decision_ref.strip():
+                self.inbox.fail(
+                    receiver_tenant_id=self.receiver_tenant_id,
+                    issuer_installation_id=verified["issuer_installation_id"],
+                    message_id=verified["message_id"],
+                    worker_id=self.inbox_worker_id,
+                    error_code="RECEIVER_DECISION_REFERENCE_MISSING",
+                    retryable=False,
+                )
+                raise FederatedInstructionReceiverError(
+                    "RECEIVER_DECISION_REFERENCE_MISSING")
+            completed = self.inbox.complete(
+                receiver_tenant_id=self.receiver_tenant_id,
+                issuer_installation_id=verified["issuer_installation_id"],
+                message_id=verified["message_id"],
+                worker_id=self.inbox_worker_id,
+                decision_ref=decision_ref,
+                response=response,
+            )
+            if completed is not True:
+                raise FederatedInstructionReceiverError(
+                    "RECEIVER_INBOX_COMPLETION_NOT_CONFIRMED")
+        return response
