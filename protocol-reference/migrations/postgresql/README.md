@@ -76,7 +76,7 @@ an expiry index. `postgresql_nonce_guard.py` implements atomic
 insert-if-absent consumption using a fresh psycopg 3 connection per call.
 Expired nonce rows are pruned in the same transaction as consumption, and a
 database error fails closed. The adapter rejects expired assertions and
-assertion lifetimes longer than its configured maximum (300 seconds by default).
+assertion lifetimes longer than its configured maximum (330 seconds by default: 300-second message lifetime plus 30-second clock skew).
 
 For a federated receiver, pass
 `postgresql_nonce_consumer(PostgreSQLNonceGuard(connection_factory))` as
