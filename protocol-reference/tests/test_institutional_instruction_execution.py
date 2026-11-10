@@ -539,6 +539,21 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
             tenant_id="tenant-ug", operation_id="OP-REAL-1",
             actor_ref="operator:alice", request_id="recovery-real-1")
         self.assertEqual(recovered["decision"]["protocol_decision"], "PASSED")
+
+        # Federation recovery must not bind a different signed instruction to
+        # an existing operation merely because its operation ID is identical.
+        altered_request = dict(request)
+        altered_request["purpose"] = "Different instruction under reused operation ID"
+        altered_request["payload_digest"] = compute_payload_digest(altered_request)
+        with self.assertRaisesRegex(
+            InstitutionalInstructionExecutionError,
+            "INSTITUTIONAL_RECOVERY_INSTRUCTION_MISMATCH",
+        ):
+            service.recover(
+                tenant_id="tenant-ug", operation_id="OP-REAL-1",
+                instruction=altered_request,
+            )
+
         observations = pipeline.cee.observations("OP-REAL-1")
         recovery_observations = [
             item for item in observations
