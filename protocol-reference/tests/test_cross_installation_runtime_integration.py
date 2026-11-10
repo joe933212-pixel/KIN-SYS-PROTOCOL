@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from governed_contracts import CONTRACT_VERSION, compute_payload_digest
 from institutional_federation import sign_cross_installation_instruction
-from institutional_federated_receiver import InstitutionalFederatedInstructionReceiver
+from institutional_federated_receiver import (\n    FederatedInstructionReceiverError,\n    InstitutionalFederatedInstructionReceiver,\n)
 from institutional_instruction_execution import InstitutionalInstructionExecutionService
 from protocol_pipeline import KinSysProtocolPipeline
 
