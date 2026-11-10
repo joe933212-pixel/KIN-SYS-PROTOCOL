@@ -187,7 +187,7 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
         self.origin = IsolatedInstallation(
             country="UG", tenant="tenant-ug", institution="BANK-UG-01",
             installation="INSTALL-UG-01", binding="BIND-UG-01",
-            jurisdiction="UG", policy_version="UG-RULES:1.0",
+            jurisdiction="UG", policy_version="KIN-SYS-DEMO-RULES:1.0",
             source_version="UG-SOURCES:1.0", minah_id="MINAH-UG-01",
             idp_id="IDP-UG-01", jurisdiction_package="UG-PACK-01",
             authority_version="UG-AUTHORITY:1.0",
@@ -195,7 +195,7 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
         self.receiver_installation = IsolatedInstallation(
             country="RW", tenant="tenant-rw", institution="BANK-RW-01",
             installation="INSTALL-RW-01", binding="BIND-RW-01",
-            jurisdiction="RW", policy_version="RW-RULES:3.2",
+            jurisdiction="RW", policy_version="KIN-SYS-DEMO-RULES:1.0",
             source_version="RW-SOURCES:2.0", minah_id="MINAH-RW-01",
             idp_id="IDP-RW-01", jurisdiction_package="RW-PACK-01",
             authority_version="RW-AUTHORITY:2.0",
@@ -245,7 +245,7 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
         return True
 
     def _federated_instruction(self, *, jurisdiction="RW",
-                               policy_version="RW-RULES:3.2",
+                               policy_version="KIN-SYS-DEMO-RULES:1.0",
                                operation_id="OP-UG-RW-001"):
         evidence = {
             "case_ref": "TX-UG-RW-001",
@@ -292,7 +292,7 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
             operation_id="OP-UG-LOCAL-001",
             request_id="REQ-UG-LOCAL-001",
             jurisdiction="UG",
-            policy_version="UG-RULES:1.0",
+            policy_version="KIN-SYS-DEMO-RULES:1.0",
             target_ref="TX-UG-LOCAL-001",
         )
         self.assertEqual(origin_result["decision"]["protocol_decision"], "PASSED")
