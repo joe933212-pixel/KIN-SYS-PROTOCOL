@@ -121,7 +121,8 @@ def verify_cross_installation_instruction(
     receiver_institution_id: str,
     trust_key_loader: Callable[[str, str], dict[str, Any] | None],
     public_key_loader: Callable[[str], bytes],
-    consume_nonce: Callable[[str, str, str, int], bool],
+    consume_nonce: Callable[[str, str, str, int], bool] | None = None,
+    accept_verified_message: Callable[..., dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.time,
     max_message_lifetime_seconds: int = 300,
     clock_skew_seconds: int = 30,
@@ -137,7 +138,8 @@ def verify_cross_installation_instruction(
     _identifier(receiver_installation_id, "RECEIVER_INSTALLATION_REQUIRED")
     _identifier(receiver_institution_id, "RECEIVER_INSTITUTION_REQUIRED")
     if (not callable(trust_key_loader) or not callable(public_key_loader)
-            or not callable(consume_nonce) or not callable(clock)
+            or (callable(consume_nonce) == callable(accept_verified_message))
+            or not callable(clock)
             or type(max_message_lifetime_seconds) is not int
             or max_message_lifetime_seconds < 1
             or type(clock_skew_seconds) is not int or clock_skew_seconds < 0):
@@ -193,16 +195,35 @@ def verify_cross_installation_instruction(
     except Exception as exc:
         raise FederationMessageError("FEDERATION_SIGNATURE_VERIFICATION_FAILED") from exc
 
-    # Consume only after all cryptographic, routing, trust and freshness checks.
-    # The callback must be atomic across every receiver worker.
+    # Persist replay protection only after all cryptographic, routing, trust
+    # and freshness checks. The inbox callback atomically commits the nonce
+    # and durable message record in one shared PostgreSQL transaction.
+    inbox_acceptance = None
     try:
-        consumed = consume_nonce(
-            receiver_tenant_id, claims["issuer_installation_id"],
-            claims["nonce"], claims["expires_at"])
+        if accept_verified_message is not None:
+            inbox_acceptance = accept_verified_message(
+                receiver_tenant_id=receiver_tenant_id,
+                issuer_installation_id=claims["issuer_installation_id"],
+                message_id=claims["message_id"],
+                operation_id=claims["operation_id"],
+                idempotency_key=claims["idempotency_key"],
+                nonce=claims["nonce"],
+                expires_at=claims["expires_at"],
+                envelope=envelope,
+                clock=clock,
+            )
+            if not isinstance(inbox_acceptance, dict):
+                raise FederationMessageError("FEDERATION_INBOX_ACCEPTANCE_INVALID")
+        else:
+            consumed = consume_nonce(
+                receiver_tenant_id, claims["issuer_installation_id"],
+                claims["nonce"], claims["expires_at"])
+            if consumed is not True:
+                raise FederationMessageError("FEDERATION_MESSAGE_REPLAYED")
+    except FederationMessageError:
+        raise
     except Exception as exc:
         raise FederationMessageError("FEDERATION_REPLAY_GUARD_UNAVAILABLE") from exc
-    if consumed is not True:
-        raise FederationMessageError("FEDERATION_MESSAGE_REPLAYED")
 
     return {
         "verified": True,
@@ -213,6 +234,7 @@ def verify_cross_installation_instruction(
         "receiver_installation_id": claims["receiver_installation_id"],
         "receiver_institution_id": claims["receiver_institution_id"],
         "instruction": claims["instruction"],
+        "inbox_acceptance": inbox_acceptance,
         "instruction_digest": hashlib.sha256(
             canonical_message_bytes(claims["instruction"])).hexdigest(),
         "authority_inherited": False,
