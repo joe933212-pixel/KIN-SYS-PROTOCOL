@@ -28,8 +28,9 @@ class InstitutionalFederatedInstructionReceiver:
         execution_service: Any,
         trust_key_loader: Callable,
         public_key_loader: Callable,
-        consume_nonce: Callable,
+        consume_nonce: Callable | None = None,
         clock: Callable,
+        accept_verified_message: Callable | None = None,
     ):
         for field, value in (
             ("receiver_tenant_id", receiver_tenant_id),
@@ -46,12 +47,14 @@ class InstitutionalFederatedInstructionReceiver:
         for name, callback in (
             ("trust_key_loader", trust_key_loader),
             ("public_key_loader", public_key_loader),
-            ("consume_nonce", consume_nonce),
             ("clock", clock),
         ):
             if not callable(callback):
                 raise FederatedInstructionReceiverError(
                     "RECEIVER_CALLBACK_REQUIRED:" + name)
+        if callable(consume_nonce) == callable(accept_verified_message):
+            raise FederatedInstructionReceiverError(
+                "RECEIVER_EXACTLY_ONE_REPLAY_ACCEPTOR_REQUIRED")
         self.receiver_tenant_id = receiver_tenant_id
         self.receiver_installation_id = receiver_installation_id
         self.receiver_institution_id = receiver_institution_id
@@ -60,6 +63,7 @@ class InstitutionalFederatedInstructionReceiver:
         self.trust_key_loader = trust_key_loader
         self.public_key_loader = public_key_loader
         self.consume_nonce = consume_nonce
+        self.accept_verified_message = accept_verified_message
         self.clock = clock
 
     def receive(self, envelope: dict[str, Any]) -> dict[str, Any]:
@@ -73,6 +77,7 @@ class InstitutionalFederatedInstructionReceiver:
                 trust_key_loader=self.trust_key_loader,
                 public_key_loader=self.public_key_loader,
                 consume_nonce=self.consume_nonce,
+                accept_verified_message=self.accept_verified_message,
                 clock=self.clock,
             )
         except FederationMessageError as exc:
@@ -120,6 +125,7 @@ class InstitutionalFederatedInstructionReceiver:
             "receiver_installation_id": self.receiver_installation_id,
             "receiver_institution_id": self.receiver_institution_id,
             "message_verified": True,
+            "durable_inbox_acceptance": verified.get("inbox_acceptance"),
             "origin_authority_inherited": False,
             "receiver_execution_authorised_by_origin": False,
             "receiver_decision": decision,
