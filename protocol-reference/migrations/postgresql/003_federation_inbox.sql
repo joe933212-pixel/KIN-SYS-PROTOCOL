@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS federation_inbox (
     operation_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     envelope_json JSONB NOT NULL,
+    envelope_sha256 TEXT NOT NULL CHECK (length(envelope_sha256) = 64),
     status TEXT NOT NULL CHECK (
         status IN ('RECEIVED', 'PROCESSING', 'COMPLETED', 'REJECTED', 'RETRYABLE_FAILURE')
     ),
