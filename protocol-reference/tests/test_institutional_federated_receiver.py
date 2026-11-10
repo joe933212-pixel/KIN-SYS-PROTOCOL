@@ -264,6 +264,98 @@ class FederatedReceiverTests(unittest.TestCase):
         self.assertEqual(recovered["delivery_status"], "COMPLETED")
         self.assertEqual(executor.calls, 2)
 
+    def test_retry_recovers_committed_operation_without_reexecution(self):
+        class MemoryInbox:
+            def __init__(self):
+                self.row = None
+            def accept_authenticated(self, **kwargs):
+                if self.row is not None:
+                    return {"inserted": False, "status": self.row["status"]}
+                self.row = {"status": "RECEIVED", "response": None}
+                return {"inserted": True, "status": "RECEIVED"}
+            def claim(self, **kwargs):
+                if self.row["status"] not in {"RECEIVED", "RETRYABLE_FAILURE"}:
+                    return None
+                self.row["status"] = "PROCESSING"
+                return {"lease_owner": kwargs["worker_id"]}
+            def complete(self, **kwargs):
+                self.row["status"] = "COMPLETED"
+                self.row["response"] = kwargs["response"]
+                return True
+            def fail(self, **kwargs):
+                self.row["status"] = (
+                    "RETRYABLE_FAILURE" if kwargs["retryable"] else "REJECTED"
+                )
+                return True
+            def get(self, **kwargs):
+                return self.row
+
+        class CommitThenLoseResponse:
+            def __init__(self):
+                self.execute_calls = 0
+                self.recovery_calls = 0
+                self.committed = False
+            def execute(self, **kwargs):
+                self.execute_calls += 1
+                self.committed = True
+                raise RuntimeError("simulated crash after durable local commit")
+            def recover(self, **kwargs):
+                self.recovery_calls += 1
+                self.asserted_instruction = kwargs["instruction"]
+                if not self.committed:
+                    return {"operation_id": kwargs["operation_id"], "status": "UNKNOWN"}
+                item = kwargs["instruction"]
+                return {
+                    "decision": {
+                        "request_id": item["request_id"],
+                        "operation_id": item["operation_id"],
+                        "protocol_decision": "PASSED",
+                        "cee_execution_ref": "cee-operation:" + item["operation_id"],
+                    },
+                    "result": {"status": "COMMITTED", "duplicate": True},
+                    "runtime_pins": {
+                        "tenant_id": kwargs["tenant_id"],
+                        "institution_id": kwargs["institution_id"],
+                        "binding_id": "BIND-RW-01",
+                        "jurisdiction_ref": "RW",
+                        "minah_deployment_id": "MINAH-RW-01",
+                        "minah_runtime_version": "1",
+                        "identity_provider_id": "IDP-RW-01",
+                        "identity_provider_version": "1",
+                        "policy_pack_version": "RW-RULES:3.2",
+                        "source_pack_version": "RW-SOURCES:1",
+                        "authority_profile_version": "RW-AUTHORITY:1",
+                    },
+                }
+
+        inbox, executor = MemoryInbox(), CommitThenLoseResponse()
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            inbox=inbox,
+            inbox_worker_id="receiver-worker-crash-recovery",
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(
+            FederatedInstructionReceiverError, "RECEIVER_LOCAL_EXECUTION_FAILED"
+        ):
+            receiver.receive(self.envelope)
+        self.assertEqual(inbox.row["status"], "RETRYABLE_FAILURE")
+
+        recovered = receiver.receive(self.envelope)
+
+        self.assertEqual(executor.execute_calls, 1)
+        self.assertEqual(executor.recovery_calls, 1)
+        self.assertEqual(executor.asserted_instruction, instruction())
+        self.assertEqual(recovered["delivery_status"], "COMPLETED")
+        self.assertTrue(recovered["receiver_result"]["duplicate"])
+        self.assertEqual(inbox.row["status"], "COMPLETED")
+
     def test_invalid_signature_never_reaches_local_execution(self):
         bad = {"claims": dict(self.envelope["claims"]),
                "signature": self.envelope["signature"]}
