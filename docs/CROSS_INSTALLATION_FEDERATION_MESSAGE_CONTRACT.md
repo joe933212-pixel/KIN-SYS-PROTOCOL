@@ -42,18 +42,18 @@ The callback passed to the verifier must implement atomic insert-if-absent seman
 
 ## Current scope and next increment
 
-Implemented here: canonical signed envelope creation, receiver-side cryptographic and routing verification, bounded freshness, receiver-local trust-key checks, replay callback boundary and adversarial unit tests.
+Implemented here: canonical signed envelope creation, receiver-side cryptographic and routing verification, bounded freshness, receiver-local trust-key checks, replay callback boundary, receiver-side execution orchestration and adversarial unit tests. `protocol-reference/tests/test_cross_installation_runtime_integration.py` additionally connects two isolated installation fixtures through the real `InstitutionalInstructionExecutionService` and reference `KinSysProtocolPipeline`, with separate CEE/IVM stores, MINAH profiles, jurisdiction/policy pins and execution-lease state. It verifies receiver-local execution, jurisdiction rejection and replay rejection.
 
-Not yet implemented: network transport, authenticated installation discovery, outbound delivery/retry queues, durable message inbox/outbox, acknowledgement protocol, receiver-side execution orchestration, cross-installation operation status, cross-store recovery, and end-to-end testing with two independently configured runtime stacks. The current tests use generated Ed25519 keys and test doubles; they are not evidence of live federation or production readiness.
+Still not implemented: network transport, authenticated installation discovery, outbound delivery/retry queues, durable message inbox/outbox, acknowledgement protocol, cross-installation operation status, and cross-store recovery. The integration fixture uses in-memory stores, local test lifecycle resolvers, generated Ed25519 keys, and the reference pipeline's synthetic MINAH/identity/authority adapters. It does not yet exercise the full persistent institutional registry and identity-provider registry on both sides, live OIDC authentication, independent deployed hosts, or production infrastructure. It is an integration milestone, not evidence of live federation or production readiness.
 
-The next engineering increment should build two isolated installation fixtures with separate registries, trust stores, identity policies, MINAH pipelines and CEE journals. A signed message should cross the boundary, be verified by the receiver, and then enter only the receiver's local governed execution path. Tests must prove both sides retain separate decision rights and audit histories.
+The next engineering increment should replace the lightweight runtime fixture with two fully seeded persistent institutional registries, identity-provider registries, receiver-local trust stores and independently configured MINAH deployment resolvers. Then add a durable acknowledgement/inbox boundary and prove that both installations retain separate decision rights and audit histories across restart and failure.
 
 
 ## Receiver-local execution adapter
 
 `protocol-reference/institutional_federated_receiver.py` adds the next boundary: after successful envelope verification, it selects the receiver tenant, institution and binding exclusively from receiver-local configuration and passes the digest-verified instruction and its evidence to the injected local governed execution service. The expected production integration is the existing `InstitutionalInstructionExecutionService`, which resolves the active receiver binding, pins its own identity provider/jurisdiction/MINAH deployment and enforces the local MINAH, identity, authority, CEE and final-decision execution order.
 
-The adapter never uses origin claims to select the receiving institution or binding. It does not translate a verified message into approval; a receiver-side rejection remains a receiver-side rejection. Its unit tests use a recording executor to prove routing and fail-closed behavior. They do not yet instantiate two complete production-configured execution stacks.
+The adapter never uses origin claims to select the receiving institution or binding. It does not translate a verified message into approval; a receiver-side rejection remains a receiver-side rejection. Its unit tests use a recording executor to prove routing and fail-closed behavior. The separate cross-installation runtime integration test now exercises the adapter with the real institutional execution service and reference pipeline on the receiver side, while retaining the limitations described above.
 
 ## Next integration test target
 
