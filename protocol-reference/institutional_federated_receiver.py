@@ -209,6 +209,7 @@ class InstitutionalFederatedInstructionReceiver:
                     local = recovered
 
         if local is None:
+            try:
                 # These identifiers come exclusively from this receiver's
                 # installation configuration, never from the signed origin claims.
                 local = self.execution_service.execute(
@@ -219,9 +220,8 @@ class InstitutionalFederatedInstructionReceiver:
                     evidence=evidence,
                 )
             except Exception as exc:
-                # Leave a retryable durable state. If the process died after the
-                # CEE/IVM commit, a later lease owner reconciles through the
-                # execution service's pinned operation journal and IVM idempotency.
+                # Leave a retryable durable state. A later lease owner first
+                # reconciles the pinned CEE/IVM operation before fresh execution.
                 if self.inbox is not None:
                     try:
                         self.inbox.fail(
@@ -234,8 +234,6 @@ class InstitutionalFederatedInstructionReceiver:
                         )
                     except Exception:
                         pass
-                # Do not convert a local rejection into a federation acceptance.
-                # Keep machine-readable protocol reasons while hiding adapter data.
                 reason = str(exc)
                 if reason and len(reason) <= 120 and all(
                     c.isupper() or c.isdigit() or c in "_:-" for c in reason
@@ -244,6 +242,7 @@ class InstitutionalFederatedInstructionReceiver:
                         "RECEIVER_LOCAL_EXECUTION:" + reason) from exc
                 raise FederatedInstructionReceiverError(
                     "RECEIVER_LOCAL_EXECUTION_FAILED") from exc
+
         if not isinstance(local, dict) or not isinstance(local.get("decision"), dict):
             if self.inbox is not None:
                 self.inbox.fail(
