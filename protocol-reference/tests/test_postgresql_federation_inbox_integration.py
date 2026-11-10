@@ -226,8 +226,18 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
         )
 
         contract = instruction()
+        contract["principal_ref"] = "AUTHORITY-001"
+        contract["authority_ref"] = "AUTHORITY-001"
+        contract["evidence_refs"] = ["evidence:restart-1001"]
+        evidence = {
+            "consignment_id": contract["target_ref"],
+            "commodity": "SYNTHETIC_MAIZE",
+            "origin": "UGANDA-DEMO",
+            "destination": "BORDER-DEMO",
+            "rule_refs": ["SYNTHETIC-RULE-1"],
+        }
+        contract["evidence"] = evidence
         contract["payload_digest"] = compute_payload_digest(contract)
-        evidence = contract["evidence"]
         event_id = "EV-" + hashlib.sha256(
             contract["idempotency_key"].encode("utf-8")
         ).hexdigest()[:24]
