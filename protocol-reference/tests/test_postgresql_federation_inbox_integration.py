@@ -228,6 +228,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
         contract = instruction()
         contract["principal_ref"] = "AUTHORITY-001"
         contract["authority_ref"] = "AUTHORITY-001"
+        contract["rule_pack_version"] = "KIN-SYS-DEMO-RULES:1.0"
         contract["evidence_refs"] = ["evidence:restart-1001"]
         evidence = {
             "consignment_id": contract["target_ref"],
@@ -267,6 +268,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(first_claim)
 
         resolver = RuntimeResolver()
+        resolver.context["policy_pack_version"] = "KIN-SYS-DEMO-RULES:1.0"
         profile = {
             "profile_version": "kin-sys-minah-profile-0.1",
             "deployment_id": "MINAH-UG-01",
@@ -274,7 +276,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
             "owner_ref": "tenant-ug",
             "use_case": "POSTGRES_FEDERATION_CRASH_RECOVERY_TEST",
             "jurisdictions": ["UG"],
-            "policy_pack_version": "BANK-RULES:1.0",
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
             "source_pack_version": "UG-SOURCES:2.0",
             "model_ref": "model:bank/minah-v1",
             "deployment_mode": "SELF_HOSTED",
@@ -285,7 +287,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
             "owner_ref": "tenant-ug",
             "model_ref": "model:bank/minah-v1",
             "jurisdictions": ["UG"],
-            "policy_pack_version": "BANK-RULES:1.0",
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
             "source_pack_version": "UG-SOURCES:2.0",
         }
         active_minah = ActiveMinahResolver({
