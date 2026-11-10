@@ -91,3 +91,30 @@ tenant isolation, concurrent single-consumer behavior, expiry/pruning, and
 fail-closed database errors. This is a durable shared replay-store increment;
 it does not add a durable federation inbox, acknowledgement/outbox, or
 exactly-once execution across the separate CEE/IVM transaction boundary.
+
+
+## Durable federation inbox foundation
+
+Migration `003_federation_inbox.sql` adds a receiver-tenant-scoped durable inbox
+with unique issuer/message and issuer/idempotency identities, a digest binding
+to the stored signed envelope, processing leases, attempt counts, terminal
+receiver-decision references, and retry/rejection state.
+
+`postgresql_federation_inbox.py` provides the corresponding PostgreSQL state
+machine. A caller first verifies the signed envelope, then calls
+`accept_verified(...)` to persist it. Workers use `claim(...)` to acquire an
+expiring lease; only the current unexpired lease owner can call `complete(...)`
+or `fail(...)`. Expired leases can be reclaimed, and duplicate delivery of
+the same envelope is idempotent. Reuse of a message or idempotency identity
+with different content is rejected.
+
+This is the durable inbox persistence primitive, not yet the complete
+federation acknowledgement/outbox protocol. It is not yet wired into
+`InstitutionalFederatedInstructionReceiver.receive()`; callers must not
+assume that receiver execution is automatically persisted through this
+state machine. A process crash between nonce consumption, inbox persistence,
+CEE/IVM execution and decision recording still requires explicit orchestration
+and recovery. In particular, a worker lease does not prove exactly-once
+execution across the separate CEE/IVM transaction boundary. The integration
+tests for this migration are skipped outside CI unless
+`KIN_SYS_POSTGRES_TEST_DSN` is configured.
