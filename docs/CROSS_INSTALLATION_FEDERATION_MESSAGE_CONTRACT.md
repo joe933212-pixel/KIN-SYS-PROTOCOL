@@ -44,7 +44,7 @@ The callback passed to the verifier must implement atomic insert-if-absent seman
 
 Implemented here: canonical signed envelope creation, receiver-side cryptographic and routing verification, bounded freshness, receiver-local trust-key checks, replay callback boundary, receiver-side execution orchestration and adversarial unit tests. `protocol-reference/tests/test_cross_installation_runtime_integration.py` additionally connects two isolated installation fixtures through the real `InstitutionalInstructionExecutionService` and reference `KinSysProtocolPipeline`, with separate CEE/IVM stores, MINAH profiles, jurisdiction/policy pins and execution-lease state. It verifies receiver-local execution, jurisdiction rejection and replay rejection.
 
-Still not implemented: network transport, authenticated installation discovery, outbound delivery/retry queues, durable message inbox/outbox, acknowledgement protocol, cross-installation operation status, and cross-store recovery. The integration fixture uses in-memory stores, local test lifecycle resolvers, generated Ed25519 keys, and the reference pipeline's synthetic MINAH/identity/authority adapters. It does not yet exercise the full persistent institutional registry and identity-provider registry on both sides, live OIDC authentication, independent deployed hosts, or production infrastructure. It is an integration milestone, not evidence of live federation or production readiness.
+Still not implemented: network transport, authenticated installation discovery, outbound delivery/retry queues, acknowledgement/outbox protocol, cross-installation operation status, and cross-store recovery. A first durable inbox persistence primitive is now present (migration `003_federation_inbox.sql` and `protocol-reference/postgresql_federation_inbox.py`), but it is not yet integrated into the receiver execution path. The integration fixture uses in-memory stores, local test lifecycle resolvers, generated Ed25519 keys, and the reference pipeline's synthetic MINAH/identity/authority adapters. It does not yet exercise the full persistent institutional registry and identity-provider registry on both sides, live OIDC authentication, independent deployed hosts, or production infrastructure. It is an integration milestone, not evidence of live federation or production readiness.
 
 The next engineering increment should replace the lightweight runtime fixture with two fully seeded persistent institutional registries, identity-provider registries, receiver-local trust stores and independently configured MINAH deployment resolvers. Then add a durable federation inbox/acknowledgement boundary with idempotent message acceptance, persisted receiver decision references and restart/failure recovery. Prove that both installations retain separate decision rights and audit histories; do not claim exactly-once execution across CEE/IVM until its cross-store recovery protocol is independently implemented and tested.
 
@@ -58,3 +58,35 @@ The adapter never uses origin claims to select the receiving institution or bind
 ## Next integration test target
 
 The next test increment must instantiate two isolated installation configurations and connect each adapter to its own real institutional execution service, registry, MINAH deployment resolver, identity provider, authority grant store and CEE/IVM persistence. It must prove that a receiver-local jurisdiction or authority rejection does not alter the origin's history, and that an acknowledgement is correlated to the original message/operation without sharing decision authority.
+
+
+## Durable receiver inbox foundation
+
+Migration `003_federation_inbox.sql` and
+`protocol-reference/postgresql_federation_inbox.py` add a PostgreSQL-backed
+receiver inbox state machine. After an envelope has been independently
+verified, a caller can persist the exact envelope with receiver tenant,
+issuer installation, message, operation and idempotency identities. The
+stored canonical-envelope digest prevents a repeated message/idempotency
+identity from being rebound to different content. Duplicate delivery of the
+same envelope returns the existing record.
+
+Workers claim deliveries using database-backed expiring leases. Only the
+current lease owner can record a terminal receiver decision or release the
+message as retryable/permanently rejected. An expired lease can be reclaimed
+after a worker stops making progress. The integration suite covers duplicate
+acceptance, content-conflict rejection, concurrent single-worker claims,
+lease-owner enforcement, retry and lease-expiry reclaim.
+
+This is deliberately a persistence primitive, not yet a complete end-to-end
+receiver workflow. It is not currently wired into
+`InstitutionalFederatedInstructionReceiver.receive()`. In particular, the
+current verifier consumes the replay nonce before the caller persists the
+inbox row, so a crash in that interval can leave a consumed nonce without a
+durable inbox record. A further integration step must unify authenticated
+message acceptance and replay registration in one database transaction, then
+connect claim/execute/decision recording and define acknowledgement delivery.
+A crash after CEE/IVM commits but before inbox completion can also cause a
+reclaimed worker to retry execution; the current lease alone does not prevent
+that. Exactly-once execution across CEE/IVM remains unproven and must not be
+claimed.
