@@ -176,6 +176,15 @@ class InstitutionalFederatedInstructionReceiver:
         instruction = verified["instruction"]
         evidence = instruction.get("evidence")
         if not isinstance(evidence, dict):
+            if self.inbox is not None:
+                self.inbox.fail(
+                    receiver_tenant_id=self.receiver_tenant_id,
+                    issuer_installation_id=verified["issuer_installation_id"],
+                    message_id=verified["message_id"],
+                    worker_id=self.inbox_worker_id,
+                    error_code="FEDERATED_INSTRUCTION_EVIDENCE_REQUIRED",
+                    retryable=False,
+                )
             raise FederatedInstructionReceiverError(
                 "FEDERATED_INSTRUCTION_EVIDENCE_REQUIRED")
         try:
@@ -229,6 +238,15 @@ class InstitutionalFederatedInstructionReceiver:
         decision = local["decision"]
         if (decision.get("operation_id") != verified["operation_id"]
                 or decision.get("request_id") != instruction.get("request_id")):
+            if self.inbox is not None:
+                self.inbox.fail(
+                    receiver_tenant_id=self.receiver_tenant_id,
+                    issuer_installation_id=verified["issuer_installation_id"],
+                    message_id=verified["message_id"],
+                    worker_id=self.inbox_worker_id,
+                    error_code="RECEIVER_LOCAL_DECISION_BINDING_MISMATCH",
+                    retryable=False,
+                )
             raise FederatedInstructionReceiverError(
                 "RECEIVER_LOCAL_DECISION_BINDING_MISMATCH")
         response = {
