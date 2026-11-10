@@ -48,7 +48,19 @@ class LocalExecution:
                 "cee_execution_ref": "cee-operation:" + item["operation_id"],
             },
             "result": {"status": "DEFERRED"},
-            "runtime_pins": {"institution_id": kwargs["institution_id"]},
+            "runtime_pins": {
+                "tenant_id": kwargs["tenant_id"],
+                "institution_id": kwargs["institution_id"],
+                "binding_id": kwargs["binding_id"],
+                "jurisdiction_ref": "RW",
+                "minah_deployment_id": "MINAH-RW-01",
+                "minah_runtime_version": "1",
+                "identity_provider_id": "IDP-RW-01",
+                "identity_provider_version": "1",
+                "policy_pack_version": "RW-RULES:3.2",
+                "source_pack_version": "RW-SOURCES:1",
+                "authority_profile_version": "RW-AUTHORITY:1",
+            },
         }
 
 
@@ -111,6 +123,9 @@ class FederatedReceiverTests(unittest.TestCase):
         self.assertEqual(call["institution_id"], "BANK-RW-01")
         self.assertEqual(call["binding_id"], "BIND-RW-01")
         self.assertEqual(call["instruction"]["principal_ref"], "principal:origin-user")
+        self.assertEqual(result["receiver_runtime_pins"]["tenant_id"], "tenant-rw")
+        self.assertEqual(result["receiver_runtime_pins"]["institution_id"], "BANK-RW-01")
+        self.assertEqual(result["receiver_runtime_pins"]["binding_id"], "BIND-RW-01")
 
 
     def test_durable_duplicate_returns_stored_ack_without_reexecution(self):
@@ -212,7 +227,19 @@ class FederatedReceiverTests(unittest.TestCase):
                         "cee_execution_ref": "cee-operation:" + item["operation_id"],
                     },
                     "result": {"status": "COMMITTED"},
-                    "runtime_pins": {},
+                    "runtime_pins": {
+                        "tenant_id": kwargs["tenant_id"],
+                        "institution_id": kwargs["institution_id"],
+                        "binding_id": kwargs["binding_id"],
+                        "jurisdiction_ref": "RW",
+                        "minah_deployment_id": "MINAH-RW-01",
+                        "minah_runtime_version": "1",
+                        "identity_provider_id": "IDP-RW-01",
+                        "identity_provider_version": "1",
+                        "policy_pack_version": "RW-RULES:3.2",
+                        "source_pack_version": "RW-SOURCES:1",
+                        "authority_profile_version": "RW-AUTHORITY:1",
+                    },
                 }
 
         inbox, executor = MemoryInbox(), FailsOnce()
