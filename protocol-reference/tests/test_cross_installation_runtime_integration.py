@@ -12,7 +12,10 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from governed_contracts import CONTRACT_VERSION, compute_payload_digest
 from institutional_federation import sign_cross_installation_instruction
-from institutional_federated_receiver import (\n    FederatedInstructionReceiverError,\n    InstitutionalFederatedInstructionReceiver,\n)
+from institutional_federated_receiver import (
+    FederatedInstructionReceiverError,
+    InstitutionalFederatedInstructionReceiver,
+)
 from institutional_instruction_execution import InstitutionalInstructionExecutionService
 from protocol_pipeline import KinSysProtocolPipeline
 
@@ -329,8 +332,7 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
         ):
             self.receiver.receive(self._envelope(request, nonce="NONCE-WRONG-JUR-001"))
         self.assertIsNone(self.receiver_installation.pipeline.cee.get("OP-UG-RW-001"))
-        self.assertIsNotNone(self.origin.pipeline.cee.get("OP-UG-LOCAL-001")
-                             if self.origin.pipeline.cee.get("OP-UG-LOCAL-001") else None)
+        self.assertIsNone(self.origin.pipeline.cee.get("OP-UG-RW-001"))
 
     def test_replay_is_rejected_before_receiver_execution(self):
         request = self._federated_instruction()
