@@ -36,9 +36,9 @@ After successful message verification, the receiver must resolve the instruction
 
 ## Replay storage
 
-`sqlite_nonce_consumer(...)` adapts the existing `SQLiteNonceGuard` to a composite scope of receiver tenant, issuer installation and nonce. This is suitable for a local/shared SQLite file only. Independent hosts must use a common durable atomic replay service; separate per-node SQLite files do not prevent cross-host replay.
+`sqlite_nonce_consumer(...)` adapts the local `SQLiteNonceGuard`; it is suitable only for workers sharing one SQLite file. The new `PostgreSQLNonceGuard` in `protocol-reference/postgresql_nonce_guard.py`, introduced by migration `002_federation_nonce_guard.sql`, provides a shared multi-worker replay boundary. Use `postgresql_nonce_consumer(PostgreSQLNonceGuard(connection_factory))` for a federated receiver whose workers share the same PostgreSQL authority. The adapter uses a tenant-scoped unique key derived from issuer installation plus nonce, atomically inserts once, prunes expired entries, and fails closed on database errors. Its maximum expiry window is 330 seconds to accommodate the 300-second message lifetime plus 30 seconds of permitted clock skew.
 
-The callback passed to the verifier must implement atomic insert-if-absent semantics and return `True` only for the first valid consumption. A replay-store outage fails closed.
+The callback passed to the verifier must implement atomic insert-if-absent semantics and return `True` only for the first valid consumption. A replay-store outage fails closed. The PostgreSQL integration tests cover independent guard instances, concurrent duplicate consumption, tenant separation, expiry and store failure. This is durable replay protection, not yet a durable federation inbox or exactly-once execution mechanism.
 
 ## Current scope and next increment
 
@@ -46,7 +46,7 @@ Implemented here: canonical signed envelope creation, receiver-side cryptographi
 
 Still not implemented: network transport, authenticated installation discovery, outbound delivery/retry queues, durable message inbox/outbox, acknowledgement protocol, cross-installation operation status, and cross-store recovery. The integration fixture uses in-memory stores, local test lifecycle resolvers, generated Ed25519 keys, and the reference pipeline's synthetic MINAH/identity/authority adapters. It does not yet exercise the full persistent institutional registry and identity-provider registry on both sides, live OIDC authentication, independent deployed hosts, or production infrastructure. It is an integration milestone, not evidence of live federation or production readiness.
 
-The next engineering increment should replace the lightweight runtime fixture with two fully seeded persistent institutional registries, identity-provider registries, receiver-local trust stores and independently configured MINAH deployment resolvers. Then add a durable acknowledgement/inbox boundary and prove that both installations retain separate decision rights and audit histories across restart and failure.
+The next engineering increment should replace the lightweight runtime fixture with two fully seeded persistent institutional registries, identity-provider registries, receiver-local trust stores and independently configured MINAH deployment resolvers. Then add a durable federation inbox/acknowledgement boundary with idempotent message acceptance, persisted receiver decision references and restart/failure recovery. Prove that both installations retain separate decision rights and audit histories; do not claim exactly-once execution across CEE/IVM until its cross-store recovery protocol is independently implemented and tested.
 
 
 ## Receiver-local execution adapter
