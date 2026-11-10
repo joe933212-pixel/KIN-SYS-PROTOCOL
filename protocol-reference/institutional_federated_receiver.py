@@ -249,6 +249,33 @@ class InstitutionalFederatedInstructionReceiver:
                 )
             raise FederatedInstructionReceiverError(
                 "RECEIVER_LOCAL_DECISION_BINDING_MISMATCH")
+        runtime_pins = local.get("runtime_pins")
+        if (not isinstance(runtime_pins, dict)
+                or runtime_pins.get("tenant_id") != self.receiver_tenant_id
+                or runtime_pins.get("institution_id") != self.receiver_institution_id
+                or runtime_pins.get("binding_id") != self.receiver_binding_id
+                or not all(
+                    isinstance(runtime_pins.get(field), str)
+                    and runtime_pins[field].strip()
+                    for field in (
+                        "jurisdiction_ref", "minah_deployment_id",
+                        "minah_runtime_version", "identity_provider_id",
+                        "identity_provider_version", "policy_pack_version",
+                        "source_pack_version", "authority_profile_version",
+                    )
+                )):
+            if self.inbox is not None:
+                self.inbox.fail(
+                    receiver_tenant_id=self.receiver_tenant_id,
+                    issuer_installation_id=verified["issuer_installation_id"],
+                    message_id=verified["message_id"],
+                    worker_id=self.inbox_worker_id,
+                    error_code="RECEIVER_RUNTIME_PINS_INVALID",
+                    retryable=False,
+                )
+            raise FederatedInstructionReceiverError(
+                "RECEIVER_RUNTIME_PINS_INVALID")
+
         response = {
             "message_id": verified["message_id"],
             "operation_id": verified["operation_id"],
@@ -261,6 +288,7 @@ class InstitutionalFederatedInstructionReceiver:
             "origin_authority_inherited": False,
             "receiver_execution_authorised_by_origin": False,
             "receiver_decision": decision,
+            "receiver_runtime_pins": dict(runtime_pins),
             "receiver_result": local.get("result", {}),
             "delivery_status": "COMPLETED",
             "duplicate_delivery": False,
