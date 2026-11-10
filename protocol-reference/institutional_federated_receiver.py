@@ -83,6 +83,13 @@ class InstitutionalFederatedInstructionReceiver:
         except FederationMessageError as exc:
             raise FederatedInstructionReceiverError(str(exc)) from exc
 
+        acceptance = verified.get("inbox_acceptance")
+        if isinstance(acceptance, dict) and acceptance.get("inserted") is not True:
+            # A redelivery must not execute the local instruction a second
+            # time. The caller should retrieve or publish the durable status.
+            raise FederatedInstructionReceiverError(
+                "FEDERATED_MESSAGE_ALREADY_DURABLY_ACCEPTED")
+
         instruction = verified["instruction"]
         evidence = instruction.get("evidence")
         if not isinstance(evidence, dict):
