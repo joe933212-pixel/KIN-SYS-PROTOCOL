@@ -58,8 +58,6 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
             },
             "signature": "synthetic-test-envelope",
         }
-        self.accept()
-
     def tearDown(self):
         self.admin.execute(
             self.sql.SQL("DROP SCHEMA {} CASCADE").format(self.sql.Identifier(self.schema))
@@ -77,6 +75,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
         )
 
     def claim(self, worker):
+        self.accept()
         return self.inbox_a.claim(
             receiver_tenant_id="tenant-rw",
             issuer_installation_id="INSTALL-UG-01",
@@ -93,6 +92,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
         self.assertEqual(second["status"], "RECEIVED")
 
     def test_message_or_idempotency_reuse_with_different_content_is_rejected(self):
+        self.accept()
         altered = {**self.message, "claims": {**self.message["claims"], "operation_id": "OP-OTHER"}}
         with self.assertRaisesRegex(FederationInboxError, "IDEMPOTENCY_CONFLICT"):
             self.accept(altered)
@@ -145,6 +145,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
         self.assertEqual(retry["attempt_count"], 2)
 
     def test_expired_lease_can_be_reclaimed_by_another_worker(self):
+        self.accept()
         first = self.inbox_a.claim(
             receiver_tenant_id="tenant-rw",
             issuer_installation_id="INSTALL-UG-01",
