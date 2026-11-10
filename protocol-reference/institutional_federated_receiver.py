@@ -141,7 +141,9 @@ class InstitutionalFederatedInstructionReceiver:
                     "message_verified": True,
                     "duplicate_delivery": True,
                     "delivery_status": existing.get("status", "UNKNOWN"),
-                    "acknowledgement_status": "PENDING",
+                    "acknowledgement_status": (
+                        "REJECTED" if existing.get("status") == "REJECTED" else "PENDING"
+                    ),
                     "production_ready": False,
                 }
 
