@@ -79,7 +79,8 @@ class PostgreSQLNonceGuardIntegrationTests(unittest.TestCase):
 
     def test_expired_and_overlong_expiry_are_rejected(self):
         self.assertFalse(self.guard_a.consume("tenant-rw", "nonce-old", self.now[0]))
-        self.assertFalse(self.guard_a.consume("tenant-rw", "nonce-long", self.now[0] + 301))
+        self.assertTrue(self.guard_a.consume("tenant-rw", "nonce-skew-window", self.now[0] + 330))
+        self.assertFalse(self.guard_a.consume("tenant-rw", "nonce-long", self.now[0] + 331))
 
     def test_database_failure_fails_closed(self):
         broken = PostgreSQLNonceGuard(lambda: (_ for _ in ()).throw(RuntimeError("offline")),
