@@ -207,6 +207,22 @@ class InstitutionalFederatedInstructionReceiver:
                     recovered.get("decision"), dict
                 ):
                     local = recovered
+                elif (isinstance(recovered, dict)
+                      and recovered.get("reason") == "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE"):
+                    # Never re-execute merely because a restarted process
+                    # cannot locate the original durable journal.
+                    try:
+                        self.inbox.fail(
+                            receiver_tenant_id=self.receiver_tenant_id,
+                            issuer_installation_id=verified["issuer_installation_id"],
+                            message_id=verified["message_id"],
+                            worker_id=self.inbox_worker_id,
+                            error_code="ORIGINAL_PINNED_RUNTIME_UNAVAILABLE",
+                            retryable=True,
+                        )
+                    finally:
+                        raise FederatedInstructionReceiverError(
+                            "RECEIVER_ORIGINAL_PINNED_RUNTIME_UNAVAILABLE")
 
         if local is None:
             try:
