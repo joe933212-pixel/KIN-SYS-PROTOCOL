@@ -129,6 +129,12 @@ execution path. If an operation exists, the service performs its existing
 cross-store integrity checks and recovery procedure under the original
 institutional runtime pins and active deployment lifecycle.
 
+If the original journal cannot be located after a process restart, the
+receiver fails closed and leaves the inbox retryable; it must not interpret an
+unavailable recovery store as proof that execution never happened. A fresh
+execution is allowed only when the configured operation resolver (or the
+known local journal) authoritatively reports that no operation exists.
+
 This closes the previously missing application-level recovery handoff, but
 does not make the CEE/IVM stores transactional with PostgreSQL. The remaining
 validation gate is a PostgreSQL-backed process restart/failure-injection test
