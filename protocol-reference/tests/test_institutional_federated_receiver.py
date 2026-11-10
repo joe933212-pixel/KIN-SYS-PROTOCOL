@@ -45,6 +45,7 @@ class LocalExecution:
                 "request_id": item["request_id"],
                 "operation_id": item["operation_id"],
                 "protocol_decision": "DEFERRED",
+                "cee_execution_ref": "cee-operation:" + item["operation_id"],
             },
             "result": {"status": "DEFERRED"},
             "runtime_pins": {"institution_id": kwargs["institution_id"]},
@@ -112,16 +113,44 @@ class FederatedReceiverTests(unittest.TestCase):
         self.assertEqual(call["instruction"]["principal_ref"], "principal:origin-user")
 
 
-    def test_durable_duplicate_is_not_executed_twice(self):
-        calls = []
+    def test_durable_duplicate_returns_stored_ack_without_reexecution(self):
+        class MemoryInbox:
+            def __init__(self):
+                self.rows = {}
+            def accept_authenticated(self, **kwargs):
+                key = (kwargs["receiver_tenant_id"], kwargs["issuer_installation_id"],
+                       kwargs["message_id"])
+                existing = self.rows.get(key)
+                if existing is not None:
+                    return {"inserted": False, "status": existing["status"]}
+                self.rows[key] = {"status": "RECEIVED", "response": None}
+                return {"inserted": True, "status": "RECEIVED"}
+            def claim(self, **kwargs):
+                row = self.rows[(kwargs["receiver_tenant_id"],
+                                 kwargs["issuer_installation_id"], kwargs["message_id"])]
+                if row["status"] != "RECEIVED":
+                    return None
+                row["status"] = "PROCESSING"
+                return {"lease_owner": kwargs["worker_id"]}
+            def complete(self, **kwargs):
+                row = self.rows[(kwargs["receiver_tenant_id"],
+                                 kwargs["issuer_installation_id"], kwargs["message_id"])]
+                if row["status"] != "PROCESSING":
+                    return False
+                row["status"] = "COMPLETED"
+                row["response"] = kwargs["response"]
+                row["decision_ref"] = kwargs["decision_ref"]
+                return True
+            def fail(self, **kwargs):
+                row = self.rows[(kwargs["receiver_tenant_id"],
+                                 kwargs["issuer_installation_id"], kwargs["message_id"])]
+                row["status"] = "RETRYABLE_FAILURE" if kwargs["retryable"] else "REJECTED"
+                return True
+            def get(self, **kwargs):
+                return self.rows.get((kwargs["receiver_tenant_id"],
+                                      kwargs["issuer_installation_id"], kwargs["message_id"]))
 
-        def accept_verified_message(**kwargs):
-            calls.append(kwargs)
-            return {
-                "inserted": len(calls) == 1,
-                "status": "RECEIVED",
-            }
-
+        inbox = MemoryInbox()
         receiver = InstitutionalFederatedInstructionReceiver(
             receiver_tenant_id="tenant-rw",
             receiver_installation_id="INSTALL-RW-01",
@@ -130,16 +159,16 @@ class FederatedReceiverTests(unittest.TestCase):
             execution_service=self.executor,
             trust_key_loader=lambda tenant, key: self.key_record,
             public_key_loader=lambda ref: self.public,
-            accept_verified_message=accept_verified_message,
+            inbox=inbox,
+            inbox_worker_id="receiver-worker-01",
             clock=lambda: self.now,
         )
-        receiver.receive(self.envelope)
-        with self.assertRaisesRegex(
-            FederatedInstructionReceiverError,
-            "FEDERATED_MESSAGE_ALREADY_DURABLY_ACCEPTED",
-        ):
-            receiver.receive(self.envelope)
-        self.assertEqual(len(calls), 2)
+        first = receiver.receive(self.envelope)
+        second = receiver.receive(self.envelope)
+        self.assertEqual(first["delivery_status"], "COMPLETED")
+        self.assertTrue(second["duplicate_delivery"])
+        self.assertEqual(second["delivery_status"], "COMPLETED")
+        self.assertEqual(second["receiver_decision"], first["receiver_decision"])
         self.assertEqual(len(self.executor.calls), 1)
 
     def test_invalid_signature_never_reaches_local_execution(self):
