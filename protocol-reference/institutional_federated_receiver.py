@@ -144,7 +144,22 @@ class InstitutionalFederatedInstructionReceiver:
                 lease_seconds=self.inbox_lease_seconds,
             )
             if inbox_claim is None:
-                raise FederatedInstructionReceiverError("FEDERATION_INBOX_CLAIM_UNAVAILABLE")
+                existing = self.inbox.get(
+                    receiver_tenant_id=self.receiver_tenant_id,
+                    issuer_installation_id=verified["issuer_installation_id"],
+                    message_id=verified["message_id"],
+                )
+                return {
+                    "message_id": verified["message_id"],
+                    "operation_id": verified["operation_id"],
+                    "receiver_installation_id": self.receiver_installation_id,
+                    "receiver_institution_id": self.receiver_institution_id,
+                    "message_verified": True,
+                    "duplicate_delivery": True,
+                    "delivery_status": (existing or {}).get("status", "UNKNOWN"),
+                    "acknowledgement_status": "PENDING",
+                    "production_ready": False,
+                }
 
         instruction = verified["instruction"]
         evidence = instruction.get("evidence")
@@ -162,6 +177,21 @@ class InstitutionalFederatedInstructionReceiver:
                 evidence=evidence,
             )
         except Exception as exc:
+            # Leave a retryable durable state. If the process died after the
+            # CEE/IVM commit, a later lease owner reconciles through the
+            # execution service's pinned operation journal and IVM idempotency.
+            if self.inbox is not None:
+                try:
+                    self.inbox.fail(
+                        receiver_tenant_id=self.receiver_tenant_id,
+                        issuer_installation_id=verified["issuer_installation_id"],
+                        message_id=verified["message_id"],
+                        worker_id=self.inbox_worker_id,
+                        error_code="RECEIVER_EXECUTION_REQUIRES_RETRY",
+                        retryable=True,
+                    )
+                except Exception:
+                    pass
             # Do not convert a local rejection into a federation acceptance.
             # Keep machine-readable protocol reasons while hiding adapter data.
             reason = str(exc)
@@ -173,6 +203,15 @@ class InstitutionalFederatedInstructionReceiver:
             raise FederatedInstructionReceiverError(
                 "RECEIVER_LOCAL_EXECUTION_FAILED") from exc
         if not isinstance(local, dict) or not isinstance(local.get("decision"), dict):
+            if self.inbox is not None:
+                self.inbox.fail(
+                    receiver_tenant_id=self.receiver_tenant_id,
+                    issuer_installation_id=verified["issuer_installation_id"],
+                    message_id=verified["message_id"],
+                    worker_id=self.inbox_worker_id,
+                    error_code="RECEIVER_LOCAL_DECISION_INVALID",
+                    retryable=False,
+                )
             raise FederatedInstructionReceiverError(
                 "RECEIVER_LOCAL_DECISION_INVALID")
         decision = local["decision"]
