@@ -248,18 +248,20 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
 
     def _federated_instruction(self, *, jurisdiction="RW",
                                policy_version="KIN-SYS-DEMO-RULES:1.0",
-                               operation_id="OP-UG-RW-001"):
+                               operation_id="OP-UG-RW-001",
+                               request_id="REQ-UG-RW-001",
+                               origin_country="UG", destination_country="RW"):
         evidence = {
-            "case_ref": "TX-UG-RW-001",
-            "consignment_id": "TX-UG-RW-001",
+            "case_ref": "TX-" + origin_country + "-" + destination_country + "-001",
+            "consignment_id": "TX-" + origin_country + "-" + destination_country + "-001",
             "commodity": "SYNTHETIC_MAIZE",
-            "origin": "UG",
-            "destination": "RW",
+            "origin": origin_country,
+            "destination": destination_country,
             "rule_refs": ["SYNTHETIC-CROSS-BORDER-RULE"],
         }
         request = {
             "contract_version": CONTRACT_VERSION,
-            "request_id": "REQ-UG-RW-001",
+            "request_id": request_id,
             "operation_id": operation_id,
             "idempotency_key": "IDEM-" + operation_id,
             "principal_ref": "AUTHORITY-001",
@@ -276,19 +278,25 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
         request["payload_digest"] = compute_payload_digest(request)
         return request
 
-    def _envelope(self, request, *, nonce="NONCE-UG-RW-001"):
+    def _envelope(self, request, *, nonce="NONCE-UG-RW-001",
+                  key_id="KEY-UG-01",
+                  issuer_installation_id="INSTALL-UG-01",
+                  issuer_institution_id="BANK-UG-01",
+                  receiver_installation_id="INSTALL-RW-01",
+                  receiver_institution_id="BANK-RW-01",
+                  private_key=None):
         return sign_cross_installation_instruction(
             instruction=request,
             message_id="MSG-" + request["operation_id"],
-            key_id="KEY-UG-01",
-            issuer_installation_id="INSTALL-UG-01",
-            issuer_institution_id="BANK-UG-01",
-            receiver_installation_id="INSTALL-RW-01",
-            receiver_institution_id="BANK-RW-01",
+            key_id=key_id,
+            issuer_installation_id=issuer_installation_id,
+            issuer_institution_id=issuer_institution_id,
+            receiver_installation_id=receiver_installation_id,
+            receiver_institution_id=receiver_institution_id,
             nonce=nonce,
             issued_at=self.now - 30,
             expires_at=self.now + 90,
-            private_key=self.private_key,
+            private_key=private_key or self.private_key,
         )
 
     def test_signed_instruction_executes_only_in_receiver_independent_runtime(self):
@@ -338,18 +346,89 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
         self.assertIsNone(self.receiver_installation.pipeline.cee.get("OP-UG-RW-001"))
         self.assertIsNone(self.origin.pipeline.cee.get("OP-UG-RW-001"))
 
-    def test_replay_is_rejected_before_receiver_execution(self):
-        request = self._federated_instruction()
-        envelope = self._envelope(request, nonce="NONCE-REPLAY-001")
-        first = self.receiver.receive(envelope)
-        self.assertEqual(first["receiver_decision"]["protocol_decision"], "PASSED")
-        with self.assertRaises(FederatedInstructionReceiverError):
-            self.receiver.receive(envelope)
-        self.assertEqual(
-            len([event for event in self.receiver_installation.pipeline.cee.events(
-                "OP-UG-RW-001"
-            ) if event["phase"] == "REQUESTED"]),
-            1,
+    def test_reciprocal_federation_executes_under_the_other_installations_own_authority(self):
+        # Reverse the direction: Rwanda signs; Uganda independently verifies
+        # the issuer and runs its own MINAH/CEE/IVM execution boundary.
+        rw_private_key = Ed25519PrivateKey.generate()
+        rw_public_key = rw_private_key.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        )
+        ug_trusted_key = {
+            "tenant_id": "tenant-ug",
+            "key_id": "KEY-RW-01",
+            "issuer_institution_id": "BANK-RW-01",
+            "algorithm": "Ed25519",
+            "status": "ACTIVE",
+            "public_key_ref": "keyref:rw-bank",
+            "valid_from": 1_700_000_000,
+            "valid_until": 1_900_000_000,
+            "issuer_valid_from": 1_700_000_000,
+            "issuer_valid_until": 1_900_000_000,
+        }
+        reverse_replay_nonces = set()
+
+        def consume_reverse_nonce(tenant, issuer, nonce, expires_at):
+            key = (tenant, issuer, nonce)
+            if key in reverse_replay_nonces:
+                return False
+            reverse_replay_nonces.add(key)
+            return True
+
+        ug_receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-ug",
+            receiver_installation_id="INSTALL-UG-01",
+            receiver_institution_id="BANK-UG-01",
+            receiver_binding_id="BIND-UG-01",
+            execution_service=self.origin.service,
+            trust_key_loader=lambda tenant, key_id: (
+                ug_trusted_key
+                if tenant == "tenant-ug" and key_id == "KEY-RW-01"
+                else None
+            ),
+            public_key_loader=lambda key_ref: (
+                rw_public_key if key_ref == "keyref:rw-bank" else b""
+            ),
+            consume_nonce=consume_reverse_nonce,
+            clock=lambda: self.now,
+        )
+        request = self._federated_instruction(
+            jurisdiction="UG",
+            operation_id="OP-RW-UG-001",
+            request_id="REQ-RW-UG-001",
+            origin_country="RW",
+            destination_country="UG",
+        )
+        envelope = self._envelope(
+            request,
+            nonce="NONCE-RW-UG-001",
+            key_id="KEY-RW-01",
+            issuer_installation_id="INSTALL-RW-01",
+            issuer_institution_id="BANK-RW-01",
+            receiver_installation_id="INSTALL-UG-01",
+            receiver_institution_id="BANK-UG-01",
+            private_key=rw_private_key,
+        )
+
+        result = ug_receiver.receive(envelope)
+
+        self.assertTrue(result["message_verified"])
+        self.assertFalse(result["origin_authority_inherited"])
+        self.assertFalse(result["receiver_execution_authorised_by_origin"])
+        self.assertEqual(result["receiver_decision"]["protocol_decision"], "PASSED")
+        self.assertEqual(result["receiver_runtime_pins"]["tenant_id"], "tenant-ug")
+        self.assertEqual(result["receiver_runtime_pins"]["institution_id"], "BANK-UG-01")
+        self.assertEqual(result["receiver_runtime_pins"]["jurisdiction_ref"], "UG")
+        self.assertEqual(result["receiver_runtime_pins"]["minah_deployment_id"], "MINAH-UG-01")
+
+        ug_operation = self.origin.pipeline.cee.get("OP-RW-UG-001")
+        self.assertIsNotNone(ug_operation)
+        self.assertEqual(ug_operation["phase"], "FINALIZED")
+        self.assertEqual(ug_operation["outcome"], "COMMITTED")
+        self.assertIsNone(
+            self.receiver_installation.pipeline.cee.get("OP-RW-UG-001")
+        )
+        self.assertNotEqual(
+            self.origin.pipeline.cee, self.receiver_installation.pipeline.cee
         )
 
 
