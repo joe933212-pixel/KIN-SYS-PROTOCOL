@@ -170,11 +170,14 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
             response={"protocol_decision": "PASSED"},
         )
         self.assertTrue(completed)
-        self.assertEqual(self.inbox_b.get(
+        stored = self.inbox_b.get(
             receiver_tenant_id="tenant-rw",
             issuer_installation_id="INSTALL-UG-01",
             message_id="MSG-UG-RW-001",
-        )["status"], "COMPLETED")
+        )
+        self.assertEqual(stored["status"], "COMPLETED")
+        self.assertEqual(stored["receiver_decision_ref"], "DECISION-RW-001")
+        self.assertEqual(stored["response"], {"protocol_decision": "PASSED"})
         self.assertIsNone(self.claim("worker-c"))
 
     def test_retryable_failure_can_be_reclaimed(self):
