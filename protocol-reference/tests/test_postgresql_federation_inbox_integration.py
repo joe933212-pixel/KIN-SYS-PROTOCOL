@@ -2,11 +2,11 @@
 """PostgreSQL integration tests for durable federation inbox transitions."""
 from __future__ import annotations
 
+import hashlib
 import os
+import sys
 import tempfile
 import time
-import hashlib
-import sys
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -238,7 +238,14 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
             message_id="MSG-UG-RW-001",
             operation_id=contract["operation_id"],
             idempotency_key=contract["idempotency_key"],
-            envelope=self.message,
+            envelope={
+                "claims": {
+                    "message_id": "MSG-UG-RW-001",
+                    "operation_id": contract["operation_id"],
+                    "issuer_installation_id": "INSTALL-UG-01",
+                },
+                "signature": "synthetic-process-restart-test-envelope",
+            },
         )
         first_claim = self.inbox_a.claim(
             receiver_tenant_id="tenant-rw",
@@ -363,6 +370,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
                 self.assertEqual(
                     recovered["decision"]["protocol_decision"], "PASSED"
                 )
+                self.assertTrue(recovered["result"]["duplicate"])
                 self.assertEqual(
                     restarted_pipeline.cee.get(contract["operation_id"])["phase"],
                     "FINALIZED",
