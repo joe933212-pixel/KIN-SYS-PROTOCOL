@@ -84,6 +84,53 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
             lease_seconds=30,
         )
 
+
+    def accept_authenticated(self, *, message_id="MSG-UG-RW-001",
+                              operation_id="OP-UG-RW-001",
+                              idempotency_key="IDEM-UG-RW-001",
+                              nonce="NONCE-UG-RW-001", envelope=None):
+        return self.inbox_a.accept_authenticated(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            operation_id=operation_id,
+            idempotency_key=idempotency_key,
+            nonce=nonce,
+            expires_at=1_800_000_120,
+            envelope=self.message if envelope is None else envelope,
+            clock=lambda: 1_800_000_000,
+        )
+
+    def test_authenticated_acceptance_atomically_persists_inbox_and_nonce(self):
+        result = self.accept_authenticated()
+        self.assertTrue(result["inserted"])
+        self.assertEqual(result["status"], "RECEIVED")
+        duplicate = self.accept_authenticated()
+        self.assertFalse(duplicate["inserted"])
+        with self.connect() as connection:
+            inbox_count = connection.execute(
+                "SELECT count(*) FROM federation_inbox"
+            ).fetchone()[0]
+            nonce_count = connection.execute(
+                "SELECT count(*) FROM consumed_federation_nonces"
+            ).fetchone()[0]
+        self.assertEqual(inbox_count, 1)
+        self.assertEqual(nonce_count, 1)
+
+    def test_replay_conflict_rolls_back_new_inbox_row(self):
+        self.accept_authenticated()
+        with self.assertRaisesRegex(FederationInboxError, "MESSAGE_REPLAYED"):
+            self.accept_authenticated(
+                message_id="MSG-UG-RW-002",
+                operation_id="OP-UG-RW-002",
+                idempotency_key="IDEM-UG-RW-002",
+            )
+        self.assertIsNone(self.inbox_a.get(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id="MSG-UG-RW-002",
+        ))
+
     def test_accept_is_idempotent_for_identical_verified_delivery(self):
         first = self.accept()
         second = self.accept()
