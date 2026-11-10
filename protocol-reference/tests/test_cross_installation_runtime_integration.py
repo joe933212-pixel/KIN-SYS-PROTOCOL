@@ -65,6 +65,7 @@ class IsolatedInstallation:
             "policy_pack_version": policy_version,
             "source_pack_version": source_version,
             "model_ref": "deterministic-minah-mock-" + country.lower(),
+            "interface_version": "minah-review-0.1",
             "deployment_mode": "SELF_HOSTED",
             "may_authorise": False,
             "authority_profile_version": authority_version,
@@ -89,6 +90,7 @@ class IsolatedInstallation:
             authority_profile_version=authority_version,
         )
         self.resolver = self
+        self.minah = self
         self.service = InstitutionalInstructionExecutionService(
             runtime_binding_resolver=self,
             pipeline_factory=lambda _context: self.pipeline,
@@ -172,8 +174,8 @@ class IsolatedInstallation:
         )
 
     def close(self):
+        # The execution service owns and closes its cached pipeline.
         self.service.close()
-        self.pipeline.close()
 
 
 class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
@@ -322,7 +324,8 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
     def test_receiver_jurisdiction_rejection_does_not_create_receiver_operation(self):
         request = self._federated_instruction(jurisdiction="UG")
         with self.assertRaisesRegex(
-            Exception, "INSTRUCTION_JURISDICTION_DOES_NOT_MATCH_ACTIVE_BINDING"
+            FederatedInstructionReceiverError,
+            "INSTRUCTION_JURISDICTION_DOES_NOT_MATCH_ACTIVE_BINDING",
         ):
             self.receiver.receive(self._envelope(request, nonce="NONCE-WRONG-JUR-001"))
         self.assertIsNone(self.receiver_installation.pipeline.cee.get("OP-UG-RW-001"))
@@ -334,7 +337,7 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
         envelope = self._envelope(request, nonce="NONCE-REPLAY-001")
         first = self.receiver.receive(envelope)
         self.assertEqual(first["receiver_decision"]["protocol_decision"], "PASSED")
-        with self.assertRaises(Exception):
+        with self.assertRaises(FederatedInstructionReceiverError):
             self.receiver.receive(envelope)
         self.assertEqual(
             len([event for event in self.receiver_installation.pipeline.cee.events(
