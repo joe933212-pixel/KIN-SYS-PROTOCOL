@@ -66,3 +66,28 @@ The repository includes `protocol-reference/postgresql_migrations.py`. It applie
 Install the optional driver with `pip install 'psycopg[binary]>=3.2,<4'`, set `KIN_SYS_POSTGRES_DSN` to the target database connection string, then run `python protocol-reference/postgresql_migrations.py`. The caller is responsible for supplying a least-privilege migration identity, network controls, backups, and an appropriate deployment/change-management process. The runner does not create the PostgreSQL server or configure its security posture.
 
 The conformance workflow now provisions a disposable PostgreSQL 16 service and runs the migration integration suite using the optional dependency set in `protocol-reference/requirements-postgresql.txt`. The integration tests apply the repository migration against a real PostgreSQL server, verify repeat-run idempotency and checksum enforcement, and verify that a later SQL failure rolls back both earlier DDL and migration-history writes. Outside CI, these tests are skipped unless `KIN_SYS_POSTGRES_TEST_DSN` is set. The service is test infrastructure only; it is not a production database deployment.
+
+
+## Federation replay protection
+
+Migration `002_federation_nonce_guard.sql` adds the shared
+`consumed_federation_nonces` table with a tenant-scoped unique nonce key and
+an expiry index. `postgresql_nonce_guard.py` implements atomic
+insert-if-absent consumption using a fresh psycopg 3 connection per call.
+Expired nonce rows are pruned in the same transaction as consumption, and a
+database error fails closed. The adapter rejects expired assertions and
+assertion lifetimes longer than its configured maximum (300 seconds by default).
+
+For a federated receiver, pass
+`postgresql_nonce_consumer(PostgreSQLNonceGuard(connection_factory))` as
+`consume_nonce`. The adapter hashes the issuer-installation/nonce pair into
+the tenant-scoped key, so the same nonce from two different issuer
+installations does not collide. Every receiver worker must use the same
+PostgreSQL authority; local process locks or per-node databases do not provide
+cross-worker replay protection.
+
+The PostgreSQL integration suite verifies independent guard instances,
+tenant isolation, concurrent single-consumer behavior, expiry/pruning, and
+fail-closed database errors. This is a durable shared replay-store increment;
+it does not add a durable federation inbox, acknowledgement/outbox, or
+exactly-once execution across the separate CEE/IVM transaction boundary.
