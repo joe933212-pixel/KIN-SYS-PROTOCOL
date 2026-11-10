@@ -111,6 +111,37 @@ class FederatedReceiverTests(unittest.TestCase):
         self.assertEqual(call["binding_id"], "BIND-RW-01")
         self.assertEqual(call["instruction"]["principal_ref"], "principal:origin-user")
 
+
+    def test_durable_duplicate_is_not_executed_twice(self):
+        calls = []
+
+        def accept_verified_message(**kwargs):
+            calls.append(kwargs)
+            return {
+                "inserted": len(calls) == 1,
+                "status": "RECEIVED",
+            }
+
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=self.executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            accept_verified_message=accept_verified_message,
+            clock=lambda: self.now,
+        )
+        receiver.receive(self.envelope)
+        with self.assertRaisesRegex(
+            FederatedInstructionReceiverError,
+            "FEDERATED_MESSAGE_ALREADY_DURABLY_ACCEPTED",
+        ):
+            receiver.receive(self.envelope)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.executor.calls), 1)
+
     def test_invalid_signature_never_reaches_local_execution(self):
         bad = {"claims": dict(self.envelope["claims"]),
                "signature": self.envelope["signature"]}
