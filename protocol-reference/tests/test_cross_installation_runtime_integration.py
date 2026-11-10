@@ -346,6 +346,20 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
         self.assertIsNone(self.receiver_installation.pipeline.cee.get("OP-UG-RW-001"))
         self.assertIsNone(self.origin.pipeline.cee.get("OP-UG-RW-001"))
 
+    def test_replay_is_rejected_before_receiver_execution(self):
+        request = self._federated_instruction()
+        envelope = self._envelope(request, nonce="NONCE-REPLAY-001")
+        first = self.receiver.receive(envelope)
+        self.assertEqual(first["receiver_decision"]["protocol_decision"], "PASSED")
+        with self.assertRaises(FederatedInstructionReceiverError):
+            self.receiver.receive(envelope)
+        self.assertEqual(
+            len([event for event in self.receiver_installation.pipeline.cee.events(
+                "OP-UG-RW-001"
+            ) if event["phase"] == "REQUESTED"]),
+            1,
+        )
+
     def test_reciprocal_federation_executes_under_the_other_installations_own_authority(self):
         # Reverse the direction: Rwanda signs; Uganda independently verifies
         # the issuer and runs its own MINAH/CEE/IVM execution boundary.
