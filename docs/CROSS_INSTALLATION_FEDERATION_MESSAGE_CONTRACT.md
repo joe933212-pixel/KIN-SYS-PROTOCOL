@@ -119,8 +119,21 @@ nonce-only callback remains available for non-durable compatibility paths and
 does not provide the atomic inbox guarantee.
 
 The inbox lease does not itself make the CEE/IVM stores transactional with
-PostgreSQL. Recovery relies on the existing pinned CEE operation journal,
-cross-store integrity checks, deterministic IVM event identity and recovery
-logic. A real process-crash test between the IVM commit and inbox completion,
-followed by restart and lease reclaim, is the next required validation before
-claiming retry-safe recovery. Exactly-once execution remains unproven.
+PostgreSQL. On a reclaimed delivery, the receiver now asks the institutional
+execution service to reconcile the operation through its original pinned CEE
+journal before it attempts a new execution. The recovery request is bound to
+the complete digest-verified instruction; reusing an operation ID with
+different instruction content is rejected. If no journaled operation exists,
+the receiver may proceed through the normal MINAH → CEE → Final Decision
+execution path. If an operation exists, the service performs its existing
+cross-store integrity checks and recovery procedure under the original
+institutional runtime pins and active deployment lifecycle.
+
+This closes the previously missing application-level recovery handoff, but
+does not make the CEE/IVM stores transactional with PostgreSQL. The remaining
+validation gate is a PostgreSQL-backed process restart/failure-injection test
+at the exact interval after local IVM/CEE commit and before inbox completion,
+followed by lease reclaim and proof that the receiver returns the recovered
+decision without a second execution. Exactly-once delivery across installations
+is not claimed; the design remains at-least-once delivery with receiver-side
+idempotency and durable result recovery.
