@@ -196,5 +196,25 @@ class CrossInstallationFederationTests(unittest.TestCase):
                 private_key=self.private)
 
 
+    def test_postgresql_nonce_adapter_scopes_nonce_by_issuer_installation(self):
+        from institutional_federation import postgresql_nonce_consumer
+
+        class Guard:
+            def __init__(self):
+                self.seen = set()
+
+            def consume(self, tenant, nonce, expiry):
+                key = (tenant, nonce)
+                if key in self.seen:
+                    return False
+                self.seen.add(key)
+                return True
+
+        consumer = postgresql_nonce_consumer(Guard())
+        self.assertTrue(consumer("tenant-rw", "INSTALL-UG-01", "same-nonce", 100))
+        self.assertFalse(consumer("tenant-rw", "INSTALL-UG-01", "same-nonce", 100))
+        self.assertTrue(consumer("tenant-rw", "INSTALL-KE-01", "same-nonce", 100))
+
+
 if __name__ == "__main__":
     unittest.main()
