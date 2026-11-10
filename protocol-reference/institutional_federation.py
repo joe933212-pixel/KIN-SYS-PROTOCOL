@@ -239,3 +239,23 @@ def sqlite_nonce_consumer(guard: Any) -> Callable[[str, str, str, int], bool]:
         return consume(receiver_tenant_id, "federation:" + scope, expires_at)
 
     return scoped
+
+
+def postgresql_nonce_consumer(guard: Any) -> Callable[[str, str, str, int], bool]:
+    """Adapt PostgreSQLNonceGuard to receiver-tenant/issuer/nonce scope.
+
+    All receiver workers must share the same PostgreSQL authority. The
+    underlying unique (tenant, nonce) constraint provides cross-worker atomicity.
+    """
+    consume = getattr(guard, "consume", None)
+    if not callable(consume):
+        raise FederationMessageError("FEDERATION_REPLAY_GUARD_INVALID")
+
+    def scoped(receiver_tenant_id: str, issuer_installation_id: str,
+               nonce: str, expires_at: int) -> bool:
+        scope = hashlib.sha256(
+            (issuer_installation_id + "\\0" + nonce).encode("utf-8")
+        ).hexdigest()
+        return consume(receiver_tenant_id, "federation:" + scope, expires_at)
+
+    return scoped
