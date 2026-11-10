@@ -665,8 +665,14 @@ class InstitutionalInstructionExecutionService:
 
     def recover(self, *, tenant_id: str, operation_id: str,
                 institution_id: str | None = None, actor_ref: str | None = None,
-                request_id: str | None = None) -> dict[str, Any]:
-        """Recover only through the original pipeline and immutable operation pins."""
+                request_id: str | None = None,
+                instruction: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Recover only through the original pipeline and immutable operation pins.
+
+        When invoked for a federation retry, ``instruction`` binds recovery to
+        the exact digest-verified instruction already recorded in the CEE
+        journal. An operation ID alone is never sufficient to select a result.
+        """
         if not all(isinstance(value, str) and value.strip()
                    for value in (tenant_id, operation_id)):
             raise InstitutionalInstructionExecutionError(
@@ -679,6 +685,18 @@ class InstitutionalInstructionExecutionService:
                 "recovery_required": True, "production_ready": False,
             }
         pipeline, operation, pins, request = found
+        if instruction is not None:
+            try:
+                incoming_contract = verify_instruction_payload_digest(instruction)
+                stored_contract = verify_instruction_payload_digest(
+                    request.get("_contract_envelope")
+                )
+            except Exception as exc:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_RECOVERY_INSTRUCTION_INVALID") from exc
+            if incoming_contract != stored_contract:
+                raise InstitutionalInstructionExecutionError(
+                    "INSTITUTIONAL_RECOVERY_INSTRUCTION_MISMATCH")
         journal = pipeline.cee
         recovery_method = getattr(pipeline, "recover", None)
         record_observation = getattr(journal, "record_observation", None)
