@@ -106,6 +106,7 @@ class InstitutionalFederatedInstructionReceiver:
             raise FederatedInstructionReceiverError(str(exc)) from exc
 
         acceptance = verified.get("inbox_acceptance")
+        inbox_claim = None
         if isinstance(acceptance, dict) and acceptance.get("inserted") is not True:
             if self.inbox is None:
                 raise FederatedInstructionReceiverError(
@@ -122,20 +123,29 @@ class InstitutionalFederatedInstructionReceiver:
                 response["duplicate_delivery"] = True
                 response["delivery_status"] = "COMPLETED"
                 return response
-            return {
-                "message_id": verified["message_id"],
-                "operation_id": verified["operation_id"],
-                "receiver_installation_id": self.receiver_installation_id,
-                "receiver_institution_id": self.receiver_institution_id,
-                "message_verified": True,
-                "duplicate_delivery": True,
-                "delivery_status": existing.get("status", "UNKNOWN"),
-                "acknowledgement_status": "PENDING",
-                "production_ready": False,
-            }
+            # Retryable failures and expired PROCESSING leases are reclaimable.
+            # An active lease remains owned by the other worker.
+            inbox_claim = self.inbox.claim(
+                receiver_tenant_id=self.receiver_tenant_id,
+                issuer_installation_id=verified["issuer_installation_id"],
+                message_id=verified["message_id"],
+                worker_id=self.inbox_worker_id,
+                lease_seconds=self.inbox_lease_seconds,
+            )
+            if inbox_claim is None:
+                return {
+                    "message_id": verified["message_id"],
+                    "operation_id": verified["operation_id"],
+                    "receiver_installation_id": self.receiver_installation_id,
+                    "receiver_institution_id": self.receiver_institution_id,
+                    "message_verified": True,
+                    "duplicate_delivery": True,
+                    "delivery_status": existing.get("status", "UNKNOWN"),
+                    "acknowledgement_status": "PENDING",
+                    "production_ready": False,
+                }
 
-        inbox_claim = None
-        if self.inbox is not None:
+        if self.inbox is not None and inbox_claim is None:
             inbox_claim = self.inbox.claim(
                 receiver_tenant_id=self.receiver_tenant_id,
                 issuer_installation_id=verified["issuer_installation_id"],
@@ -155,7 +165,7 @@ class InstitutionalFederatedInstructionReceiver:
                     "receiver_installation_id": self.receiver_installation_id,
                     "receiver_institution_id": self.receiver_institution_id,
                     "message_verified": True,
-                    "duplicate_delivery": True,
+                    "duplicate_delivery": bool(not acceptance or not acceptance.get("inserted")),
                     "delivery_status": (existing or {}).get("status", "UNKNOWN"),
                     "acknowledgement_status": "PENDING",
                     "production_ready": False,
