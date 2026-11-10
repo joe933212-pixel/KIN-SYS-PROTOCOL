@@ -147,6 +147,8 @@ class IsolatedInstallation:
                       policy_version, target_ref):
         evidence = {
             "case_ref": target_ref,
+            "consignment_id": target_ref,
+            "commodity": "SYNTHETIC_MAIZE",
             "origin": self.country,
             "destination": "CROSS-BORDER-TEST",
             "rule_refs": ["SYNTHETIC-" + self.country + "-RULE"],
@@ -249,6 +251,8 @@ class CrossInstallationRuntimeIntegrationTests(unittest.TestCase):
                                operation_id="OP-UG-RW-001"):
         evidence = {
             "case_ref": "TX-UG-RW-001",
+            "consignment_id": "TX-UG-RW-001",
+            "commodity": "SYNTHETIC_MAIZE",
             "origin": "UG",
             "destination": "RW",
             "rule_refs": ["SYNTHETIC-CROSS-BORDER-RULE"],
