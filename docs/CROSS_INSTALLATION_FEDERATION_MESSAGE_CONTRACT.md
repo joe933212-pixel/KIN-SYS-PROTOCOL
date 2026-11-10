@@ -90,3 +90,27 @@ A crash after CEE/IVM commits but before inbox completion can also cause a
 reclaimed worker to retry execution; the current lease alone does not prevent
 that. Exactly-once execution across CEE/IVM remains unproven and must not be
 claimed.
+
+
+### Atomic authenticated acceptance
+
+The PostgreSQL inbox now exposes `accept_authenticated(...)`, and
+`institutional_federation.postgresql_inbox_acceptor(...)` adapts it to the
+federation verifier's post-signature acceptance hook. When configured on
+`InstitutionalFederatedInstructionReceiver`, signature, trust, destination,
+freshness and payload checks happen first; then the receiver commits the
+issuer-scoped replay nonce and durable inbox row in one PostgreSQL transaction.
+If nonce insertion fails as a replay, the inbox insertion rolls back. If the
+same already-persisted message is redelivered with the same canonical envelope,
+the existing inbox record is returned idempotently.
+
+The receiver refuses to invoke local execution again when the atomic acceptance
+callback reports an existing record. This closes the earlier crash interval
+between nonce consumption and inbox persistence for deployments using this
+shared PostgreSQL acceptance path. The legacy nonce-only callback remains for
+compatibility and does not provide this atomic inbox guarantee.
+
+This does not close the separate crash interval after CEE/IVM execution commits
+but before the inbox records its decision. Durable execution-result
+reconciliation or a transactionally coupled execution receipt is still needed
+before retry-safe exactly-once semantics can be claimed.
