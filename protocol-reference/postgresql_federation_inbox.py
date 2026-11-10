@@ -123,6 +123,96 @@ class PostgreSQLFederationInbox:
         except Exception as exc:
             raise FederationInboxError("FEDERATION_INBOX_STORE_UNAVAILABLE") from exc
 
+
+    def accept_authenticated(
+        self, *, receiver_tenant_id: str, issuer_installation_id: str,
+        message_id: str, operation_id: str, idempotency_key: str,
+        nonce: str, expires_at: int, envelope: dict[str, Any],
+        clock: Callable[[], float],
+    ) -> dict[str, Any]:
+        """Atomically register a verified message nonce and durable inbox row.
+
+        Call only after cryptographic, trust, routing and freshness checks.
+        Both inserts share one transaction; replay conflict rolls back the
+        inbox row. Identical deliveries are returned idempotently.
+        """
+        tenant = _identifier(receiver_tenant_id, "INBOX_TENANT_INVALID")
+        issuer = _identifier(issuer_installation_id, "INBOX_ISSUER_INVALID")
+        message = _identifier(message_id, "INBOX_MESSAGE_ID_INVALID")
+        operation = _identifier(operation_id, "INBOX_OPERATION_ID_INVALID")
+        idem = _identifier(idempotency_key, "INBOX_IDEMPOTENCY_KEY_INVALID")
+        nonce_value = _identifier(nonce, "INBOX_NONCE_INVALID")
+        if not callable(clock) or type(expires_at) is not int:
+            raise FederationInboxError("INBOX_VALIDITY_INVALID")
+        now = int(clock())
+        if expires_at <= now or expires_at - now > 330:
+            raise FederationInboxError("INBOX_VALIDITY_INVALID")
+        encoded, digest = _canonical_json(envelope)
+        nonce_scope = "federation:" + hashlib.sha256(
+            (issuer + "\\0" + nonce_value).encode("utf-8")
+        ).hexdigest()
+        try:
+            with closing(self._connect()) as connection:
+                with connection.transaction():
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            """INSERT INTO federation_inbox
+                               (receiver_tenant_id, issuer_installation_id,
+                                message_id, operation_id, idempotency_key,
+                                envelope_json, envelope_sha256, status)
+                               VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, 'RECEIVED')
+                               ON CONFLICT DO NOTHING RETURNING message_id""",
+                            (tenant, issuer, message, operation, idem, encoded, digest),
+                        )
+                        inserted = cursor.fetchone() is not None
+                        if not inserted:
+                            cursor.execute(
+                                """SELECT message_id, operation_id, idempotency_key,
+                                          envelope_sha256, status, attempt_count,
+                                          receiver_decision_ref
+                                   FROM federation_inbox
+                                   WHERE receiver_tenant_id = %s
+                                     AND issuer_installation_id = %s
+                                     AND (message_id = %s OR idempotency_key = %s)
+                                   FOR UPDATE""",
+                                (tenant, issuer, message, idem),
+                            )
+                            existing = cursor.fetchone()
+                            if (existing is None or existing[0] != message
+                                    or existing[1] != operation or existing[2] != idem
+                                    or existing[3] != digest):
+                                raise FederationInboxError("INBOX_IDEMPOTENCY_CONFLICT")
+                            return {
+                                "inserted": False, "message_id": message,
+                                "operation_id": operation, "idempotency_key": idem,
+                                "status": existing[4], "attempt_count": existing[5],
+                                "receiver_decision_ref": existing[6],
+                            }
+                        cursor.execute(
+                            """DELETE FROM consumed_federation_nonces
+                               WHERE tenant_id = %s AND expires_at <= %s""",
+                            (tenant, now),
+                        )
+                        cursor.execute(
+                            """INSERT INTO consumed_federation_nonces
+                               (tenant_id, nonce, expires_at, consumed_at)
+                               VALUES (%s, %s, %s, %s)
+                               ON CONFLICT DO NOTHING RETURNING nonce""",
+                            (tenant, nonce_scope, expires_at, now),
+                        )
+                        if cursor.fetchone() is None:
+                            raise FederationInboxError("FEDERATION_MESSAGE_REPLAYED")
+                        return {
+                            "inserted": True, "message_id": message,
+                            "operation_id": operation, "idempotency_key": idem,
+                            "status": "RECEIVED", "attempt_count": 0,
+                            "receiver_decision_ref": None,
+                        }
+        except FederationInboxError:
+            raise
+        except Exception as exc:
+            raise FederationInboxError("FEDERATION_INBOX_STORE_UNAVAILABLE") from exc
+
     def claim(
         self, *, receiver_tenant_id: str, issuer_installation_id: str,
         message_id: str, worker_id: str, lease_seconds: int = 60,
