@@ -44,7 +44,7 @@ The callback passed to the verifier must implement atomic insert-if-absent seman
 
 Implemented here: canonical signed envelope creation, receiver-side cryptographic and routing verification, bounded freshness, receiver-local trust-key checks, replay callback boundary, receiver-side execution orchestration and adversarial unit tests. `protocol-reference/tests/test_cross_installation_runtime_integration.py` additionally connects two isolated installation fixtures through the real `InstitutionalInstructionExecutionService` and reference `KinSysProtocolPipeline`, with separate CEE/IVM stores, MINAH profiles, jurisdiction/policy pins and execution-lease state. It verifies receiver-local execution, jurisdiction rejection and replay rejection.
 
-Still not implemented: network transport, authenticated installation discovery, outbound delivery/retry queues, acknowledgement/outbox protocol, cross-installation operation status, and cross-store recovery. A first durable inbox persistence primitive is now present (migration `003_federation_inbox.sql` and `protocol-reference/postgresql_federation_inbox.py`), but it is not yet integrated into the receiver execution path. The integration fixture uses in-memory stores, local test lifecycle resolvers, generated Ed25519 keys, and the reference pipeline's synthetic MINAH/identity/authority adapters. It does not yet exercise the full persistent institutional registry and identity-provider registry on both sides, live OIDC authentication, independent deployed hosts, or production infrastructure. It is an integration milestone, not evidence of live federation or production readiness.
+Still not implemented: network transport, authenticated installation discovery, outbound delivery/retry queues, sender-side acknowledgement outbox, and cross-installation operation status. The receiver now has an integrated durable inbox acceptance/claim/complete path; cross-store recovery still requires independent crash testing and production persistence. The integration fixture uses in-memory stores, local test lifecycle resolvers, generated Ed25519 keys, and the reference pipeline's synthetic MINAH/identity/authority adapters. It does not yet exercise the full persistent institutional registry and identity-provider registry on both sides, live OIDC authentication, independent deployed hosts, or production infrastructure. It is an integration milestone, not evidence of live federation or production readiness.
 
 The next engineering increment should replace the lightweight runtime fixture with two fully seeded persistent institutional registries, identity-provider registries, receiver-local trust stores and independently configured MINAH deployment resolvers. Then add a durable federation inbox/acknowledgement boundary with idempotent message acceptance, persisted receiver decision references and restart/failure recovery. Prove that both installations retain separate decision rights and audit histories; do not claim exactly-once execution across CEE/IVM until its cross-store recovery protocol is independently implemented and tested.
 
@@ -78,18 +78,22 @@ after a worker stops making progress. The integration suite covers duplicate
 acceptance, content-conflict rejection, concurrent single-worker claims,
 lease-owner enforcement, retry and lease-expiry reclaim.
 
-This is deliberately a persistence primitive, not yet a complete end-to-end
-receiver workflow. It is not currently wired into
-`InstitutionalFederatedInstructionReceiver.receive()`. In particular, the
-current verifier consumes the replay nonce before the caller persists the
-inbox row, so a crash in that interval can leave a consumed nonce without a
-durable inbox record. A further integration step must unify authenticated
-message acceptance and replay registration in one database transaction, then
-connect claim/execute/decision recording and define acknowledgement delivery.
-A crash after CEE/IVM commits but before inbox completion can also cause a
-reclaimed worker to retry execution; the current lease alone does not prevent
-that. Exactly-once execution across CEE/IVM remains unproven and must not be
-claimed.
+The inbox is now wired into `InstitutionalFederatedInstructionReceiver.receive()`
+through the shared PostgreSQL acceptance path. After authentication, the
+receiver claims a database lease, invokes its own governed execution service,
+and persists the resulting receiver decision reference and response before
+returning a completed acknowledgement. Duplicate completed deliveries return
+the stored response without re-executing. Retryable failures and expired
+processing leases can be reclaimed; the receiver execution service's pinned
+CEE journal and IVM idempotency/recovery checks remain responsible for
+reconciling an interrupted operation.
+
+A process crash after CEE/IVM commits but before inbox completion still creates
+a recovery interval. The current architecture is designed to reconcile that
+interval through the persisted operation journal and IVM event checks, but
+the full crash/restart path across separate durable stores still requires
+dedicated integration tests. Exactly-once execution across CEE/IVM remains
+unproven and must not be claimed.
 
 
 ### Atomic authenticated acceptance
@@ -104,13 +108,19 @@ If nonce insertion fails as a replay, the inbox insertion rolls back. If the
 same already-persisted message is redelivered with the same canonical envelope,
 the existing inbox record is returned idempotently.
 
-The receiver refuses to invoke local execution again when the atomic acceptance
-callback reports an existing record. This closes the earlier crash interval
-between nonce consumption and inbox persistence for deployments using this
-shared PostgreSQL acceptance path. The legacy nonce-only callback remains for
-compatibility and does not provide this atomic inbox guarantee.
+The receiver now claims the durable inbox record before local execution.
+A completed duplicate returns the stored response; an active lease yields a
+pending acknowledgement; a retryable failure or expired lease may be reclaimed.
+After the receiver's local MINAH/CEE/IVM/final-decision service returns a bound
+decision, the receiver records that response and its stable CEE execution
+reference under the current lease before returning completion. Execution
+exceptions release the lease into retryable state where possible. The legacy
+nonce-only callback remains available for non-durable compatibility paths and
+does not provide the atomic inbox guarantee.
 
-This does not close the separate crash interval after CEE/IVM execution commits
-but before the inbox records its decision. Durable execution-result
-reconciliation or a transactionally coupled execution receipt is still needed
-before retry-safe exactly-once semantics can be claimed.
+The inbox lease does not itself make the CEE/IVM stores transactional with
+PostgreSQL. Recovery relies on the existing pinned CEE operation journal,
+cross-store integrity checks, deterministic IVM event identity and recovery
+logic. A real process-crash test between the IVM commit and inbox completion,
+followed by restart and lease reclaim, is the next required validation before
+claiming retry-safe recovery. Exactly-once execution remains unproven.
