@@ -171,6 +171,72 @@ class FederatedReceiverTests(unittest.TestCase):
         self.assertEqual(second["receiver_decision"], first["receiver_decision"])
         self.assertEqual(len(self.executor.calls), 1)
 
+
+    def test_retryable_execution_failure_reclaims_inbox_and_reuses_operation(self):
+        class MemoryInbox:
+            def __init__(self):
+                self.row = None
+            def accept_authenticated(self, **kwargs):
+                if self.row is not None:
+                    return {"inserted": False, "status": self.row["status"]}
+                self.row = {"status": "RECEIVED", "response": None}
+                return {"inserted": True, "status": "RECEIVED"}
+            def claim(self, **kwargs):
+                if self.row["status"] not in {"RECEIVED", "RETRYABLE_FAILURE"}:
+                    return None
+                self.row["status"] = "PROCESSING"
+                return {"lease_owner": kwargs["worker_id"]}
+            def complete(self, **kwargs):
+                self.row["status"] = "COMPLETED"
+                self.row["response"] = kwargs["response"]
+                return True
+            def fail(self, **kwargs):
+                self.row["status"] = "RETRYABLE_FAILURE" if kwargs["retryable"] else "REJECTED"
+                return True
+            def get(self, **kwargs):
+                return self.row
+
+        class FailsOnce:
+            def __init__(self):
+                self.calls = 0
+            def execute(self, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("temporary executor interruption")
+                item = kwargs["instruction"]
+                return {
+                    "decision": {
+                        "request_id": item["request_id"],
+                        "operation_id": item["operation_id"],
+                        "protocol_decision": "PASSED",
+                        "cee_execution_ref": "cee-operation:" + item["operation_id"],
+                    },
+                    "result": {"status": "COMMITTED"},
+                    "runtime_pins": {},
+                }
+
+        inbox, executor = MemoryInbox(), FailsOnce()
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            inbox=inbox,
+            inbox_worker_id="receiver-worker-recovery",
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(
+            FederatedInstructionReceiverError, "RECEIVER_LOCAL_EXECUTION_FAILED"
+        ):
+            receiver.receive(self.envelope)
+        self.assertEqual(inbox.row["status"], "RETRYABLE_FAILURE")
+        recovered = receiver.receive(self.envelope)
+        self.assertEqual(recovered["delivery_status"], "COMPLETED")
+        self.assertEqual(executor.calls, 2)
+
     def test_invalid_signature_never_reaches_local_execution(self):
         bad = {"claims": dict(self.envelope["claims"]),
                "signature": self.envelope["signature"]}
