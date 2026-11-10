@@ -108,13 +108,18 @@ or `fail(...)`. Expired leases can be reclaimed, and duplicate delivery of
 the same envelope is idempotent. Reuse of a message or idempotency identity
 with different content is rejected.
 
-This is the durable inbox persistence primitive, not yet the complete
-federation acknowledgement/outbox protocol. It is not yet wired into
-`InstitutionalFederatedInstructionReceiver.receive()`; callers must not
-assume that receiver execution is automatically persisted through this
-state machine. A process crash between nonce consumption, inbox persistence,
-CEE/IVM execution and decision recording still requires explicit orchestration
-and recovery. In particular, a worker lease does not prove exactly-once
-execution across the separate CEE/IVM transaction boundary. The integration
-tests for this migration are skipped outside CI unless
+The receiver now integrates this state machine through its atomic
+authenticated acceptance path. It claims a lease before local governed
+execution, persists the receiver decision reference and response on
+completion, returns stored acknowledgements for completed duplicate
+deliveries, and makes retryable failures or expired leases claimable again.
+The receiver uses its existing institutional execution service, whose pinned
+CEE journal and IVM event checks provide operation-level replay and recovery
+semantics.
+
+The inbox transaction remains separate from the CEE/IVM stores. A process
+crash after an IVM commit but before inbox completion must be validated with
+an explicit restart/lease-reclaim integration test; this implementation does
+not claim a distributed transaction or exactly-once execution. The PostgreSQL
+integration tests are skipped outside CI unless
 `KIN_SYS_POSTGRES_TEST_DSN` is configured.
