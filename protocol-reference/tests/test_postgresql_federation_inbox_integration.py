@@ -415,6 +415,7 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
                 self.assertEqual(stored["response"], response)
             finally:
                 second_service.close()
+                restarted_pipeline.close()
 
 
 
