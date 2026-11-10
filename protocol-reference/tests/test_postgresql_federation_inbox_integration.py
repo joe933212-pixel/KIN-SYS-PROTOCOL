@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
+import time
+import hashlib
 import sys
 import unittest
 import uuid
@@ -209,6 +212,192 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
         second = self.claim("worker-b")
         self.assertIsNotNone(second)
         self.assertEqual(second["attempt_count"], 2)
+
+    def test_process_restart_recovers_committed_cee_ivm_result_before_inbox_completion(self):
+        """Recover the receiver's committed IVM event after process restart."""
+        from governed_contracts import compute_payload_digest
+        from institutional_instruction_execution import (
+            InstitutionalInstructionExecutionError,
+            InstitutionalInstructionExecutionService,
+        )
+        from protocol_pipeline import KinSysProtocolPipeline
+        from test_institutional_instruction_execution import (
+            ActiveMinahResolver, RuntimeResolver, instruction,
+        )
+
+        contract = instruction()
+        contract["payload_digest"] = compute_payload_digest(contract)
+        evidence = contract["evidence"]
+        event_id = "EV-" + hashlib.sha256(
+            contract["idempotency_key"].encode("utf-8")
+        ).hexdigest()[:24]
+
+        self.inbox_a.accept_verified(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id="MSG-UG-RW-001",
+            operation_id=contract["operation_id"],
+            idempotency_key=contract["idempotency_key"],
+            envelope=self.message,
+        )
+        first_claim = self.inbox_a.claim(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id="MSG-UG-RW-001",
+            worker_id="worker-before-crash",
+            lease_seconds=1,
+        )
+        self.assertIsNotNone(first_claim)
+
+        resolver = RuntimeResolver()
+        profile = {
+            "profile_version": "kin-sys-minah-profile-0.1",
+            "deployment_id": "MINAH-UG-01",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "tenant-ug",
+            "use_case": "POSTGRES_FEDERATION_CRASH_RECOVERY_TEST",
+            "jurisdictions": ["UG"],
+            "policy_pack_version": "BANK-RULES:1.0",
+            "source_pack_version": "UG-SOURCES:2.0",
+            "model_ref": "model:bank/minah-v1",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": False,
+        }
+        resolver.context["minah_config"] = {
+            "deployment_id": "MINAH-UG-01",
+            "owner_ref": "tenant-ug",
+            "model_ref": "model:bank/minah-v1",
+            "jurisdictions": ["UG"],
+            "policy_pack_version": "BANK-RULES:1.0",
+            "source_pack_version": "UG-SOURCES:2.0",
+        }
+        active_minah = ActiveMinahResolver({
+            "tenant_id": "tenant-ug",
+            "deployment_id": "MINAH-UG-01",
+            "version": "9.0",
+            "status": "ACTIVE",
+            "config": dict(profile),
+        })
+
+        with tempfile.TemporaryDirectory(prefix="kin-sys-federation-recovery-") as directory:
+            cee_db = str(Path(directory) / "receiver-cee.sqlite")
+            ivm_db = str(Path(directory) / "receiver-ivm.sqlite")
+
+            def new_pipeline():
+                return KinSysProtocolPipeline(
+                    cee_database=cee_db,
+                    ivm_database=ivm_db,
+                    minah_profile=profile,
+                    identity_provider_id="IDP-UG-01",
+                    identity_provider_version="2.0",
+                    jurisdiction_package_id="JUR-UG-01",
+                    jurisdiction_package_version="4.0",
+                    authority_profile_version="BANK-AUTHORITY:1.0",
+                )
+
+            first_pipeline = new_pipeline()
+            first_service = InstitutionalInstructionExecutionService(
+                runtime_binding_resolver=resolver,
+                pipeline_factory=lambda runtime_context: first_pipeline,
+                minah_deployment_resolver=active_minah,
+            )
+            original_execute = first_pipeline.execute
+            injected = {"crashed": False}
+
+            def commit_then_crash(request, *, execution_guard=None):
+                if not injected["crashed"]:
+                    injected["crashed"] = True
+                    return original_execute(
+                        request, fail_after_ivm_commit=True,
+                        execution_guard=execution_guard,
+                    )
+                return original_execute(request, execution_guard=execution_guard)
+
+            first_pipeline.execute = commit_then_crash
+            try:
+                with self.assertRaises(InstitutionalInstructionExecutionError):
+                    first_service.execute(
+                        tenant_id="tenant-ug",
+                        institution_id="BANK-UG-01",
+                        binding_id="BIND-UG-01",
+                        instruction=contract,
+                        evidence=evidence,
+                    )
+                committed_event = first_pipeline.ivm.event(event_id)
+                self.assertIsNotNone(committed_event)
+                self.assertEqual(committed_event["outcome"], "ACCEPTED")
+                self.assertEqual(
+                    first_pipeline.cee.get(contract["operation_id"])["phase"],
+                    "COMMITTING",
+                )
+            finally:
+                # Closing both adapters models loss of all process-local caches.
+                first_service.close()
+
+            time.sleep(1.1)
+            second_claim = self.inbox_b.claim(
+                receiver_tenant_id="tenant-rw",
+                issuer_installation_id="INSTALL-UG-01",
+                message_id="MSG-UG-RW-001",
+                worker_id="worker-after-restart",
+                lease_seconds=30,
+            )
+            self.assertIsNotNone(second_claim)
+            self.assertEqual(second_claim["attempt_count"], 2)
+
+            restarted_pipeline = new_pipeline()
+            second_service = InstitutionalInstructionExecutionService(
+                runtime_binding_resolver=resolver,
+                pipeline_factory=lambda runtime_context: restarted_pipeline,
+                operation_pipeline_resolver=lambda **kwargs: restarted_pipeline,
+                minah_deployment_resolver=active_minah,
+            )
+            try:
+                recovered = second_service.recover(
+                    tenant_id="tenant-ug",
+                    institution_id="BANK-UG-01",
+                    operation_id=contract["operation_id"],
+                    request_id="federation-restart-recovery",
+                    instruction=contract,
+                )
+                self.assertEqual(
+                    recovered["decision"]["protocol_decision"], "PASSED"
+                )
+                self.assertEqual(
+                    restarted_pipeline.cee.get(contract["operation_id"])["phase"],
+                    "FINALIZED",
+                )
+                self.assertEqual(
+                    restarted_pipeline.ivm.event(event_id)["outcome"], "ACCEPTED"
+                )
+                history = restarted_pipeline.ivm.history(contract["target_ref"])
+                self.assertEqual(
+                    [item["event_id"] for item in history], [event_id]
+                )
+
+                response = {
+                    "decision": recovered["decision"],
+                    "receiver_runtime_pins": recovered["runtime_pins"],
+                    "receiver_result": recovered["result"],
+                }
+                self.assertTrue(self.inbox_b.complete(
+                    receiver_tenant_id="tenant-rw",
+                    issuer_installation_id="INSTALL-UG-01",
+                    message_id="MSG-UG-RW-001",
+                    worker_id="worker-after-restart",
+                    decision_ref="cee-operation:" + contract["operation_id"],
+                    response=response,
+                ))
+                stored = self.inbox_a.get(
+                    receiver_tenant_id="tenant-rw",
+                    issuer_installation_id="INSTALL-UG-01",
+                    message_id="MSG-UG-RW-001",
+                )
+                self.assertEqual(stored["status"], "COMPLETED")
+                self.assertEqual(stored["response"], response)
+            finally:
+                second_service.close()
+
 
 
 if __name__ == "__main__":
