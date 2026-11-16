@@ -263,9 +263,29 @@ passed directly to `FederationHttpIngressApplication`. Tests cover the URI
 identity contract and header-spoofing rejection; they do not yet exercise a
 live TLS handshake.
 
-Still outstanding: a live mTLS sender-to-receiver network test, authenticated
-installation discovery, and independent-host tests using separately deployed
-sender and receiver services.
+A live mTLS socket integration test now runs the sender's
+`FederationHTTPSJSONTransport` against a separately listening receiver WSGI
+service. It creates a test CA, a receiver server certificate and a sender
+client certificate carrying the installation SPIFFE URI. The receiver TLS
+socket requires and validates the client certificate; the sender validates
+the receiver chain and hostname; the trusted WSGI adapter receives the peer
+certificate from the TLS socket and binds it to the signed-envelope issuer.
+The test also checks issuer mismatch rejection and refusal of clients without
+a certificate. DNS resolution and the final socket route are injected only to
+keep the test deterministic on loopback; the TLS handshake and HTTP exchange
+are real sockets, not mocked connections.
+
+This test validates the live TLS/mTLS transport boundary, but its receiver
+service runs in a separate server thread in the test process and uses an
+in-memory test receiver. It does not yet establish independent operating
+system processes, separate PostgreSQL databases, independent host/network
+deployment, real institutional key custody or the complete MINAH → CEE →
+Final Decision execution path. Those remain the next integration gates.
+
+Still outstanding: authenticated installation discovery and a two-process,
+two-database federation test using separately configured sender and receiver
+installations, including receiver-local governance and durable acknowledgement
+recovery.
 
 
 ## Sender-side HTTPS transport and outbox delivery worker
