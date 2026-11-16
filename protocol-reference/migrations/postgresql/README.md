@@ -34,10 +34,12 @@ The repository now includes a PostgreSQL execution lease adapter at
 protocol-reference/postgresql_execution_coordinator.py. It implements shared
 lease acquisition, authoritative validation, guarded callback execution, and
 idempotent release against these tables. It accepts a connection factory and
-expects psycopg 3 connections. The adapter does not yet replace the complete
-SQLite deployment registry: PostgreSQL registration, revision, lifecycle
-administration, authority-gated onboarding, connection-pool operations, and
-production deployment controls remain separate work.
+expects psycopg 3 connections. The PostgreSQL lifecycle registry now supplies durable registration, revision,
+and lifecycle transitions, while the separate PostgreSQL institutional domain
+registry supplies durable institution, jurisdiction, MINAH and binding
+onboarding records. Authority-gated administration remains an application
+facade over trusted actor and evidence resolvers. Connection-pool operations
+and production deployment controls remain separate work.
 
 The PostgreSQL integration tests exercise independent coordinator instances
 against the same real database, persistent monotonic fencing, epoch invalidation,
