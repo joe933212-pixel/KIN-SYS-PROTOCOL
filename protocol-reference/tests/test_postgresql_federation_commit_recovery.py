@@ -110,6 +110,9 @@ class PostgreSQLFederationCommitRecoveryTests(unittest.TestCase):
         self.assertTrue(recovered["message_verified"])
         self.assertFalse(recovered["duplicate_delivery"])
         self.assertEqual(recovered["delivery_status"], "COMPLETED")
+        # Duplicate/retry metadata is not part of the signed decision outcome.
+        self.assertNotIn("duplicate", recovered["receiver_result"])
+        self.assertNotIn("duplicate", interrupted_response["receiver_result"])
         self.assertEqual(
             recovered["receiver_acknowledgement"],
             interrupted_response["receiver_acknowledgement"],
