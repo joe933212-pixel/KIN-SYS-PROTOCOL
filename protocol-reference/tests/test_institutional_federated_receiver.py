@@ -6,6 +6,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from governed_contracts import CONTRACT_VERSION, compute_payload_digest
 from institutional_federation import sign_cross_installation_instruction
+from institutional_federation_acknowledgement import verify_receiver_acknowledgement
 from institutional_federated_receiver import (
     FederatedInstructionReceiverError,
     InstitutionalFederatedInstructionReceiver,
@@ -355,6 +356,73 @@ class FederatedReceiverTests(unittest.TestCase):
         self.assertEqual(recovered["delivery_status"], "COMPLETED")
         self.assertTrue(recovered["receiver_result"]["duplicate"])
         self.assertEqual(inbox.row["status"], "COMPLETED")
+
+    def test_receiver_signs_and_replays_stable_completed_acknowledgement(self):
+        class MemoryInbox:
+            def __init__(self):
+                self.row = None
+            def accept_authenticated(self, **kwargs):
+                if self.row is not None:
+                    return {"inserted": False, "status": self.row["status"]}
+                self.row = {"status": "RECEIVED", "response": None}
+                return {"inserted": True, "status": "RECEIVED"}
+            def claim(self, **kwargs):
+                if self.row["status"] not in {"RECEIVED", "RETRYABLE_FAILURE"}:
+                    return None
+                self.row["status"] = "PROCESSING"
+                return {"lease_owner": kwargs["worker_id"]}
+            def complete(self, **kwargs):
+                self.row["status"] = "COMPLETED"
+                self.row["response"] = kwargs["response"]
+                return True
+            def fail(self, **kwargs):
+                self.row["status"] = "RETRYABLE_FAILURE" if kwargs["retryable"] else "REJECTED"
+                return True
+            def get(self, **kwargs):
+                return self.row
+
+        receiver_private = Ed25519PrivateKey.generate()
+        receiver_public = receiver_private.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        )
+        inbox = MemoryInbox()
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=self.executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            inbox=inbox, inbox_worker_id="receiver-signer",
+            receiver_signing_key_id="RECEIVER-KEY-RW-01",
+            receiver_signing_key_loader=lambda tenant, institution, key: receiver_private,
+            clock=lambda: self.now,
+        )
+        first = receiver.receive(self.envelope)
+        receipt = first["receiver_acknowledgement"]
+        verified = verify_receiver_acknowledgement(
+            receipt, original_envelope=self.envelope,
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            sender_institution_id="BANK-UG-01",
+            receiver_trust_key_loader=lambda tenant, installation, key: {
+                "tenant_id": "tenant-ug", "installation_id": "INSTALL-RW-01",
+                "institution_id": "BANK-RW-01", "key_id": "RECEIVER-KEY-RW-01",
+                "algorithm": "Ed25519", "status": "ACTIVE",
+                "valid_from": self.now - 100, "valid_until": self.now + 100,
+                "public_key_ref": "receiver-key",
+            },
+            receiver_public_key_loader=lambda ref: receiver_public,
+            clock=lambda: self.now,
+        )
+        self.assertTrue(verified["verified"])
+        second = receiver.receive(self.envelope)
+        self.assertTrue(second["duplicate_delivery"])
+        self.assertEqual(
+            second["receiver_acknowledgement"], first["receiver_acknowledgement"]
+        )
+        self.assertEqual(len(self.executor.calls), 1)
 
     def test_invalid_signature_never_reaches_local_execution(self):
         bad = {"claims": dict(self.envelope["claims"]),
