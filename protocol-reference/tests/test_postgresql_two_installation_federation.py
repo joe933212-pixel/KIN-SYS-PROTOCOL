@@ -1,10 +1,11 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
 """End-to-end federation across isolated PostgreSQL installation stores.
 
-Each side owns a separate PostgreSQL schema and its own execution runtime. The
-test uses the real signed-envelope, receiver execution, durable inbox, signed
-acknowledgement and durable outbox components. CEE/IVM remain the reference
-runtime's local stores; this is not a two-host or production deployment test.
+Each side owns a separate PostgreSQL schema and its own MINAH -> CEE -> IVM
+execution runtime. The test uses the real signed-envelope, receiver execution,
+durable inbox, signed acknowledgement and durable outbox components, then
+replaces the receiving runtime and verifies durable recovery. This is not a
+two-host or production deployment test.
 """
 from __future__ import annotations
 
