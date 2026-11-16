@@ -41,6 +41,36 @@ class PostgreSQLProtocolStore:
         """No persistent connection is held by this adapter."""
         return None
 
+    def verify_integrity(self) -> None:
+        """Validate durable event/history/process consistency before recovery."""
+        with closing(self._connect()) as connection:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT e.event_id,e.outcome,count(h.history_id)
+                             FROM ivm_events e
+                             LEFT JOIN ivm_transition_history h ON h.event_id=e.event_id
+                            GROUP BY e.event_id,e.outcome
+                           HAVING (e.outcome='ACCEPTED' AND count(h.history_id)<>1)
+                               OR (e.outcome='REJECTED' AND count(h.history_id)<>0)"""
+                    )
+                    if cursor.fetchone() is not None:
+                        raise ProtocolError(
+                            "IVM_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                        )
+                    cursor.execute(
+                        """SELECT p.process_id,p.state,p.state_version,count(h.history_id)
+                             FROM ivm_processes p
+                             LEFT JOIN ivm_transition_history h ON h.process_id=p.process_id
+                            GROUP BY p.process_id,p.state,p.state_version
+                           HAVING p.state_version<>count(h.history_id)
+                               OR (count(h.history_id)>0 AND p.state<>'ACTIVE')"""
+                    )
+                    if cursor.fetchone() is not None:
+                        raise ProtocolError(
+                            "IVM_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                        )
+
     def create_process(
         self, *, process_id: str, initial_state: str = "PENDING",
         authority_id: str = "AUTHORITY-001", authority_active: bool = True,
