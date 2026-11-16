@@ -9,6 +9,7 @@ weakening the production public-address policy.
 """
 from __future__ import annotations
 
+import multiprocessing
 import os
 import ssl
 import tempfile
@@ -65,6 +66,47 @@ class _PeerCertificateWSGIHandler(WSGIRequestHandler):
     def log_message(self, format, *args):
         # Keep test output deterministic and avoid logging request details.
         return
+
+
+
+def _serve_mtls_receiver_process(arguments):
+    """Run the TLS receiver in an OS process separate from the sender test."""
+    paths, ready, received, stop = arguments
+
+    class Receiver:
+        def receive(self, envelope):
+            received.put(envelope)
+            return {
+                "delivery_status": "COMPLETED",
+                "message_id": envelope["claims"]["message_id"],
+                "receiver_acknowledgement": {
+                    "claims": {"message_id": envelope["claims"]["message_id"]},
+                    "response": {"decision": "RECEIVED"},
+                    "signature": "process-test-receipt",
+                },
+            }
+
+    app = FederationHttpIngressApplication(
+        receiver=Receiver(),
+        peer_identity_resolver=mtls_peer_identity_resolver,
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(paths["server_cert"], paths["server_key"])
+    context.load_verify_locations(cafile=paths["ca"])
+    context.verify_mode = ssl.CERT_REQUIRED
+    server = make_server(
+        "127.0.0.1", 0, app, server_class=WSGIServer,
+        handler_class=_PeerCertificateWSGIHandler,
+    )
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.timeout = 0.2
+    ready.put(server.server_port)
+    try:
+        while not stop.is_set():
+            server.handle_request()
+    finally:
+        server.server_close()
 
 
 class _LoopbackPinnedHTTPSConnection:
@@ -232,6 +274,48 @@ class FederationLiveMTLSNetworkTests(unittest.TestCase):
             self.receiver.received[0]["claims"]["issuer_installation_id"],
             "INSTALL-UG-01",
         )
+
+
+    def test_sender_and_receiver_exchange_across_separate_os_processes(self):
+        context = multiprocessing.get_context("spawn")
+        ready = context.Queue()
+        received = context.Queue()
+        stop = context.Event()
+        process = context.Process(
+            target=_serve_mtls_receiver_process,
+            args=((self.paths, ready, received, stop),),
+            daemon=True,
+        )
+        process.start()
+        self.addCleanup(lambda: process.is_alive() and process.terminate())
+        self.addCleanup(lambda: process.join(timeout=3))
+        port = ready.get(timeout=10)
+
+        def factory(host, destination_port, *, pinned_ip, timeout, context):
+            return _LoopbackPinnedHTTPSConnection(
+                host, destination_port, pinned_ip=pinned_ip, timeout=timeout,
+                context=context, local_port=port,
+            )
+
+        transport = FederationHTTPSJSONTransport(
+            destinations={"INSTALL-RW-01": "https://receiver.test"},
+            resolver=lambda host, destination_port, type: [
+                (2, 1, 6, "", ("8.8.8.8", destination_port))
+            ],
+            connection_factory=factory,
+            ssl_context=self.client_context,
+        )
+        response = transport.post("INSTALL-RW-01", self._envelope())
+        self.assertEqual(response["http_status"], 200)
+        self.assertEqual(response["delivery_status"], "COMPLETED")
+        delivered = received.get(timeout=5)
+        self.assertEqual(
+            delivered["claims"]["issuer_installation_id"], "INSTALL-UG-01"
+        )
+        self.assertNotEqual(process.pid, os.getpid())
+        stop.set()
+        process.join(timeout=3)
+        self.assertFalse(process.is_alive())
 
     def test_certificate_identity_must_match_envelope_issuer_over_live_tls(self):
         with self.assertRaisesRegex(
