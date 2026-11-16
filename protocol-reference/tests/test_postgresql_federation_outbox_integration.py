@@ -286,5 +286,102 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
             lease_seconds=45,
         ), [])
 
+
+    def test_retry_schedule_prevents_early_reclaim_and_allows_due_retry(self):
+        claimed = self.outbox.claim(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001", worker_id="sender-worker",
+        )
+        self.assertEqual(claimed["attempt_count"], 1)
+        self.assertTrue(self.outbox.mark_retryable(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001", worker_id="sender-worker",
+            error_code="TRANSPORT_TIMEOUT",
+        ))
+        stored = self.outbox.get(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001",
+        )
+        self.assertEqual(stored["status"], "RETRYABLE_FAILURE")
+        self.assertIsNotNone(stored["next_attempt_at"])
+        self.assertIsNone(self.outbox.claim(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001", worker_id="too-early",
+        ))
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE federation_outbox
+                   SET next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                   WHERE sender_tenant_id = 'tenant-ug'
+                     AND sender_installation_id = 'INSTALL-UG-01'
+                     AND message_id = 'MSG-OUTBOX-001'"""
+            )
+        retry = self.outbox.claim(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001", worker_id="sender-worker-retry",
+        )
+        self.assertEqual(retry["attempt_count"], 2)
+
+    def test_retry_budget_dead_letters_failed_delivery(self):
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE federation_outbox SET max_attempts = 1
+                   WHERE sender_tenant_id = 'tenant-ug'
+                     AND sender_installation_id = 'INSTALL-UG-01'
+                     AND message_id = 'MSG-OUTBOX-001'"""
+            )
+        claimed = self.outbox.claim(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001", worker_id="last-attempt",
+        )
+        self.assertEqual(claimed["attempt_count"], 1)
+        self.assertTrue(self.outbox.mark_retryable(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001", worker_id="last-attempt",
+            error_code="TRANSPORT_TIMEOUT",
+        ))
+        stored = self.outbox.get(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001",
+        )
+        self.assertEqual(stored["status"], "DEAD_LETTER")
+        self.assertIsNotNone(stored["dead_lettered_at"])
+        self.assertIsNone(stored["next_attempt_at"])
+        self.assertEqual(self.outbox.claim_batch(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            worker_id="no-reclaim", limit=5,
+        ), [])
+
+    def test_expired_final_delivery_lease_is_dead_lettered_not_reclaimed(self):
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE federation_outbox SET max_attempts = 1
+                   WHERE sender_tenant_id = 'tenant-ug'
+                     AND sender_installation_id = 'INSTALL-UG-01'
+                     AND message_id = 'MSG-OUTBOX-001'"""
+            )
+        self.outbox.claim(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001", worker_id="crashed-final-attempt",
+        )
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE federation_outbox SET lease_expires_at = CURRENT_TIMESTAMP
+                   - INTERVAL '1 second'
+                   WHERE sender_tenant_id = 'tenant-ug'
+                     AND sender_installation_id = 'INSTALL-UG-01'
+                     AND message_id = 'MSG-OUTBOX-001'"""
+            )
+        self.assertEqual(self.outbox.claim_batch(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            worker_id="after-crash", limit=5,
+        ), [])
+        stored = self.outbox.get(
+            sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001",
+        )
+        self.assertEqual(stored["status"], "DEAD_LETTER")
+        self.assertIsNotNone(stored["dead_lettered_at"])
+
 if __name__ == "__main__":
     unittest.main()
