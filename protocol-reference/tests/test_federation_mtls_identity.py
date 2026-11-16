@@ -8,6 +8,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives.serialization import Encoding
 
 from federation_mtls_identity import (
     FederationMTLSPeerIdentityError,
@@ -36,9 +37,7 @@ def certificate_pem(*uris):
         )
         .sign(key, algorithm=None)
     )
-    return cert.public_bytes(x509.Encoding.PEM) if hasattr(x509, "Encoding") else cert.public_bytes(
-        __import__("cryptography.hazmat.primitives.serialization", fromlist=["Encoding"]).Encoding.PEM
-    )
+    return cert.public_bytes(Encoding.PEM)
 
 
 class FederationMTLSPeerIdentityTests(unittest.TestCase):
