@@ -16,6 +16,10 @@ from institutional_federation import (
     postgresql_inbox_acceptor,
     verify_cross_installation_instruction,
 )
+from institutional_federation_acknowledgement import (
+    FederationAcknowledgementError,
+    sign_receiver_acknowledgement,
+)
 
 
 class FederatedInstructionReceiverError(ValueError):
@@ -35,6 +39,8 @@ class InstitutionalFederatedInstructionReceiver:
         inbox: Any | None = None,
         inbox_worker_id: str | None = None,
         inbox_lease_seconds: int = 60,
+        receiver_signing_key_id: str | None = None,
+        receiver_signing_key_loader: Callable[[str, str, str], Any] | None = None,
     ):
         for field, value in (
             ("receiver_tenant_id", receiver_tenant_id),
@@ -85,7 +91,17 @@ class InstitutionalFederatedInstructionReceiver:
         self.accept_verified_message = accept_verified_message
         self.inbox = inbox
         self.inbox_worker_id = inbox_worker_id
+        if ((receiver_signing_key_id is None) != (receiver_signing_key_loader is None)
+                or (receiver_signing_key_id is not None
+                    and (not isinstance(receiver_signing_key_id, str)
+                         or not receiver_signing_key_id.strip()))
+                or (receiver_signing_key_loader is not None
+                    and not callable(receiver_signing_key_loader))):
+            raise FederatedInstructionReceiverError(
+                "RECEIVER_SIGNING_CONFIGURATION_INVALID")
         self.inbox_lease_seconds = inbox_lease_seconds
+        self.receiver_signing_key_id = receiver_signing_key_id
+        self.receiver_signing_key_loader = receiver_signing_key_loader
         self.clock = clock
 
     def receive(self, envelope: dict[str, Any]) -> dict[str, Any]:
@@ -330,6 +346,39 @@ class InstitutionalFederatedInstructionReceiver:
             "duplicate_delivery": False,
             "production_ready": False,
         }
+        if self.receiver_signing_key_loader is not None:
+            try:
+                # Resolve the receiver's private key only after local execution
+                # and receiver-side approval have produced a complete decision.
+                private_key = self.receiver_signing_key_loader(
+                    self.receiver_tenant_id, self.receiver_institution_id,
+                    self.receiver_signing_key_id,
+                )
+                response["receiver_acknowledgement"] = sign_receiver_acknowledgement(
+                    original_envelope=envelope,
+                    response=response,
+                    key_id=self.receiver_signing_key_id,
+                    accepted_at=int(self.clock()),
+                    private_key=private_key,
+                )
+            except Exception as exc:
+                if self.inbox is not None:
+                    try:
+                        self.inbox.fail(
+                            receiver_tenant_id=self.receiver_tenant_id,
+                            issuer_installation_id=verified["issuer_installation_id"],
+                            message_id=verified["message_id"],
+                            worker_id=self.inbox_worker_id,
+                            error_code="RECEIVER_ACKNOWLEDGEMENT_SIGNING_FAILED",
+                            retryable=True,
+                        )
+                    except Exception:
+                        pass
+                if isinstance(exc, FederationAcknowledgementError):
+                    raise FederatedInstructionReceiverError(str(exc)) from exc
+                raise FederatedInstructionReceiverError(
+                    "RECEIVER_ACKNOWLEDGEMENT_SIGNING_FAILED") from exc
+
         if self.inbox is not None:
             decision_ref = decision.get("cee_execution_ref")
             if not isinstance(decision_ref, str) or not decision_ref.strip():
