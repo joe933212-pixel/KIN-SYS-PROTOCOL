@@ -50,7 +50,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.admin.close()
 
     def test_repository_migration_applies_and_is_idempotent_on_postgresql(self):
-        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009"])
         self.assertEqual(apply_migrations(self.connection), [])
         row = self.connection.execute(
             "SELECT version, filename, checksum_sha256 "
@@ -72,6 +72,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 ("006", "006_cee_journal.sql"),
                 ("007", "007_ivm_transition_store.sql"),
                 ("008", "008_institutional_domain_registry.sql"),
+                ("009", "009_federation_outbox_retry_policy.sql"),
             ],
         )
         tables = {
@@ -100,7 +101,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertIn("institutional_events", tables)
 
     def test_postgresql_rejects_changed_applied_migration_checksum(self):
-        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009"])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             original = discover_migrations()[0][1].read_text(encoding="utf-8")
