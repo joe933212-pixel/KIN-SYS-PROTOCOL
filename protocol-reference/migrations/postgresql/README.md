@@ -190,3 +190,30 @@ must be a new issuer-signed version with a fresh receiver acceptance, but a
 dedicated \`accept_signed_grant_revision\` operation is not yet implemented.
 A local/unsigned revision remains untrusted for federated resolution and fails
 closed because it has no matching signed provenance and receiver receipt.
+
+
+## Durable CEE lifecycle journal
+
+Migration `006_cee_journal.sql` and
+`protocol-reference/postgresql_cee_journal.py` add a shared PostgreSQL
+implementation of the CEE journal contract. Operation creation is idempotent
+by operation ID and canonical request digest. Lifecycle phase changes and
+their corresponding append-only event are committed in the same database
+transaction under a row lock. Recovery observations are separately appended;
+the event and observation tables reject ordinary UPDATE and DELETE operations.
+
+`KinSysProtocolPipeline` accepts an injected `cee_journal`, allowing an
+institutional pipeline factory to supply `PostgreSQLCEEJournal` while keeping
+the SQLite journal as the offline reference default. The PostgreSQL adapter
+opens a fresh connection for each operation, so independently constructed
+workers read and advance the same durable journal without sharing Python
+objects or process-local caches.
+
+The CEE journal and IVM transition store are still separate persistence
+boundaries. This adapter does not create a distributed transaction or make
+the IVM write atomic with the CEE journal update. The next integration step
+must pair the PostgreSQL CEE journal with an independently durable IVM store
+and exercise crash windows, conflicting retries, and recovery across separate
+database instances. PostgreSQL is a reference backend, not production
+certification; tenant identity, database roles, row-level isolation, backups,
+TLS, failover, key custody and operational controls require independent review.
