@@ -252,10 +252,23 @@ independent security review. Legal competence and the sufficiency of the
 underlying trust/approval evidence remain separate adjudication requirements.
 
 
-**Federated revision limitation:** the PostgreSQL reference backend currently
-persists initial signed grant acceptance. A subsequent federated amendment
-must be a new issuer-signed version and a fresh receiver acceptance, but a
-dedicated revision-acceptance transaction is still outstanding. A locally
-created unsigned revision is intentionally rejected by federated
-\`load_verified_grant\`; it cannot inherit the previous version's signature
-or receiver approval.
+**Federated revision acceptance:** the PostgreSQL reference backend now
+supports \`accept_signed_grant_revision(...)\` for an existing federated grant.
+Every amendment is a new issuer-signed PENDING version and requires fresh,
+independent receiver approval and a receiver-signed Ed25519 receipt. The
+adapter checks the expected current version before resolving receiver signing
+material, then rechecks the locked head, grant lineage and issuer trust inside
+the persistence transaction. It atomically inserts the immutable ACTIVE
+snapshot, advances the head, stores the new issuer envelope and receiver
+receipt, and appends a \`FEDERATED_GRANT_REVISION_ACCEPTED\` event linked to the
+exact previous version. Stale heads, revoked grants, issuer/key revocation
+races and audit-event conflicts fail closed and roll back the whole transaction.
+
+\`load_verified_grant\` verifies both initial acceptance and revision
+acceptance events, including the exact \`from_version\` predecessor reference.
+A locally created unsigned revision still cannot inherit the previous
+version's issuer signature or receiver approval: when the current federated
+head has no fresh provenance, federated resolution rejects it. The reference
+backend does not yet provide a governed public administration endpoint for
+this method; callers must supply the authenticated tenant, independently
+authorised receiver-approval verifier, and receiver key-custody adapters.

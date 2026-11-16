@@ -143,6 +143,41 @@ class PostgreSQLInstitutionalTrustRegistryTests(unittest.TestCase):
             evidence_ref="evidence:issuer-key",
         )
 
+    def accept_federated_grant_revision(
+        self, *, expected_version="1", version="2",
+        event_id="grant-accepted-2", approval_ref="approval:receiver-2",
+    ):
+        pending = self.grant(
+            version=version, status="PENDING",
+            roles=["reviewer", "approver"],
+        )
+        envelope = sign_authority_grant(
+            pending, key_id="issuer-key-2", private_key=self.issuer_private_2,
+        )
+        approval = {
+            "actor_ref": "actor:bank-approver",
+            "approval_ref": approval_ref,
+        }
+        result = self.registry.accept_signed_grant_revision(
+            tenant_id="tenant-a", grant_id="GRANT-01",
+            expected_version=expected_version, envelope=envelope,
+            receiver_institution_id="BANK-UG-01",
+            receiver_approval=approval,
+            verify_receiver_approval=lambda grant, value: value == approval,
+            public_key_loader=lambda ref: (
+                self.issuer_public_2 if ref == "vault://issuer/public-2" else None
+            ),
+            event_id=event_id, actor_ref="actor:bank-approver",
+            evidence_ref=approval_ref,
+            receiver_signing_key_id="receiver-key-1",
+            receiver_signing_key_loader=lambda tenant, institution, key: (
+                self.receiver_private if (tenant, institution, key) ==
+                ("tenant-a", "BANK-UG-01", "receiver-key-1") else None
+            ),
+            clock=lambda: self.now,
+        )
+        return envelope, result
+
     def accept_federated_grant(self):
         pending = self.grant(status="PENDING")
         envelope = sign_authority_grant(
@@ -268,6 +303,198 @@ class PostgreSQLInstitutionalTrustRegistryTests(unittest.TestCase):
             resolver.resolve(
                 self.local_assertion(nonce="nonce-old-version-0001"),
                 tenant_id="tenant-a", resource_type="institution", resource_id="BANK-UG-01",
+            )
+
+    def test_federated_revision_requires_fresh_issuer_and_receiver_signatures(self):
+        self.configure_issuer()
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            key_id="issuer-key-2", algorithm="Ed25519",
+            public_key_ref="vault://issuer/public-2", valid_from=100,
+            valid_until=500, actor_ref="actor:trust-admin",
+            evidence_ref="evidence:issuer-key-rotation",
+        )
+        self.accept_federated_grant()
+        envelope, revised = self.accept_federated_grant_revision()
+        self.assertTrue(revised["accepted"])
+        self.assertTrue(revised["revised"])
+        self.assertEqual(revised["from_version"], "1")
+        self.assertEqual(revised["grant"]["version"], "2")
+        self.assertEqual(revised["grant"]["status"], "ACTIVE")
+
+        head = self.registry.load_grant("tenant-a", "GRANT-01")
+        self.assertEqual(head["version"], "2")
+        self.assertEqual(head["roles"], ["reviewer", "approver"])
+        self.assertIsNotNone(self.registry.load_grant_provenance(
+            tenant_id="tenant-a", grant_id="GRANT-01", version="1"))
+        provenance = self.registry.load_grant_provenance(
+            tenant_id="tenant-a", grant_id="GRANT-01", version="2")
+        self.assertEqual(provenance["issuer_envelope"], envelope)
+        self.assertEqual(
+            provenance["acceptance"]["receiver_receipt"],
+            revised["receiver_receipt"],
+        )
+
+        verified = self.registry.load_verified_grant(
+            "tenant-a", "GRANT-01", require_federated_provenance=True,
+            public_key_loader=lambda ref: (
+                self.issuer_public_2 if ref == "vault://issuer/public-2" else None
+            ),
+            receiver_acceptance_key_loader=self.receiver_key_loader,
+            receiver_acceptance_public_key_loader=self.receiver_public_key_loader,
+            clock=lambda: self.now,
+        )
+        self.assertEqual(verified["version"], "2")
+
+        resolver = InstitutionalAuthorityResolver(
+            grant_store=self.registry, consume_nonce=InMemoryNonceGuard().consume,
+            trust_key_loader=self.registry.load_trust_key,
+            public_key_loader=lambda ref: (
+                self.issuer_public_2 if ref == "vault://issuer/public-2" else None
+            ),
+            receiver_acceptance_key_loader=self.receiver_key_loader,
+            receiver_acceptance_public_key_loader=self.receiver_public_key_loader,
+            clock=lambda: self.now,
+        )
+        claims = {
+            "key_id": "issuer-key-2", "tenant_id": "tenant-a",
+            "actor_ref": "actor:registrar", "grant_id": "GRANT-01",
+            "grant_version": "2", "issued_at": 140, "expires_at": 160,
+            "nonce": "nonce-federated-revision-2",
+            "issuer_institution_id": "NATIONAL-REGISTRY",
+        }
+        assertion = {
+            "claims": claims,
+            "signature": sign_federated_actor_claims(claims, self.issuer_private_2),
+        }
+        resolved = resolver.resolve(
+            assertion, tenant_id="tenant-a",
+            resource_type="institution", resource_id="BANK-UG-01",
+        )
+        self.assertEqual(resolved["grant_ref"], "GRANT-01@2")
+
+        old_claims = dict(claims, grant_version="1", nonce="nonce-federated-old-1")
+        old_assertion = {
+            "claims": old_claims,
+            "signature": sign_federated_actor_claims(
+                old_claims, self.issuer_private_2,
+            ),
+        }
+        with self.assertRaisesRegex(
+            AuthorityResolutionError, "AUTHORITY_GRANT_SCOPE_MISMATCH",
+        ):
+            resolver.resolve(
+                old_assertion, tenant_id="tenant-a",
+                resource_type="institution", resource_id="BANK-UG-01",
+            )
+
+    def test_federated_revision_stale_head_and_audit_conflict_roll_back(self):
+        self.configure_issuer()
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            key_id="issuer-key-2", algorithm="Ed25519",
+            public_key_ref="vault://issuer/public-2", valid_from=100,
+            valid_until=500, actor_ref="actor:trust-admin",
+            evidence_ref="evidence:issuer-key-rotation",
+        )
+        self.accept_federated_grant()
+
+        with self.assertRaisesRegex(TrustRegistryConflict, "STALE_GRANT_VERSION"):
+            self.accept_federated_grant_revision(
+                expected_version="0", version="2", event_id="stale-revision",
+            )
+        self.assertEqual(
+            self.registry.load_grant("tenant-a", "GRANT-01")["version"], "1",
+        )
+        self.assertIsNone(self.registry.load_grant_provenance(
+            tenant_id="tenant-a", grant_id="GRANT-01", version="2"))
+
+        with self.assertRaisesRegex(
+            TrustRegistryConflict, "GRANT_EVENT_ID_ALREADY_EXISTS",
+        ):
+            self.accept_federated_grant_revision(
+                expected_version="1", version="2", event_id="grant-accepted-1",
+            )
+        self.assertEqual(
+            self.registry.load_grant("tenant-a", "GRANT-01")["version"], "1",
+        )
+        self.assertIsNone(self.registry.load_grant_provenance(
+            tenant_id="tenant-a", grant_id="GRANT-01", version="2"))
+        events = self.registry.list_grant_events(
+            tenant_id="tenant-a", grant_id="GRANT-01",
+        )
+        self.assertEqual([event["version"] for event in events], ["1"])
+
+    def test_federated_revision_refusal_does_not_resolve_receiver_signer(self):
+        self.configure_issuer()
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            key_id="issuer-key-2", algorithm="Ed25519",
+            public_key_ref="vault://issuer/public-2", valid_from=100,
+            valid_until=500, actor_ref="actor:trust-admin",
+            evidence_ref="evidence:issuer-key-rotation",
+        )
+        self.accept_federated_grant()
+        pending = self.grant(version="2", status="PENDING")
+        envelope = sign_authority_grant(
+            pending, key_id="issuer-key-2", private_key=self.issuer_private_2,
+        )
+        signer_called = False
+
+        def signer_loader(*args):
+            nonlocal signer_called
+            signer_called = True
+            return self.receiver_private
+
+        with self.assertRaisesRegex(
+            TrustRegistryError, "SIGNED_GRANT_REVISION_ACCEPTANCE_REJECTED",
+        ):
+            self.registry.accept_signed_grant_revision(
+                tenant_id="tenant-a", grant_id="GRANT-01",
+                expected_version="1", envelope=envelope,
+                receiver_institution_id="BANK-UG-01",
+                receiver_approval=self.approval,
+                verify_receiver_approval=lambda grant, approval: False,
+                public_key_loader=lambda ref: (
+                    self.issuer_public_2 if ref == "vault://issuer/public-2" else None
+                ),
+                event_id="refused-revision", actor_ref="actor:bank-approver",
+                evidence_ref="approval:receiver-1",
+                receiver_signing_key_id="receiver-key-1",
+                receiver_signing_key_loader=signer_loader,
+                clock=lambda: self.now,
+            )
+        self.assertFalse(signer_called)
+        self.assertEqual(
+            self.registry.load_grant("tenant-a", "GRANT-01")["version"], "1",
+        )
+
+    def test_unsigned_local_revision_cannot_inherit_federated_provenance(self):
+        self.configure_issuer()
+        self.registry.register_trust_key(
+            tenant_id="tenant-a", issuer_institution_id="NATIONAL-REGISTRY",
+            key_id="issuer-key-2", algorithm="Ed25519",
+            public_key_ref="vault://issuer/public-2", valid_from=100,
+            valid_until=500, actor_ref="actor:trust-admin",
+            evidence_ref="evidence:issuer-key-rotation",
+        )
+        self.accept_federated_grant()
+        self.registry.create_grant_revision(
+            tenant_id="tenant-a", grant_id="GRANT-01", expected_version="1",
+            grant=self.grant(version="2"), event_id="unsigned-federated-revision",
+            actor_ref="actor:local-approver", evidence_ref="evidence:local-change",
+        )
+        with self.assertRaisesRegex(
+            TrustRegistryError, "FEDERATED_GRANT_PROVENANCE_REQUIRED",
+        ):
+            self.registry.load_verified_grant(
+                "tenant-a", "GRANT-01", require_federated_provenance=True,
+                public_key_loader=lambda ref: (
+                    self.issuer_public_2 if ref == "vault://issuer/public-2" else None
+                ),
+                receiver_acceptance_key_loader=self.receiver_key_loader,
+                receiver_acceptance_public_key_loader=self.receiver_public_key_loader,
+                clock=lambda: self.now,
             )
 
     def test_ed25519_issuer_trust_rotation_receiver_receipt_and_revocation(self):

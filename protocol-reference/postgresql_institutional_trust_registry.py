@@ -148,6 +148,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         cursor: Any, *, tenant_id: str, grant_id: str, expected_version: str,
         grant: dict[str, Any], event_id: str, actor_ref: str, evidence_ref: str,
         event_type: str, created_at: datetime,
+        event_payload: dict[str, Any] | None = None,
     ) -> None:
         PostgreSQLInstitutionalTrustRegistry._validate_grant(grant)
         if grant["tenant_id"] != tenant_id or grant["grant_id"] != grant_id:
@@ -172,7 +173,9 @@ class PostgreSQLInstitutionalTrustRegistry:
             cursor, tenant_id=tenant_id, event_id=event_id, grant_id=grant_id,
             version=grant["version"], event_type=event_type, actor_ref=actor_ref,
             evidence_ref=evidence_ref,
-            payload={"from_version": expected_version, "grant_digest_payload": grant},
+            payload=(event_payload if event_payload is not None else {
+                "from_version": expected_version, "grant_digest_payload": grant,
+            }),
             created_at=created_at,
         )
 
@@ -756,6 +759,194 @@ class PostgreSQLInstitutionalTrustRegistry:
             "version": grant["version"], "receiver_receipt": receipt,
         }
 
+    def accept_signed_grant_revision(
+        self, *, tenant_id: str, grant_id: str, expected_version: str,
+        envelope: dict[str, Any], receiver_institution_id: str,
+        receiver_approval: dict[str, Any], verify_receiver_approval: Any,
+        public_key_loader: Any, event_id: str, actor_ref: str,
+        evidence_ref: str, receiver_signing_key_id: str,
+        receiver_signing_key_loader: Any, clock: Any = None,
+    ) -> dict[str, Any]:
+        """Accept a fresh issuer-signed version of an existing federated grant.
+
+        A revision never inherits prior issuer provenance or receiver consent.
+        The receiver approves and signs the exact new version. The current head
+        and issuer trust are rechecked inside the transaction that persists the
+        immutable snapshot, provenance and audit event.
+        """
+        from institutional_grant_provenance import (
+            accept_authority_grant, sign_receiver_acceptance_receipt,
+            verify_authority_grant,
+        )
+        tenant = self._tenant(tenant_id)
+        grant_key = _identifier(grant_id, "INVALID_GRANT_ID")
+        expected = _identifier(expected_version, "INVALID_EXPECTED_GRANT_VERSION")
+        receiver = _identifier(
+            receiver_institution_id, "INVALID_RECEIVER_INSTITUTION",
+        )
+        for value, code in (
+            (event_id, "INVALID_EVENT_ID"),
+            (actor_ref, "INVALID_EVENT_ACTOR"),
+            (evidence_ref, "GRANT_EVIDENCE_REQUIRED"),
+            (receiver_signing_key_id, "RECEIVER_ACCEPTANCE_SIGNING_KEY_REQUIRED"),
+        ):
+            _identifier(value, code)
+        if not isinstance(receiver_approval, dict):
+            raise TrustRegistryError("RECEIVER_APPROVAL_REQUIRED")
+        if not callable(receiver_signing_key_loader):
+            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_REQUIRED")
+        clock_fn = clock or time.time
+        if not callable(clock_fn):
+            raise TrustRegistryError("TRUST_REGISTRY_CLOCK_INVALID")
+        now_value = clock_fn()
+        if (isinstance(now_value, bool) or not isinstance(now_value, (int, float))
+                or not math.isfinite(now_value)):
+            raise TrustRegistryError("TRUST_REGISTRY_CLOCK_INVALID")
+        accepted_at = int(now_value)
+        if (receiver_approval.get("actor_ref") != actor_ref
+                or receiver_approval.get("approval_ref") != evidence_ref):
+            raise TrustRegistryError("RECEIVER_APPROVAL_AUDIT_CONTEXT_MISMATCH")
+
+        try:
+            accepted = accept_authority_grant(
+                envelope, tenant_id=tenant, receiver_institution_id=receiver,
+                trust_key_loader=self.load_trust_key,
+                public_key_loader=public_key_loader,
+                verify_receiver_approval=verify_receiver_approval,
+                receiver_approval=receiver_approval,
+                clock=lambda: now_value,
+            )
+        except Exception as exc:
+            raise TrustRegistryError(
+                "SIGNED_GRANT_REVISION_ACCEPTANCE_REJECTED:" + str(exc)
+            ) from exc
+
+        grant = accepted["grant"]
+        self._validate_grant(grant)
+        if (grant["tenant_id"] != tenant or grant["grant_id"] != grant_key
+                or grant["status"] != "ACTIVE" or grant["version"] == expected):
+            raise TrustRegistryError("ACCEPTED_GRANT_REVISION_SCOPE_INVALID")
+
+        # Avoid resolving receiver signing material for stale or revoked grants.
+        # The same checks are repeated while holding the current-head row lock.
+        current = self.load_grant(tenant, grant_key)
+        if current is None:
+            raise TrustRegistryError("AUTHORITY_GRANT_NOT_FOUND")
+        if current["version"] != expected:
+            raise TrustRegistryConflict("STALE_GRANT_VERSION")
+        if current["status"] == "REVOKED":
+            raise TrustRegistryConflict("AUTHORITY_GRANT_ALREADY_REVOKED")
+        if (current["institution_id"] != receiver
+                or current["issuer_institution_id"] != grant["issuer_institution_id"]
+                or grant["institution_id"] != current["institution_id"]):
+            raise TrustRegistryError("FEDERATED_GRANT_REVISION_LINEAGE_MISMATCH")
+
+        try:
+            receiver_private_key = receiver_signing_key_loader(
+                tenant, receiver, receiver_signing_key_id,
+            )
+        except Exception as exc:
+            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_UNAVAILABLE") from exc
+        if not callable(getattr(receiver_private_key, "sign", None)):
+            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_UNAVAILABLE")
+
+        receipt = sign_receiver_acceptance_receipt(
+            tenant_id=tenant, receiver_institution_id=receiver,
+            grant_id=grant_key, grant_version=grant["version"],
+            grant_digest=accepted["acceptance"]["grant_digest"],
+            receiver_approval=receiver_approval, accepted_at=accepted_at,
+            key_id=receiver_signing_key_id, private_key=receiver_private_key,
+        )
+        accepted["acceptance"]["receiver_receipt"] = receipt
+        now = datetime.now(timezone.utc)
+        digest = accepted["acceptance"]["grant_digest"]
+        event_payload = {
+            "from_version": expected,
+            "grant_digest": digest,
+            "issuer_envelope": accepted["issuer_envelope"],
+            "acceptance": accepted["acceptance"],
+        }
+
+        with closing(self._connect()) as connection:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                        (tenant + ":" + grant_key,),
+                    )
+                    cursor.execute(
+                        """SELECT h.current_version,v.payload_json,v.payload_sha256
+                           FROM authority_grant_heads h
+                           JOIN authority_grant_versions v
+                             ON v.tenant_id=h.tenant_id AND v.grant_id=h.grant_id
+                            AND v.version=h.current_version
+                           WHERE h.tenant_id=%s AND h.grant_id=%s
+                           FOR UPDATE OF h""",
+                        (tenant, grant_key),
+                    )
+                    head_row = cursor.fetchone()
+                    if head_row is None:
+                        raise TrustRegistryError("AUTHORITY_GRANT_NOT_FOUND")
+                    if head_row[0] != expected:
+                        raise TrustRegistryConflict("STALE_GRANT_VERSION")
+                    current_locked = _object(
+                        head_row[1], "AUTHORITY_GRANT_RECORD_INVALID",
+                    )
+                    self._validate_grant(current_locked)
+                    current_digest = hashlib.sha256(
+                        _canonical(current_locked).encode("utf-8")
+                    ).hexdigest()
+                    if current_digest != head_row[2]:
+                        raise TrustRegistryError("GRANT_SNAPSHOT_DIGEST_MISMATCH")
+                    if current_locked["status"] == "REVOKED":
+                        raise TrustRegistryConflict("AUTHORITY_GRANT_ALREADY_REVOKED")
+                    if (current_locked["institution_id"] != receiver
+                            or current_locked["issuer_institution_id"]
+                            != grant["issuer_institution_id"]):
+                        raise TrustRegistryError(
+                            "FEDERATED_GRANT_REVISION_LINEAGE_MISMATCH"
+                        )
+                    try:
+                        issuer_grant = verify_authority_grant(
+                            envelope, tenant_id=tenant,
+                            trust_key_loader=lambda t, k: self._load_trust_key_cursor(
+                                cursor, t, k, lock=True,
+                            ),
+                            public_key_loader=public_key_loader,
+                            clock=lambda: now_value,
+                        )
+                    except Exception as exc:
+                        raise TrustRegistryError(
+                            "ISSUER_TRUST_CHANGED_DURING_REVISION_ACCEPTANCE"
+                        ) from exc
+                    if dict(issuer_grant, status="ACTIVE") != grant:
+                        raise TrustRegistryError(
+                            "ACCEPTED_GRANT_REVISION_SNAPSHOT_MISMATCH"
+                        )
+
+                    self._insert_revision_locked(
+                        cursor, tenant_id=tenant, grant_id=grant_key,
+                        expected_version=expected, grant=grant,
+                        event_id=event_id, actor_ref=actor_ref,
+                        evidence_ref=evidence_ref,
+                        event_type="FEDERATED_GRANT_REVISION_ACCEPTED",
+                        created_at=now, event_payload=event_payload,
+                    )
+                    cursor.execute(
+                        """INSERT INTO accepted_grant_provenance
+                           (tenant_id,grant_id,version,grant_digest,issuer_envelope_json,
+                            acceptance_json,created_at)
+                           VALUES (%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s)""",
+                        (tenant, grant_key, grant["version"], digest,
+                         _canonical(accepted["issuer_envelope"]),
+                         _canonical(accepted["acceptance"]), now),
+                    )
+        return {
+            "accepted": True, "revised": True, "grant": grant,
+            "grant_digest": digest, "version": grant["version"],
+            "from_version": expected, "receiver_receipt": receipt,
+        }
+
     def load_grant_provenance(
         self, *, tenant_id: str, grant_id: str, version: str,
     ) -> dict[str, Any] | None:
@@ -906,10 +1097,13 @@ class PostgreSQLInstitutionalTrustRegistry:
                                 "GRANT_ACCEPTANCE_RECEIPT_INVALID:" + str(exc)
                             ) from exc
                         cursor.execute(
-                            """SELECT actor_ref,evidence_ref,payload_json
+                            """SELECT event_type,actor_ref,evidence_ref,payload_json
                                FROM authority_grant_events
                                WHERE tenant_id=%s AND grant_id=%s AND version=%s
-                                 AND event_type='FEDERATED_GRANT_ACCEPTED'""",
+                                 AND event_type IN (
+                                   'FEDERATED_GRANT_ACCEPTED',
+                                   'FEDERATED_GRANT_REVISION_ACCEPTED'
+                                 )""",
                             (tenant, grant_id, grant["version"]),
                         )
                         events = cursor.fetchall()
@@ -917,15 +1111,34 @@ class PostgreSQLInstitutionalTrustRegistry:
                             raise TrustRegistryError(
                                 "GRANT_ACCEPTANCE_AUDIT_EVENT_MISSING_OR_AMBIGUOUS"
                             )
-                        event = events[0]
+                        event_type, event_actor, event_evidence, event_json = events[0]
+                        event_payload = _object(event_json, "GRANT_EVENT_PAYLOAD_INVALID")
                         expected_payload = {
                             "grant_digest": digest,
                             "issuer_envelope": envelope,
                             "acceptance": acceptance,
                         }
-                        if _object(event[2], "GRANT_EVENT_PAYLOAD_INVALID") != expected_payload:
+                        if event_type == "FEDERATED_GRANT_REVISION_ACCEPTED":
+                            from_version = event_payload.get("from_version")
+                            if (not isinstance(from_version, str)
+                                    or not IDENTIFIER.fullmatch(from_version)
+                                    or from_version == grant["version"]):
+                                raise TrustRegistryError(
+                                    "GRANT_REVISION_AUDIT_PREDECESSOR_INVALID"
+                                )
+                            cursor.execute(
+                                """SELECT 1 FROM authority_grant_versions
+                                   WHERE tenant_id=%s AND grant_id=%s AND version=%s""",
+                                (tenant, grant_id, from_version),
+                            )
+                            if cursor.fetchone() is None:
+                                raise TrustRegistryError(
+                                    "GRANT_REVISION_AUDIT_PREDECESSOR_MISSING"
+                                )
+                            expected_payload["from_version"] = from_version
+                        if event_payload != expected_payload:
                             raise TrustRegistryError("GRANT_ACCEPTANCE_AUDIT_PAYLOAD_MISMATCH")
-                        if event[0] != approval_actor or event[1] != approval_ref:
+                        if event_actor != approval_actor or event_evidence != approval_ref:
                             raise TrustRegistryError("GRANT_ACCEPTANCE_AUDIT_CONTEXT_MISMATCH")
                         return grant
                     except TrustRegistryError:
