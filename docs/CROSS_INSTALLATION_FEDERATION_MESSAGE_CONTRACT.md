@@ -211,3 +211,46 @@ previous version's signature and approval are never inherited.
 The stable decision projection excludes retry metadata (including the reference executor's `duplicate` indicator). That flag describes how an attempt reached the decision, not the decision itself; including it would change the signed response digest on recovery even when the original committed outcome and runtime pins are unchanged.
 
 The test deliberately retains the same reference execution-service/journal object while reconstructing the receiver adapter. It therefore validates the failure handoff, lease reclaim and recovery orchestration against the existing journal; it does **not** yet prove restoration of CEE/IVM journal state into a separate process or independent database server. That remains a separate durability gate and must be tested before claiming crash-safe multi-host recovery.
+
+
+## Authenticated HTTP ingress boundary (reference adapter)
+
+`protocol-reference/federation_http_transport.py` adds a narrow WSGI ingress at
+`POST /federation/v1/messages`. It is deliberately separate from the local
+synthetic prototype API. The adapter requires a bounded JSON body and a
+configured `peer_identity_resolver`; it compares the authenticated transport
+peer installation ID with the issuer installation ID in the signed envelope
+before invoking `InstitutionalFederatedInstructionReceiver.receive(...)`.
+The receiver still independently verifies the Ed25519 envelope, receiver-local
+trust, destination, freshness, replay state and local execution authority.
+
+The adapter rejects missing/invalid content lengths, oversized or truncated
+bodies, non-JSON content types, duplicate JSON members, non-finite JSON values,
+wrong routes/methods, missing peer identity and transport/envelope issuer
+mismatches. Receiver exceptions are not exposed to remote callers. The response
+is 200 for a completed delivery and 202 while the durable receiver reports a
+non-completed state. The adapter does not accept tenant, institution, binding
+or authority selectors from the HTTP body.
+
+**Deployment trust requirement:** this WSGI module does not terminate TLS or
+validate certificates itself. The deployment must terminate mutually
+authenticated TLS at a trusted edge and configure the peer resolver to read
+only certificate identity metadata inserted by that edge after successful
+verification. The edge must strip caller-supplied copies of those metadata
+headers, prevent direct bypass to the WSGI process, and enforce its own
+certificate-chain, revocation, hostname/SAN, rate, connection and request
+limits. A resolver that trusts ordinary caller-controlled HTTP headers is
+unsafe and invalidates the transport-authentication boundary. The adapter's
+peer identity check is an additional binding; it does not replace the
+receiver's signed-message trust verification or confer execution authority.
+
+Adversarial unit tests cover authenticated delivery, peer/issuer mismatch,
+missing peer identity, caller-header spoofing, request size, route/content-type,
+duplicate JSON keys, truncated bodies and error-detail suppression. These are
+deterministic adapter tests, not a live mTLS or two-host deployment test.
+
+Still outstanding after this increment: a production TLS/mTLS deployment
+profile with a concrete trusted peer resolver, an outbound HTTPS sender
+transport wired to the durable outbox and acknowledgement verifier, retry
+scheduling/dead-letter policy, authenticated installation discovery, and
+independent-host tests using separately deployed receiver and sender services.
