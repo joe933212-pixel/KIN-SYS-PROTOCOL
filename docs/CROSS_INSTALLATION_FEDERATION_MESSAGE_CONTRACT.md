@@ -254,3 +254,38 @@ profile with a concrete trusted peer resolver, an outbound HTTPS sender
 transport wired to the durable outbox and acknowledgement verifier, retry
 scheduling/dead-letter policy, authenticated installation discovery, and
 independent-host tests using separately deployed receiver and sender services.
+
+
+## Sender-side HTTPS transport and outbox delivery worker
+
+`protocol-reference/federation_https_transport.py` adds the sender-side
+counterpart to the HTTP ingress adapter. `FederationHTTPSJSONTransport`
+resolves a destination only from the sender institution's configured
+installation-to-endpoint registry; it does not accept a URL from the
+instruction or envelope. It requires HTTPS, verifies the TLS certificate chain
+and hostname, validates DNS answers as globally routable, pins each connection
+to a validated address, rejects redirects and bounds request/response sizes
+and timeouts. An institution may supply an SSL context configured with its
+client certificate for mutual TLS; deployment-specific certificate lifecycle
+and peer identity mapping remain explicit configuration responsibilities.
+
+`FederationOutboxDeliveryWorker` accepts a message already claimed from the
+PostgreSQL outbox, sends its immutable signed envelope, and passes a completed
+receiver acknowledgement receipt to the outbox's injected verifier and
+acknowledgement persistence method. It never treats an unsigned HTTP response
+as proof of a decision. Pending responses, transport failures and invalid
+receipts are returned to retryable state with bounded error codes. The
+PostgreSQL outbox remains responsible for cryptographic verification against
+the original envelope and sender-local receiver trust configuration.
+
+The new unit tests cover registry-only destination selection, HTTPS/path
+restrictions, rejection of private/loopback DNS answers, redirect/status
+rejection, acknowledgement handoff to the outbox verifier and retry when a
+receipt is absent. They use deterministic fake connections; they are not a
+live network, certificate, mTLS or independent-host integration test.
+
+Outstanding deployment validation includes a concrete institutional endpoint
+registry adapter, mTLS client-certificate provisioning and rotation, trusted
+receiver certificate identity mapping, rate limiting and operational retry
+scheduling/dead-letter policy. The sender worker is a one-claim delivery
+primitive, not a continuously running scheduler.
