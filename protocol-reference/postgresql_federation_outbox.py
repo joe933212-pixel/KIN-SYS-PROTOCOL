@@ -46,10 +46,14 @@ class PostgreSQLFederationOutbox:
     share the same PostgreSQL authority.
     """
 
-    def __init__(self, connection_factory: Callable[[], Any]):
-        if not callable(connection_factory):
+    def __init__(
+        self, connection_factory: Callable[[], Any],
+        acknowledgement_verifier: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]],
+    ):
+        if not callable(connection_factory) or not callable(acknowledgement_verifier):
             raise FederationOutboxError("FEDERATION_OUTBOX_CONFIGURATION_INVALID")
         self._connect = connection_factory
+        self._verify_acknowledgement = acknowledgement_verifier
 
     def enqueue(
         self, *, sender_tenant_id: str, sender_installation_id: str,
@@ -211,28 +215,41 @@ class PostgreSQLFederationOutbox:
     def acknowledge(
         self, *, sender_tenant_id: str, sender_installation_id: str,
         message_id: str, receipt: dict[str, Any],
-        verified_acknowledgement: dict[str, Any],
     ) -> dict[str, Any]:
-        """Persist a previously verified receiver receipt, independent of lease.
+        """Verify and persist a receiver receipt, independent of delivery lease.
 
-        A valid late acknowledgement may arrive after the sender worker has
-        crashed and its lease has expired. The receipt is therefore correlated
-        to the immutable outbox row, not to the current worker lease.
+        The injected verifier must use sender-local receiver trust configuration
+        and cryptographically verify the receipt against the immutable original
+        envelope. A late acknowledgement remains valid after a worker crash.
         """
         tenant = _identifier(sender_tenant_id, "OUTBOX_TENANT_INVALID")
         sender = _identifier(sender_installation_id, "OUTBOX_SENDER_INVALID")
         message = _identifier(message_id, "OUTBOX_MESSAGE_ID_INVALID")
-        if (not isinstance(receipt, dict)
-                or set(receipt) != {"claims", "response", "signature"}
-                or not isinstance(verified_acknowledgement, dict)
-                or verified_acknowledgement.get("verified") is not True):
-            raise FederationOutboxError("OUTBOX_VERIFIED_ACKNOWLEDGEMENT_REQUIRED")
-        claims = verified_acknowledgement.get("claims")
-        response = verified_acknowledgement.get("response")
-        if not isinstance(claims, dict) or not isinstance(response, dict):
-            raise FederationOutboxError("OUTBOX_VERIFIED_ACKNOWLEDGEMENT_INVALID")
-        encoded, receipt_digest = _canonical_json(receipt)
+        if not isinstance(receipt, dict):
+            raise FederationOutboxError("OUTBOX_ACKNOWLEDGEMENT_INVALID")
         try:
+            with closing(self._connect()) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT envelope_json FROM federation_outbox
+                           WHERE sender_tenant_id = %s AND sender_installation_id = %s
+                             AND message_id = %s""",
+                        (tenant, sender, message),
+                    )
+                    original_row = cursor.fetchone()
+                    if original_row is None:
+                        raise FederationOutboxError("OUTBOX_MESSAGE_NOT_FOUND")
+                    original_envelope = original_row[0]
+            try:
+                verified = self._verify_acknowledgement(receipt, original_envelope)
+            except Exception as exc:
+                raise FederationOutboxError("OUTBOX_ACKNOWLEDGEMENT_VERIFICATION_FAILED") from exc
+            if (not isinstance(verified, dict) or verified.get("verified") is not True
+                    or not isinstance(verified.get("claims"), dict)
+                    or not isinstance(verified.get("response"), dict)):
+                raise FederationOutboxError("OUTBOX_VERIFIED_ACKNOWLEDGEMENT_REQUIRED")
+            claims, response = verified["claims"], verified["response"]
+            encoded, receipt_digest = _canonical_json(receipt)
             with closing(self._connect()) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
