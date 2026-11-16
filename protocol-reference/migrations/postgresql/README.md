@@ -292,3 +292,16 @@ a reference backend, not production certification. Least-privilege database
 roles, row-level security or equivalent tenant enforcement, TLS, connection
 pooling, backups, failover, observability, secret/key custody and independent
 security review remain deployment requirements.
+
+
+## Sender outbox retry policy
+
+Migration `009_federation_outbox_retry_policy.sql` extends the durable
+federation sender outbox with a database-clock retry schedule, a per-message
+attempt budget (default eight), and a terminal `DEAD_LETTER` state. Retry
+delays use exponential backoff starting at five seconds and capped at one
+hour. Retryable rows are not claimable before `next_attempt_at`. Failures on
+the final permitted attempt and expired final-attempt leases are dead-lettered
+and retained for operator investigation. Dead-letter rows are not
+automatically redriven; any future redrive capability must be an explicit,
+authorised, audited operator action.
