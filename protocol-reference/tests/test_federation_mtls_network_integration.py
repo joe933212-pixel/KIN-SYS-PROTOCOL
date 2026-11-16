@@ -15,9 +15,7 @@ import tempfile
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
-from http.server import WSGIRequestHandler
-from socketserver import TCPServer
-from wsgiref.simple_server import WSGIServer, make_server
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
