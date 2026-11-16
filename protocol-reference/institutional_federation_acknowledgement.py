@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import re
 import time
 from typing import Any, Callable
@@ -124,6 +125,11 @@ def sign_receiver_acknowledgement(
     }
     if any(stable.get(k) != v for k, v in expected.items()):
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_RESPONSE_SCOPE_MISMATCH")
+    original_instruction = original.get("instruction")
+    if (not isinstance(original_instruction, dict)
+            or stable["receiver_decision"].get("request_id")
+                != original_instruction.get("request_id")):
+        raise FederationAcknowledgementError("ACKNOWLEDGEMENT_DECISION_REQUEST_MISMATCH")
     claims = {
         "protocol": PROTOCOL,
         "message_id": original["message_id"],
@@ -216,12 +222,22 @@ def verify_receiver_acknowledgement(
     }
     if any(stable.get(k) != v for k, v in expected_response.items()):
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_RESPONSE_SCOPE_MISMATCH")
+    original_instruction = original.get("instruction")
+    if (not isinstance(original_instruction, dict)
+            or stable["receiver_decision"].get("request_id")
+                != original_instruction.get("request_id")):
+        raise FederationAcknowledgementError("ACKNOWLEDGEMENT_DECISION_REQUEST_MISMATCH")
     accepted_at = claims.get("accepted_at")
     if type(accepted_at) is not int or accepted_at < 0:
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_TIME_INVALID")
+    if (not callable(clock) or type(clock_skew_seconds) is not int
+            or clock_skew_seconds < 0):
+        raise FederationAcknowledgementError("ACKNOWLEDGEMENT_CLOCK_CONFIGURATION_INVALID")
+    _identifier(sender_tenant_id, "ACKNOWLEDGEMENT_SENDER_TENANT_INVALID")
     now = clock()
     if (isinstance(now, bool) or not isinstance(now, (int, float))
-            or now < 0 or accepted_at > int(now) + clock_skew_seconds):
+            or not math.isfinite(now) or now < 0
+            or accepted_at > int(now) + clock_skew_seconds):
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_TIME_INVALID")
     key_id = claims.get("key_id")
     _identifier(key_id, "ACKNOWLEDGEMENT_KEY_ID_INVALID")
