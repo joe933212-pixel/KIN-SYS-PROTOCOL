@@ -339,3 +339,77 @@ class PostgreSQLFederationOutbox:
                     }
         except Exception as exc:
             raise FederationOutboxError("FEDERATION_OUTBOX_STORE_UNAVAILABLE") from exc
+
+
+    def claim_batch(
+        self, *, sender_tenant_id: str, sender_installation_id: str,
+        worker_id: str, limit: int = 20, lease_seconds: int = 60,
+    ) -> list[dict[str, Any]]:
+        """Atomically claim a bounded batch without blocking peer workers.
+
+        PostgreSQL row locks and SKIP LOCKED distribute work across concurrent
+        dispatchers. Every returned row receives its own expiring lease before
+        this method commits. Network I/O must happen after this transaction.
+        """
+        tenant = _identifier(sender_tenant_id, "OUTBOX_TENANT_INVALID")
+        sender = _identifier(sender_installation_id, "OUTBOX_SENDER_INVALID")
+        worker = _identifier(worker_id, "OUTBOX_WORKER_ID_INVALID")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise FederationOutboxError("OUTBOX_BATCH_LIMIT_INVALID")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise FederationOutboxError("OUTBOX_LEASE_DURATION_INVALID")
+        try:
+            with closing(self._connect()) as connection:
+                with connection.transaction():
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            """WITH candidates AS (
+                                   SELECT sender_tenant_id, sender_installation_id, message_id
+                                   FROM federation_outbox
+                                   WHERE sender_tenant_id = %s
+                                     AND sender_installation_id = %s
+                                     AND (status IN ('PENDING', 'RETRYABLE_FAILURE')
+                                          OR (status = 'DELIVERING'
+                                              AND lease_expires_at <= CURRENT_TIMESTAMP))
+                                   ORDER BY created_at, message_id
+                                   FOR UPDATE SKIP LOCKED
+                                   LIMIT %s
+                               )
+                               UPDATE federation_outbox AS outbox
+                               SET status = 'DELIVERING', lease_owner = %s,
+                                   lease_expires_at = CURRENT_TIMESTAMP
+                                       + (%s * INTERVAL '1 second'),
+                                   attempt_count = outbox.attempt_count + 1,
+                                   updated_at = CURRENT_TIMESTAMP
+                               FROM candidates
+                               WHERE outbox.sender_tenant_id = candidates.sender_tenant_id
+                                 AND outbox.sender_installation_id = candidates.sender_installation_id
+                                 AND outbox.message_id = candidates.message_id
+                               RETURNING outbox.sender_tenant_id,
+                                         outbox.sender_installation_id, outbox.message_id,
+                                         outbox.operation_id, outbox.idempotency_key,
+                                         outbox.receiver_installation_id,
+                                         outbox.receiver_institution_id,
+                                         outbox.envelope_json, outbox.attempt_count,
+                                         outbox.lease_expires_at, outbox.lease_owner""",
+                            (tenant, sender, limit, worker, lease_seconds),
+                        )
+                        rows = cursor.fetchall()
+                        claims = [{
+                            "sender_tenant_id": row[0],
+                            "sender_installation_id": row[1],
+                            "message_id": row[2],
+                            "operation_id": row[3],
+                            "idempotency_key": row[4],
+                            "receiver_installation_id": row[5],
+                            "receiver_institution_id": row[6],
+                            "envelope": row[7],
+                            "attempt_count": row[8],
+                            "lease_expires_at": row[9],
+                            "lease_owner": row[10],
+                        } for row in rows]
+                        return sorted(claims, key=lambda item: (item["attempt_count"], item["message_id"]))
+        except FederationOutboxError:
+            raise
+        except Exception as exc:
+            raise FederationOutboxError("FEDERATION_OUTBOX_STORE_UNAVAILABLE") from exc
