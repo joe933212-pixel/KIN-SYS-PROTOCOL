@@ -41,6 +41,45 @@ class PostgreSQLCEEJournal:
         """No persistent connection is held by this adapter."""
         return None
 
+    def verify_integrity(self) -> None:
+        """Check journal invariants needed before a recovery attempt."""
+        with closing(self._connect()) as connection:
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT count(*)
+                          FROM cee_operations o
+                          LEFT JOIN cee_events e
+                            ON e.operation_id=o.operation_id AND e.phase=o.phase
+                         WHERE e.event_id IS NULL
+                            OR o.phase NOT IN (
+                                'REQUESTED','MINAH_REVIEWED','IDENTITY_VERIFIED',
+                                'AUTHORITY_VERIFIED','ADMITTED','CONTEXT_ESTABLISHED',
+                                'AUTHORITY_EVALUATED','EXECUTING','PREPARED',
+                                'COMMITTING','COMMITTED','FINALIZED'
+                            )
+                            OR o.request_digest <> encode(
+                                digest(convert_to(o.request_json::text, 'UTF8'), 'sha256'),
+                                'hex'
+                            )
+                        """
+                    )
+                    row = cursor.fetchone()
+                    if row is None or int(row[0]) != 0:
+                        raise LifecycleViolation(
+                            "CEE_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                        )
+                    cursor.execute(
+                        """SELECT count(*) FROM cee_events e
+                             LEFT JOIN cee_operations o ON o.operation_id=e.operation_id
+                            WHERE o.operation_id IS NULL"""
+                    )
+                    if int(cursor.fetchone()[0]) != 0:
+                        raise LifecycleViolation(
+                            "CEE_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                        )
+
     @staticmethod
     def _operation(row: Any) -> dict[str, Any]:
         names = (
