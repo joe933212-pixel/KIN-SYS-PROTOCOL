@@ -126,29 +126,33 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
         self.addCleanup(self.sender_runtime.close)
         self.addCleanup(self.receiver_runtime.close)
 
-        # Run the receiving institution's actual MINAH -> CEE -> IVM path
-        # against its own PostgreSQL schema, not process-local SQLite stores.
-        # This makes the execution outcome survive replacement of the runtime.
+        # Both institutions run MINAH -> CEE -> IVM against their own
+        # independent PostgreSQL schemas. No execution journal or IVM state is
+        # shared across the institutional boundary.
         from postgresql_cee_journal import PostgreSQLCEEJournal
         from postgresql_protocol_store import PostgreSQLProtocolStore
         from protocol_pipeline import KinSysProtocolPipeline
         from institutional_instruction_execution import InstitutionalInstructionExecutionService
 
-        self.receiver_runtime.pipeline.close()
-        self.receiver_runtime.pipeline = KinSysProtocolPipeline(
-            minah_profile=self.receiver_runtime.profile,
-            cee_journal=PostgreSQLCEEJournal(self.receiver_connect),
-            ivm_store=PostgreSQLProtocolStore(self.receiver_connect),
-            identity_provider_id=self.receiver_runtime.idp_id,
-            identity_provider_version="1",
-            jurisdiction_package_id=self.receiver_runtime.jurisdiction_package,
-            jurisdiction_package_version="1",
-            authority_profile_version=self.receiver_runtime.authority_version,
-        )
-        self.receiver_runtime.service = InstitutionalInstructionExecutionService(
-            runtime_binding_resolver=self.receiver_runtime,
-            pipeline_factory=lambda _context: self.receiver_runtime.pipeline,
-        )
+        for runtime, connect in (
+            (self.sender_runtime, self.sender_connect),
+            (self.receiver_runtime, self.receiver_connect),
+        ):
+            runtime.pipeline.close()
+            runtime.pipeline = KinSysProtocolPipeline(
+                minah_profile=runtime.profile,
+                cee_journal=PostgreSQLCEEJournal(connect),
+                ivm_store=PostgreSQLProtocolStore(connect),
+                identity_provider_id=runtime.idp_id,
+                identity_provider_version="1",
+                jurisdiction_package_id=runtime.jurisdiction_package,
+                jurisdiction_package_version="1",
+                authority_profile_version=runtime.authority_version,
+            )
+            runtime.service = InstitutionalInstructionExecutionService(
+                runtime_binding_resolver=runtime,
+                pipeline_factory=lambda _context, owner=runtime: owner.pipeline,
+            )
 
         self.receiver_inbox = PostgreSQLFederationInbox(self.receiver_connect)
         self.sender_outbox = PostgreSQLFederationOutbox(
@@ -375,9 +379,21 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
         self.assertIsNone(
             self.sender_runtime.pipeline.cee.get("OP-PG-FED-UG-RW-001")
         )
+        with self.sender_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT process_id FROM ivm_processes WHERE process_id=%s",
+                    (process_id,),
+                )
+                sender_process = cursor.fetchone()
+        self.assertIsNone(sender_process)
         self.assertNotEqual(
             self.sender_runtime.pipeline.cee,
             self.receiver_runtime.pipeline.cee,
+        )
+        self.assertNotEqual(
+            self.sender_runtime.pipeline.ivm,
+            self.receiver_runtime.pipeline.ivm,
         )
 
 
