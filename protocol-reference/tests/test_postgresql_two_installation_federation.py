@@ -356,6 +356,22 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
         self.assertIsNotNone(receiver_operation)
         self.assertEqual(receiver_operation["phase"], "FINALIZED")
         self.assertEqual(receiver_operation["outcome"], "COMMITTED")
+
+        # The restarted runtime reads the committed decision from the
+        # receiver's independent PostgreSQL IVM store, not a prior process
+        # object's in-memory state.
+        with self.receiver_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT process_id,state,state_version FROM ivm_processes"
+                )
+                process_row = cursor.fetchone()
+        self.assertIsNotNone(process_row)
+        process_id, process_state, state_version = process_row
+        self.assertEqual(process_state, "ACTIVE")
+        self.assertEqual(state_version, 1)
+        self.assertEqual(len(self.receiver_runtime.pipeline.ivm.history(process_id)), 1)
+
         self.assertIsNone(
             self.sender_runtime.pipeline.cee.get("OP-PG-FED-UG-RW-001")
         )
