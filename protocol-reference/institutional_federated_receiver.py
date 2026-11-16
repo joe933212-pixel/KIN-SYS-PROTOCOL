@@ -100,6 +100,9 @@ class InstitutionalFederatedInstructionReceiver:
             raise FederatedInstructionReceiverError(
                 "RECEIVER_SIGNING_CONFIGURATION_INVALID")
         self.inbox_lease_seconds = inbox_lease_seconds
+        if receiver_signing_key_loader is not None and self.inbox is None:
+            raise FederatedInstructionReceiverError(
+                "RECEIVER_DURABLE_INBOX_REQUIRED_FOR_SIGNED_ACKNOWLEDGEMENTS")
         self.receiver_signing_key_id = receiver_signing_key_id
         self.receiver_signing_key_loader = receiver_signing_key_loader
         self.clock = clock
