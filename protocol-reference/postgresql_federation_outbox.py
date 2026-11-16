@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 ERROR_CODE = re.compile(r"^[A-Z0-9_:-]{1,120}$")
+SIGNATURE = re.compile(r"^[A-Za-z0-9_-]{86}$")
 
 
 class FederationOutboxError(RuntimeError):
@@ -65,6 +66,9 @@ class PostgreSQLFederationOutbox:
         if not isinstance(envelope, dict) or set(envelope) != {"claims", "signature"}:
             raise FederationOutboxError("OUTBOX_ENVELOPE_INVALID")
         claims = envelope.get("claims")
+        signature = envelope.get("signature")
+        if not isinstance(signature, str) or not SIGNATURE.fullmatch(signature):
+            raise FederationOutboxError("OUTBOX_SIGNATURE_FORMAT_INVALID")
         required = {
             "message_id", "operation_id", "idempotency_key",
             "issuer_installation_id", "receiver_installation_id",
