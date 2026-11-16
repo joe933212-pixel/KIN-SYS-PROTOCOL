@@ -153,14 +153,30 @@ class PostgreSQLFederationOutbox:
                     with connection.cursor() as cursor:
                         cursor.execute(
                             """UPDATE federation_outbox
+                               SET status = 'DEAD_LETTER', dead_lettered_at = CURRENT_TIMESTAMP,
+                                   next_attempt_at = NULL, lease_owner = NULL,
+                                   lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+                               WHERE sender_tenant_id = %s AND sender_installation_id = %s
+                                 AND message_id = %s AND attempt_count >= max_attempts
+                                 AND (status IN ('PENDING', 'RETRYABLE_FAILURE')
+                                      OR (status = 'DELIVERING'
+                                          AND lease_expires_at <= CURRENT_TIMESTAMP))""",
+                            (tenant, sender, message),
+                        )
+                        cursor.execute(
+                            """UPDATE federation_outbox
                                SET status = 'DELIVERING', lease_owner = %s,
                                    lease_expires_at = CURRENT_TIMESTAMP
                                        + (%s * INTERVAL '1 second'),
                                    attempt_count = attempt_count + 1,
+                                   next_attempt_at = NULL,
                                    updated_at = CURRENT_TIMESTAMP
                                WHERE sender_tenant_id = %s AND sender_installation_id = %s
-                                 AND message_id = %s
-                                 AND (status IN ('PENDING', 'RETRYABLE_FAILURE')
+                                 AND message_id = %s AND attempt_count < max_attempts
+                                 AND (status = 'PENDING'
+                                      OR (status = 'RETRYABLE_FAILURE'
+                                          AND (next_attempt_at IS NULL
+                                               OR next_attempt_at <= CURRENT_TIMESTAMP))
                                       OR (status = 'DELIVERING'
                                           AND lease_expires_at <= CURRENT_TIMESTAMP))
                                RETURNING operation_id, idempotency_key,
@@ -203,9 +219,21 @@ class PostgreSQLFederationOutbox:
                     with connection.cursor() as cursor:
                         cursor.execute(
                             """UPDATE federation_outbox
-                               SET status = 'RETRYABLE_FAILURE', last_error_code = %s,
-                                   updated_at = CURRENT_TIMESTAMP, lease_owner = NULL,
-                                   lease_expires_at = NULL
+                               SET status = CASE WHEN attempt_count >= max_attempts
+                                                 THEN 'DEAD_LETTER'
+                                                 ELSE 'RETRYABLE_FAILURE' END,
+                                   dead_lettered_at = CASE WHEN attempt_count >= max_attempts
+                                                           THEN CURRENT_TIMESTAMP ELSE NULL END,
+                                   next_attempt_at = CASE WHEN attempt_count >= max_attempts
+                                                          THEN NULL
+                                                          ELSE CURRENT_TIMESTAMP
+                                                            + (LEAST(3600.0,
+                                                                5.0 * power(2.0,
+                                                                  LEAST(10, GREATEST(0,
+                                                                    attempt_count - 1))))
+                                                               * INTERVAL '1 second') END,
+                                   last_error_code = %s, updated_at = CURRENT_TIMESTAMP,
+                                   lease_owner = NULL, lease_expires_at = NULL
                                WHERE sender_tenant_id = %s AND sender_installation_id = %s
                                  AND message_id = %s AND status = 'DELIVERING'
                                  AND lease_owner = %s
@@ -320,7 +348,8 @@ class PostgreSQLFederationOutbox:
                         """SELECT operation_id, idempotency_key, receiver_installation_id,
                                   receiver_institution_id, status, attempt_count,
                                   envelope_json, acknowledgement_json,
-                                  acknowledgement_sha256, last_error_code
+                                  acknowledgement_sha256, last_error_code,
+                                  max_attempts, next_attempt_at, dead_lettered_at
                            FROM federation_outbox
                            WHERE sender_tenant_id = %s AND sender_installation_id = %s
                              AND message_id = %s""",
@@ -336,6 +365,8 @@ class PostgreSQLFederationOutbox:
                         "attempt_count": row[5], "envelope": row[6],
                         "acknowledgement": row[7],
                         "acknowledgement_sha256": row[8], "last_error_code": row[9],
+                        "max_attempts": row[10], "next_attempt_at": row[11],
+                        "dead_lettered_at": row[12],
                     }
         except Exception as exc:
             raise FederationOutboxError("FEDERATION_OUTBOX_STORE_UNAVAILABLE") from exc
@@ -363,12 +394,28 @@ class PostgreSQLFederationOutbox:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
+                            """UPDATE federation_outbox
+                               SET status = 'DEAD_LETTER', dead_lettered_at = CURRENT_TIMESTAMP,
+                                   next_attempt_at = NULL, lease_owner = NULL,
+                                   lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+                               WHERE sender_tenant_id = %s AND sender_installation_id = %s
+                                 AND attempt_count >= max_attempts
+                                 AND (status IN ('PENDING', 'RETRYABLE_FAILURE')
+                                      OR (status = 'DELIVERING'
+                                          AND lease_expires_at <= CURRENT_TIMESTAMP))""",
+                            (tenant, sender),
+                        )
+                        cursor.execute(
                             """WITH candidates AS (
                                    SELECT sender_tenant_id, sender_installation_id, message_id
                                    FROM federation_outbox
                                    WHERE sender_tenant_id = %s
                                      AND sender_installation_id = %s
-                                     AND (status IN ('PENDING', 'RETRYABLE_FAILURE')
+                                     AND attempt_count < max_attempts
+                                     AND (status = 'PENDING'
+                                          OR (status = 'RETRYABLE_FAILURE'
+                                              AND (next_attempt_at IS NULL
+                                                   OR next_attempt_at <= CURRENT_TIMESTAMP))
                                           OR (status = 'DELIVERING'
                                               AND lease_expires_at <= CURRENT_TIMESTAMP))
                                    ORDER BY created_at, message_id
@@ -380,6 +427,7 @@ class PostgreSQLFederationOutbox:
                                    lease_expires_at = CURRENT_TIMESTAMP
                                        + (%s * INTERVAL '1 second'),
                                    attempt_count = outbox.attempt_count + 1,
+                                   next_attempt_at = NULL,
                                    updated_at = CURRENT_TIMESTAMP
                                FROM candidates
                                WHERE outbox.sender_tenant_id = candidates.sender_tenant_id
