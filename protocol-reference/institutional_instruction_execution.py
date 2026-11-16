@@ -395,10 +395,16 @@ class InstitutionalInstructionExecutionService:
             "evidence_refs": checked.get("evidence_refs", []),
         })
         assert_instruction_binding(checked, decision)
+        # Retry/transport metadata must not become part of the durable
+        # decision response. In particular, the reference pipeline may report
+        # duplicate=True when reconciling an already committed operation after
+        # a process interruption. Signing that flag would make an otherwise
+        # identical recovered decision produce a different acknowledgement.
+        # Keep only outcome-bearing fields in the stable receiver result.
         safe_result = {
             key: result[key] for key in (
                 "operation_id", "status", "reason", "funds_moved",
-                "ivm_decision", "duplicate",
+                "ivm_decision",
             ) if key in result
         }
         return {
