@@ -1,11 +1,12 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
-"""End-to-end federation across isolated PostgreSQL installation stores.
+"""End-to-end federation across isolated PostgreSQL installation databases.
 
-Each side owns a separate PostgreSQL schema and its own MINAH -> CEE -> IVM
+Each side owns a separate PostgreSQL database and its own MINAH -> CEE -> IVM
 execution runtime. The test uses the real signed-envelope, receiver execution,
 durable inbox, signed acknowledgement and durable outbox components, then
-replaces the receiving runtime and verifies durable recovery. This is not a
-two-host or production deployment test.
+replaces the receiving runtime and verifies durable recovery. The test still
+runs both adapters in one operating-system process; it is not a two-host or
+production deployment test.
 """
 from __future__ import annotations
 
@@ -69,13 +70,15 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
     def setUpClass(cls):
         import psycopg
         from psycopg import sql
+        from psycopg.conninfo import conninfo_to_dict
         cls.psycopg, cls.sql = psycopg, sql
+        cls.conninfo_to_dict = conninfo_to_dict
 
     def setUp(self):
         self.admin = self.psycopg.connect(DSN, autocommit=True)
         # Use two actual PostgreSQL databases, not two schemas in one shared
         # database. This makes the institutional persistence boundary explicit.
-        connection_options = self.psycopg.conninfo.conninfo_to_dict(DSN)
+        connection_options = self.conninfo_to_dict(DSN)
         self.sender_database = "kin_sys_sender_" + uuid.uuid4().hex[:20]
         self.receiver_database = "kin_sys_receiver_" + uuid.uuid4().hex[:20]
         for database in (self.sender_database, self.receiver_database):
@@ -256,6 +259,16 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
         )
 
     def test_two_isolated_installations_complete_signed_postgresql_federation(self):
+        with self.sender_connect() as connection:
+            sender_database = connection.execute(
+                "SELECT current_database()"
+            ).fetchone()[0]
+        with self.receiver_connect() as connection:
+            receiver_database = connection.execute(
+                "SELECT current_database()"
+            ).fetchone()[0]
+        self.assertNotEqual(sender_database, receiver_database)
+
         claimed = self.sender_outbox.claim(
             sender_tenant_id="tenant-ug",
             sender_installation_id="INSTALL-UG-01",
