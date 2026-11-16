@@ -227,10 +227,11 @@ class PostgreSQLFederationOutbox:
                                    next_attempt_at = CASE WHEN attempt_count >= max_attempts
                                                           THEN NULL
                                                           ELSE CURRENT_TIMESTAMP
-                                                            + (LEAST(3600.0,
-                                                                5.0 * power(2.0,
-                                                                  LEAST(10, GREATEST(0,
-                                                                    attempt_count - 1))))
+                                                            + (LEAST(3600::double precision,
+                                                                5::double precision * power(
+                                                                  2::double precision,
+                                                                  LEAST(10::bigint, GREATEST(
+                                                                    0::bigint, attempt_count - 1))))
                                                                * INTERVAL '1 second') END,
                                    last_error_code = %s, updated_at = CURRENT_TIMESTAMP,
                                    lease_owner = NULL, lease_expires_at = NULL
