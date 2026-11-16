@@ -325,6 +325,18 @@ class FederationLiveMTLSNetworkTests(unittest.TestCase):
         self.assertEqual(
             delivered["claims"]["issuer_installation_id"], "INSTALL-UG-01"
         )
+
+        # The TLS peer identity must be checked against the envelope issuer
+        # in the separate receiver process before the receiver is invoked.
+        with self.assertRaisesRegex(
+            FederationHTTPTransportError, "REMOTE_HTTP_403"
+        ):
+            transport.post(
+                "INSTALL-RW-01",
+                self._envelope(issuer="INSTALL-OTHER-99"),
+            )
+        self.assertTrue(received.empty())
+
         self.assertNotEqual(process.pid, os.getpid())
         # The receiver is intentionally long-lived; signal its event loop to
         # stop before joining. Joining without setting the event only waits
