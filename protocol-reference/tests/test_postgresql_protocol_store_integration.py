@@ -241,7 +241,10 @@ class PostgreSQLProtocolStoreIntegrationTests(unittest.TestCase):
                 "rule_refs": ["SYNTHETIC-RULE-1"],
             },
         }
-        self.store.create_process(process_id=process_id)
+        self.store.create_process(
+            process_id=process_id, authority_id="AUTHORITY-001",
+            rule_set="KIN-SYS-DEMO-RULES", rule_version="1.0", eligible=True,
+        )
         first = KinSysProtocolPipeline(
             cee_journal=PostgreSQLCEEJournal(self.connect),
             ivm_store=PostgreSQLProtocolStore(self.connect),
