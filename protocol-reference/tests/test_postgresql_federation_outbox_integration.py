@@ -285,5 +285,6 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
             limit=5,
             lease_seconds=45,
         ), [])
-\nif __name__ == "__main__":
+
+if __name__ == "__main__":
     unittest.main()
