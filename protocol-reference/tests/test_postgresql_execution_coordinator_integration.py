@@ -41,6 +41,25 @@ def _acquire_execution_lease_in_process(arguments):
     return lease["fencing_token"]
 
 
+def _validate_execution_lease_in_process(arguments):
+    """Validate a lease issued elsewhere using a fresh process and DB connection."""
+    dsn, schema, lease = arguments
+    import psycopg
+    from psycopg import sql
+
+    def connect():
+        connection = psycopg.connect(dsn)
+        connection.execute(
+            sql.SQL("SET search_path TO {}").format(sql.Identifier(schema))
+        )
+        connection.commit()
+        return connection
+
+    coordinator = PostgreSQLInstitutionalExecutionCoordinator(connect)
+    result = coordinator.validate_execution_lease(lease=lease)
+    return result["status"], result["fencing_token"]
+
+
 @unittest.skipUnless(DSN, "KIN_SYS_POSTGRES_TEST_DSN is not configured")
 class PostgreSQLExecutionCoordinatorIntegrationTests(unittest.TestCase):
     @classmethod
@@ -137,6 +156,23 @@ class PostgreSQLExecutionCoordinatorIntegrationTests(unittest.TestCase):
             ))
         self.assertEqual(len(set(tokens)), 6)
         self.assertEqual(sorted(tokens), list(range(min(tokens), min(tokens) + 6)))
+
+
+    def test_lease_issued_in_one_process_is_validated_in_another(self):
+        lease = self.coordinator_a.acquire_execution_lease(
+            tenant_id=self.tenant, deployment_id=self.deployment
+        )
+        arguments = (DSN, self.schema, lease)
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=3, mp_context=context) as pool:
+            validations = list(pool.map(
+                _validate_execution_lease_in_process,
+                [arguments] * 3,
+            ))
+        self.assertEqual(
+            validations,
+            [("VALID", lease["fencing_token"])] * 3,
+        )
 
     def test_lifecycle_epoch_change_fences_existing_lease(self):
         lease = self.coordinator_a.acquire_execution_lease(
