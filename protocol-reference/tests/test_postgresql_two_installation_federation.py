@@ -126,6 +126,30 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
         self.addCleanup(self.sender_runtime.close)
         self.addCleanup(self.receiver_runtime.close)
 
+        # Run the receiving institution's actual MINAH -> CEE -> IVM path
+        # against its own PostgreSQL schema, not process-local SQLite stores.
+        # This makes the execution outcome survive replacement of the runtime.
+        from postgresql_cee_journal import PostgreSQLCEEJournal
+        from postgresql_protocol_store import PostgreSQLProtocolStore
+        from protocol_pipeline import KinSysProtocolPipeline
+        from institutional_instruction_execution import InstitutionalInstructionExecutionService
+
+        self.receiver_runtime.pipeline.close()
+        self.receiver_runtime.pipeline = KinSysProtocolPipeline(
+            minah_profile=self.receiver_runtime.profile,
+            cee_journal=PostgreSQLCEEJournal(self.receiver_connect),
+            ivm_store=PostgreSQLProtocolStore(self.receiver_connect),
+            identity_provider_id=self.receiver_runtime.idp_id,
+            identity_provider_version="1",
+            jurisdiction_package_id=self.receiver_runtime.jurisdiction_package,
+            jurisdiction_package_version="1",
+            authority_profile_version=self.receiver_runtime.authority_version,
+        )
+        self.receiver_runtime.service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=self.receiver_runtime,
+            pipeline_factory=lambda _context: self.receiver_runtime.pipeline,
+        )
+
         self.receiver_inbox = PostgreSQLFederationInbox(self.receiver_connect)
         self.sender_outbox = PostgreSQLFederationOutbox(
             self.sender_connect, self._verify_receiver_receipt
@@ -259,6 +283,26 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
         # Simulate process replacement: construct fresh store adapters over
         # the same independent schemas and redeliver the exact signed envelope.
         restarted_inbox = PostgreSQLFederationInbox(self.receiver_connect)
+
+        # Replace the complete receiving execution runtime as well as its
+        # inbox adapter. Both CEE lifecycle and IVM decision history must be
+        # recovered from the receiver's durable PostgreSQL installation store.
+        self.receiver_runtime.pipeline.close()
+        self.receiver_runtime.pipeline = KinSysProtocolPipeline(
+            minah_profile=self.receiver_runtime.profile,
+            cee_journal=PostgreSQLCEEJournal(self.receiver_connect),
+            ivm_store=PostgreSQLProtocolStore(self.receiver_connect),
+            identity_provider_id=self.receiver_runtime.idp_id,
+            identity_provider_version="1",
+            jurisdiction_package_id=self.receiver_runtime.jurisdiction_package,
+            jurisdiction_package_version="1",
+            authority_profile_version=self.receiver_runtime.authority_version,
+        )
+        self.receiver_runtime.service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=self.receiver_runtime,
+            pipeline_factory=lambda _context: self.receiver_runtime.pipeline,
+        )
+
         restarted_receiver = InstitutionalFederatedInstructionReceiver(
             receiver_tenant_id="tenant-rw",
             receiver_installation_id="INSTALL-RW-01",
