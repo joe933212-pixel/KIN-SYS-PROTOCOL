@@ -382,7 +382,11 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
                 self.assertEqual(
                     recovered["decision"]["protocol_decision"], "PASSED"
                 )
-                self.assertTrue(recovered["result"]["duplicate"])
+                # Retry/duplicate metadata is intentionally excluded from the
+                # stable decision projection that is persisted and signed.
+                # The single IVM history entry below proves recovery did not
+                # execute the committed institutional decision a second time.
+                self.assertNotIn("duplicate", recovered["result"])
                 self.assertEqual(
                     restarted_pipeline.cee.get(contract["operation_id"])["phase"],
                     "FINALIZED",
