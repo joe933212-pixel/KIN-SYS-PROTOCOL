@@ -73,27 +73,26 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
 
     def setUp(self):
         self.admin = self.psycopg.connect(DSN, autocommit=True)
-        self.sender_schema = "kin_sys_sender_" + uuid.uuid4().hex
-        self.receiver_schema = "kin_sys_receiver_" + uuid.uuid4().hex
-        for schema in (self.sender_schema, self.receiver_schema):
+        # Use two actual PostgreSQL databases, not two schemas in one shared
+        # database. This makes the institutional persistence boundary explicit.
+        connection_options = self.psycopg.conninfo.conninfo_to_dict(DSN)
+        self.sender_database = "kin_sys_sender_" + uuid.uuid4().hex[:20]
+        self.receiver_database = "kin_sys_receiver_" + uuid.uuid4().hex[:20]
+        for database in (self.sender_database, self.receiver_database):
             self.admin.execute(
-                self.sql.SQL("CREATE SCHEMA {}").format(self.sql.Identifier(schema))
+                self.sql.SQL("CREATE DATABASE {}").format(self.sql.Identifier(database))
             )
 
-        def factory(schema):
+        def factory(database):
+            options = dict(connection_options)
+            options["dbname"] = database
+
             def connect():
-                connection = self.psycopg.connect(DSN)
-                connection.execute(
-                    self.sql.SQL("SET search_path TO {}").format(
-                        self.sql.Identifier(schema)
-                    )
-                )
-                connection.commit()
-                return connection
+                return self.psycopg.connect(**options)
             return connect
 
-        self.sender_connect = factory(self.sender_schema)
-        self.receiver_connect = factory(self.receiver_schema)
+        self.sender_connect = factory(self.sender_database)
+        self.receiver_connect = factory(self.receiver_database)
         with self.sender_connect() as connection:
             apply_migrations(connection)
         with self.receiver_connect() as connection:
@@ -229,10 +228,10 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
         )
 
     def tearDown(self):
-        for schema in (self.sender_schema, self.receiver_schema):
+        for database in (self.sender_database, self.receiver_database):
             self.admin.execute(
-                self.sql.SQL("DROP SCHEMA {} CASCADE").format(
-                    self.sql.Identifier(schema)
+                self.sql.SQL("DROP DATABASE {} WITH (FORCE)").format(
+                    self.sql.Identifier(database)
                 )
             )
         self.admin.close()
