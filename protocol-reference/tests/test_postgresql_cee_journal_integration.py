@@ -89,6 +89,14 @@ class PostgreSQLCEEJournalIntegrationTests(unittest.TestCase):
             restarted.observations("OP-RESTART-001")[0]["detail"],
             {"source": "integration-test"},
         )
+        # The production pipeline accepts this journal implementation and
+        # delegates its CEE integrity check to the PostgreSQL adapter.
+        from protocol_pipeline import KinSysProtocolPipeline
+        pipeline = KinSysProtocolPipeline(cee_journal=restarted)
+        try:
+            pipeline._assert_store_integrity()
+        finally:
+            pipeline.close()
 
     def test_operation_id_reuse_with_different_request_fails_closed(self):
         self.journal.start("OP-CONFLICT-001", {"operation_id": "OP-CONFLICT-001", "value": 1})
