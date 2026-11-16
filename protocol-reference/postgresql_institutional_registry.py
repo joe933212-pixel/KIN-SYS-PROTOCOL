@@ -45,6 +45,24 @@ class PostgreSQLInstitutionalRegistry:
         return json.loads(value) if isinstance(value, str) else value
 
     @staticmethod
+    def _lock_scopes(cursor: Any, *scopes: str) -> None:
+        # Acquire advisory locks in stable order to serialize resource-head
+        # changes and event-id idempotency across independent connections.
+        for scope in sorted(set(scopes)):
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (scope,),
+            )
+
+    @staticmethod
+    def _resource_scope(tenant_id: str, resource_type: str, resource_id: str) -> str:
+        return "institutional-resource:" + ":".join((tenant_id, resource_type, resource_id))
+
+    @staticmethod
+    def _event_scope(tenant_id: str, event_id: str) -> str:
+        return "institutional-event:" + tenant_id + ":" + event_id
+
+    @staticmethod
     def _event_by_id(cursor: Any, tenant_id: str, event_id: str) -> Any:
         cursor.execute(
             """SELECT resource_type,resource_id,version,event_type,actor_ref,
@@ -73,6 +91,11 @@ class PostgreSQLInstitutionalRegistry:
         with closing(self._connect()) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._lock_scopes(
+                        cursor,
+                        self._resource_scope(tenant_id, resource_type, resource_id),
+                        self._event_scope(tenant_id, event_id),
+                    )
                     existing = self._event_by_id(cursor, tenant_id, event_id)
                     if existing:
                         cursor.execute(
@@ -175,6 +198,11 @@ class PostgreSQLInstitutionalRegistry:
         with closing(self._connect()) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._lock_scopes(
+                        cursor,
+                        self._resource_scope(tenant_id, resource_type, resource_id),
+                        self._event_scope(tenant_id, event_id),
+                    )
                     existing = self._event_by_id(cursor, tenant_id, event_id)
                     if existing:
                         cursor.execute(
@@ -299,6 +327,7 @@ class PostgreSQLInstitutionalRegistry:
         with closing(self._connect()) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._lock_scopes(cursor, self._event_scope(tenant_id, event_id))
                     cursor.execute(
                         """SELECT 1 FROM institutional_records
                            WHERE tenant_id=%s AND resource_type=%s
