@@ -282,6 +282,11 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
 
         # Simulate process replacement: construct fresh store adapters over
         # the same independent schemas and redeliver the exact signed envelope.
+        from postgresql_cee_journal import PostgreSQLCEEJournal
+        from postgresql_protocol_store import PostgreSQLProtocolStore
+        from protocol_pipeline import KinSysProtocolPipeline
+        from institutional_instruction_execution import InstitutionalInstructionExecutionService
+
         restarted_inbox = PostgreSQLFederationInbox(self.receiver_connect)
 
         # Replace the complete receiving execution runtime as well as its
