@@ -379,6 +379,7 @@ class KinSysProtocolPipeline:
         jurisdiction_package_version: str | None = None,
         authority_profile_version: str | None = None,
         cee_journal: Any | None = None,
+        ivm_store: Any | None = None,
     ):
         self.identity_provider_id = identity_provider_id
         self.identity_provider_version = identity_provider_version
@@ -392,7 +393,10 @@ class KinSysProtocolPipeline:
         for method in ("start", "advance", "get", "events", "record_observation", "observations"):
             if not callable(getattr(self.cee, method, None)):
                 raise TypeError("CEE_JOURNAL_INTERFACE_INVALID:" + method)
-        self.ivm = ProtocolStore(ivm_database)
+        self.ivm = ivm_store if ivm_store is not None else ProtocolStore(ivm_database)
+        for method in ("create_process", "set_authority_active", "set_rule", "process", "history", "event", "execute"):
+            if not callable(getattr(self.ivm, method, None)):
+                raise TypeError("IVM_STORE_INTERFACE_INVALID:" + method)
         self.minah = minah_adapter or DeterministicMinahAdapter()
         self.identity_adapter = identity_adapter or SyntheticIdentityAdapter()
         self.authority_adapter = authority_adapter or SyntheticAuthorityAdapter(authority_active=authority_active)
