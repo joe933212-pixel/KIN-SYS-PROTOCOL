@@ -83,9 +83,19 @@ def _stable_response(response: Any) -> dict[str, Any]:
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_RESPONSE_INVALID")
     if response.get("message_verified") is not True or response.get("delivery_status") != "COMPLETED":
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_NOT_COMPLETED")
-    if not isinstance(response.get("receiver_decision"), dict):
+    decision = response.get("receiver_decision")
+    if (not isinstance(decision, dict)
+            or decision.get("operation_id") != response.get("operation_id")
+            or not isinstance(decision.get("request_id"), str)
+            or not decision.get("request_id")
+            or not isinstance(decision.get("cee_execution_ref"), str)
+            or not decision.get("cee_execution_ref")):
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_DECISION_INVALID")
-    if not isinstance(response.get("receiver_runtime_pins"), dict):
+    pins = response.get("receiver_runtime_pins")
+    if (not isinstance(pins, dict)
+            or pins.get("institution_id") != response.get("receiver_institution_id")
+            or not isinstance(pins.get("tenant_id"), str) or not pins["tenant_id"]
+            or not isinstance(pins.get("binding_id"), str) or not pins["binding_id"]):
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_RUNTIME_PINS_INVALID")
     if not isinstance(response.get("receiver_result"), dict):
         raise FederationAcknowledgementError("ACKNOWLEDGEMENT_RESULT_INVALID")
