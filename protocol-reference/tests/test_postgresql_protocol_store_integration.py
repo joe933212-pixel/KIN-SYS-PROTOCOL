@@ -172,6 +172,39 @@ class PostgreSQLProtocolStoreIntegrationTests(unittest.TestCase):
                     ("E-IVM-001",),
                 )
 
+    def test_pipeline_runs_with_independent_postgresql_cee_and_ivm_adapters(self):
+        from postgresql_cee_journal import PostgreSQLCEEJournal
+        from protocol_pipeline import KinSysProtocolPipeline
+
+        cee = PostgreSQLCEEJournal(self.connect)
+        pipeline = KinSysProtocolPipeline(cee_journal=cee, ivm_store=self.store)
+        request = {
+            "operation_id": "OP-POSTGRES-PAIR-001",
+            "event_id": "EV-POSTGRES-PAIR-001",
+            "process_id": "PROC-POSTGRES-PAIR-001",
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": "PROC-POSTGRES-PAIR-001",
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        try:
+            result = pipeline.execute(request)
+            self.assertEqual(result["status"], "COMMITTED")
+            self.assertEqual(pipeline.ivm.process("PROC-POSTGRES-PAIR-001")["state"], "ACTIVE")
+            self.assertEqual(pipeline.ivm.process("PROC-POSTGRES-PAIR-001")["state_version"], 1)
+            self.assertEqual(pipeline.cee.get("OP-POSTGRES-PAIR-001")["phase"], "FINALIZED")
+            pipeline._assert_store_integrity()
+        finally:
+            pipeline.close()
+
     def test_pipeline_accepts_injected_postgresql_ivm_store_and_checks_integrity(self):
         from protocol_pipeline import KinSysProtocolPipeline
         pipeline = KinSysProtocolPipeline(ivm_store=self.store)
