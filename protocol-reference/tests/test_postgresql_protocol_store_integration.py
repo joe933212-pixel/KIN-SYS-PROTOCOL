@@ -216,5 +216,66 @@ class PostgreSQLProtocolStoreIntegrationTests(unittest.TestCase):
         # because the store holds no persistent connection.
 
 
+    def test_postgresql_cee_ivm_crash_window_recovers_after_independent_adapter_restart(self):
+        from postgresql_cee_journal import PostgreSQLCEEJournal
+        from postgresql_protocol_store import PostgreSQLProtocolStore
+        from protocol_pipeline import KinSysProtocolPipeline
+
+        operation_id = "OP-POSTGRES-CRASH-001"
+        process_id = "PROC-POSTGRES-CRASH-001"
+        event_id = "EV-POSTGRES-CRASH-001"
+        request = {
+            "operation_id": operation_id,
+            "event_id": event_id,
+            "process_id": process_id,
+            "actor_id": "AUTHORITY-001",
+            "event_type": "ACTIVATE",
+            "jurisdiction": "UG-DEMO",
+            "rule_set": "KIN-SYS-DEMO-RULES",
+            "rule_version": "1.0",
+            "evidence": {
+                "consignment_id": process_id,
+                "commodity": "SYNTHETIC_MAIZE",
+                "origin": "UGANDA-DEMO",
+                "destination": "BORDER-DEMO",
+                "rule_refs": ["SYNTHETIC-RULE-1"],
+            },
+        }
+        self.store.create_process(process_id=process_id)
+        first = KinSysProtocolPipeline(
+            cee_journal=PostgreSQLCEEJournal(self.connect),
+            ivm_store=PostgreSQLProtocolStore(self.connect),
+        )
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError, "INJECTED_FAILURE_AFTER_IVM_COMMIT"
+            ):
+                first.execute(request, fail_after_ivm_commit=True)
+            self.assertEqual(first.cee.get(operation_id)["phase"], "COMMITTING")
+            self.assertEqual(first.ivm.process(process_id)["state"], "ACTIVE")
+            self.assertEqual(len(first.ivm.history(process_id)), 1)
+        finally:
+            first.close()
+
+        # Reconstruct both adapters over the same durable schema to model a
+        # process restart; recovery must reconcile the existing IVM commit.
+        resumed_ivm = PostgreSQLProtocolStore(self.connect)
+        resumed = KinSysProtocolPipeline(
+            cee_journal=PostgreSQLCEEJournal(self.connect),
+            ivm_store=resumed_ivm,
+        )
+        try:
+            result = resumed.recover(operation_id, expected_request=request)
+            self.assertEqual(result["status"], "COMMITTED")
+            self.assertTrue(result["duplicate"])
+            self.assertEqual(resumed.cee.get(operation_id)["phase"], "FINALIZED")
+            self.assertEqual(resumed.ivm.process(process_id)["state_version"], 1)
+            self.assertEqual(len(resumed.ivm.history(process_id)), 1)
+            self.assertEqual(resumed.ivm.event(event_id)["outcome"], "ACCEPTED")
+            resumed._assert_store_integrity()
+        finally:
+            resumed.close()
+
+
 if __name__ == "__main__":
     unittest.main()
