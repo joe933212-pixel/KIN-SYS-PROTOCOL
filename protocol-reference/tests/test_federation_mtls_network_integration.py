@@ -326,8 +326,16 @@ class FederationLiveMTLSNetworkTests(unittest.TestCase):
             delivered["claims"]["issuer_installation_id"], "INSTALL-UG-01"
         )
         self.assertNotEqual(process.pid, os.getpid())
-        process.join(timeout=3)
-        self.assertFalse(process.is_alive())
+        # The receiver is intentionally long-lived; signal its event loop to
+        # stop before joining. Joining without setting the event only waits
+        # while the server continues polling forever.
+        stop.set()
+        process.join(timeout=5)
+        self.assertFalse(
+            process.is_alive(),
+            "receiver process did not exit after its stop event was set",
+        )
+        self.assertEqual(process.exitcode, 0)
 
     def test_certificate_identity_must_match_envelope_issuer_over_live_tls(self):
         with self.assertRaisesRegex(
