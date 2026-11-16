@@ -88,9 +88,9 @@ cross-worker replay protection.
 
 The PostgreSQL integration suite verifies independent guard instances,
 tenant isolation, concurrent single-consumer behavior, expiry/pruning, and
-fail-closed database errors. This is a durable shared replay-store increment;
-it does not add a durable federation inbox, acknowledgement/outbox, or
-exactly-once execution across the separate CEE/IVM transaction boundary.
+fail-closed database errors. This is a durable shared replay-store increment. It does not make nonce consumption,
+the federation inbox/outbox and the separate CEE/IVM journals one distributed
+transaction, and it does not provide exactly-once network execution.
 
 
 ## Durable federation inbox foundation
@@ -123,3 +123,70 @@ an explicit restart/lease-reclaim integration test; this implementation does
 not claim a distributed transaction or exactly-once execution. The PostgreSQL
 integration tests are skipped outside CI unless
 `KIN_SYS_POSTGRES_TEST_DSN` is configured.
+
+
+## Durable sender outbox and receiver acknowledgements
+
+Migration \`004_federation_outbox.sql\` and
+\`protocol-reference/postgresql_federation_outbox.py\` add a sender-side
+PostgreSQL outbox. A signed envelope is persisted before transport, retries
+are idempotent, workers claim expiring delivery leases, and a late receiver
+acknowledgement can complete the row after a sender worker has lost its lease.
+The outbox provides durable at-least-once delivery attempts, not exactly-once
+network delivery or cross-database execution.
+
+Receiver acknowledgements use the Ed25519 receipt contract in
+\`institutional_federation_acknowledgement.py\`. The sender must verify the
+receipt against its own receiver-installation trust configuration and the
+exact immutable outbox envelope. The current outbox adapter receives that
+verification operation as an injected verifier; application wiring must bind
+it to \`verify_receiver_acknowledgement(...)\` and sender-local trust/key
+resolvers. A callback that merely returns a caller-constructed
+\`verified: true\` object is not a cryptographic trust boundary and must never
+be used.
+
+## PostgreSQL authority and issuer-trust registry
+
+Migration \`005_institutional_trust_registry.sql\` and
+\`protocol-reference/postgresql_institutional_trust_registry.py\` add a
+PostgreSQL backend for tenant-scoped authority grants, immutable versions,
+current-version heads, append-only grant events, retained issuer envelopes,
+receiver acceptance receipts, issuer trust relationships and Ed25519 public-key
+references. Grant revisions and revocation lock the current head and advance
+the pointer with the audit event in one transaction. Grant snapshots,
+provenance and event rows have database triggers that reject update/delete;
+trust relationships and keys permit only one-way ACTIVE-to-REVOKED changes.
+A deferred constraint trigger requires every current grant head to have an
+audit event for its selected version and to advance from the immediately
+previous head. Issuer/key registration and revocation also require matching
+append-only audit events.
+
+The adapter implements \`VerifiedAuthorityGrantStore.load_verified_grant\`.
+It pins the current head during verification, rechecks the issuer signature
+against the receiver tenant's active trust relationship/key, checks the
+canonical grant digest and receiver-signed acceptance receipt, and verifies
+the corresponding audit event. The resolver can therefore use the PostgreSQL
+store directly without an arbitrary grant callback.
+
+This migration stores issuer-institution trust used for authority grants and
+federated actor assertions. It does not yet persist the receiver-installation
+trust roots used by the sender outbox acknowledgement verifier; that remains
+a separate sender-local trust-store integration.
+
+This is a PostgreSQL reference backend, not a production certification.
+Tenant IDs remain caller-supplied and must be derived from authenticated
+principals. Receiver approval, receiver acceptance-key trust, public-key
+retrieval and private-key custody remain explicit external trust boundaries.
+Database triggers protect ordinary application writes but do not protect
+against a database owner/superuser disabling triggers or altering the schema.
+Production still requires least-privilege roles, reviewed row-level isolation,
+TLS, backup/restore, failover, migration governance, HSM/secret-manager
+integration, independent security review and operational revocation controls.
+
+
+**Current revision limitation:** the PostgreSQL adapter's signed acceptance
+method currently handles initial grant creation. A federated grant revision
+must be a new issuer-signed version with a fresh receiver acceptance, but a
+dedicated \`accept_signed_grant_revision\` operation is not yet implemented.
+A local/unsigned revision remains untrusted for federated resolution and fails
+closed because it has no matching signed provenance and receiver receipt.

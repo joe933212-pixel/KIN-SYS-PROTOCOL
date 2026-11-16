@@ -156,3 +156,50 @@ A receiver acknowledgement receipt binds the original envelope digest and stable
 Volatile delivery metadata (for example, whether the response came from a duplicate delivery) is deliberately excluded from the signed stable response. The decision, runtime pins and result remain bound. The receipt authenticates the receiver's attestation under a sender-trusted key; it does not prove legal competence, evidence sufficiency or external settlement.
 
 The receiver adapter can now sign the completed stable response when configured with a receiver-owned signing key ID and key-custody loader. The receipt is included in the response persisted by the durable inbox, so duplicate delivery returns the same signed receipt while volatile duplicate-delivery metadata may change. The sender outbox accepts a receipt only through its injected verifier, which must use sender-local trust configuration and verify against the exact stored original envelope. This remains a protocol/state-machine integration, not a complete transport service: no outbound HTTP/mTLS transport, authenticated discovery, retry scheduler, dead-letter policy or operation-status API is included. The PostgreSQL integration tests exercise sender persistence, worker claims, retry, late acknowledgement after lease expiry, duplicate receipt idempotency and conflicting/tampered receipt rejection. The tests do not establish live two-host federation. Delivery remains at-least-once; no exactly-once network guarantee is claimed.
+
+
+## PostgreSQL institutional trust and authority registry
+
+Migration \`005_institutional_trust_registry.sql\` and
+\`protocol-reference/postgresql_institutional_trust_registry.py\` add a
+PostgreSQL reference backend for immutable authority-grant versions, issuer
+trust roots, Ed25519 key references, grant provenance and receiver-signed
+acceptance receipts. The adapter implements the same
+\`VerifiedAuthorityGrantStore\` contract as the SQLite reference registry and
+can be passed directly to \`InstitutionalAuthorityResolver\`.
+
+The database uses tenant-composite keys, expected-version head locking,
+transactional grant/audit writes, append-only snapshot/event/provenance
+triggers, one-way issuer/key revocation triggers and a deferred check that
+every current grant head has an audit event and advances from the prior head.
+It stores and verifies a canonical snapshot digest as well as the issuer
+envelope, receiver acceptance receipt and matching audit evidence. Public and
+private key material is not stored in these tables; public-key and
+receiver-acceptance resolvers remain separate trust adapters.
+
+The PostgreSQL integration tests exercise real database transactions when
+\`KIN_SYS_POSTGRES_TEST_DSN\` is configured (CI provisions PostgreSQL 16).
+They cover local resolver integration, tenant isolation, immutable revisions,
+revocation, scope and expiry, overlapping key rotation, receiver acceptance
+receipts and issuer-trust revocation. This remains reference persistence:
+production still requires authenticated tenant derivation, least-privilege
+roles and row-level isolation, external key custody/HSM, a governed receiver
+approval workflow, backup/failover and migration operations, legal authority
+adjudication and independent security review.
+
+The PostgreSQL registry introduced by migration \`005\` stores issuer-institution
+trust used for grant provenance and federated actor assertions. It does not
+yet store the receiver-installation trust roots used by the sender outbox
+acknowledgement verifier. That remains a separate sender-local trust-store
+integration. The outbox's injected verifier is still an explicit trust
+boundary and must be wired to \`verify_receiver_acknowledgement(...)\` plus a
+separately governed receiver-key resolver; a callback that simply returns
+\`verified: true\` is not sufficient.
+
+
+The current PostgreSQL trust-store increment accepts and persists an initial
+issuer-signed grant with a receiver-signed acceptance receipt. A dedicated
+transaction for accepting a subsequent issuer-signed grant revision is still
+outstanding. Until that exists, a locally created unsigned revision has no
+fresh provenance/receipt and must fail closed under federated resolution; the
+previous version's signature and approval are never inherited.

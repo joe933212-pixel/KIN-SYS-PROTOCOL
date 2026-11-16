@@ -144,7 +144,7 @@ Authority grants are tenant-scoped and immutable by (grant ID, version). A curre
 
 The trust-key catalogue records tenant, issuer institution, key ID, algorithm, public-key reference, validity window and status. It supports overlapping key registration for rotation and audited revocation. The registry stores a public-key reference (or public material supplied through an appropriately designed adapter), never private signing keys. The Ed25519 resolver and issuer-signed grant verifier consume this trust-key catalogue through `load_trust_key`; the actual public-key bytes are still resolved through an injected key-custody adapter. The trust-key catalogue accepts only Ed25519 public-key references. HMAC verification keys remain local/internal configuration and are not imported from federated trust-key metadata or stored as trust keys.
 
-This remains a local SQLite reference implementation. Tenant IDs are caller-supplied and must be derived from authenticated principals at the API boundary. Grant creation/revision and trust-key registration/revocation accept actor and evidence references but do not independently authenticate those actors, validate legal authority, or verify the underlying approval evidence. The registry implements issuer-signed grant provenance and a receiver-signed acceptance receipt, and the resolver re-verifies both against current issuer and receiver trust configuration. The receiver acceptance key resolver and key-custody adapter are injected trust boundaries, not production key-management services. It does not provide legal trust-agreement adjudication, production key custody, automated key distribution, identity-provider authentication, distributed persistence/concurrency or a multi-host replay service. Production deployment requires an independently governed trust-root process, vetted cryptographic libraries, secure key custody, authenticated issuer/actor adapters, authoritative evidence verification and a hardened shared persistence/replay service.
+The original implementation remains a local SQLite reference store; the PostgreSQL reference backend is described below. Neither backend is a production certification. Tenant IDs are caller-supplied and must be derived from authenticated principals at the API boundary. Grant creation/revision and trust-key registration/revocation accept actor and evidence references but do not independently authenticate those actors, validate legal authority, or verify the underlying approval evidence. The registry implements issuer-signed grant provenance and a receiver-signed acceptance receipt, and the resolver re-verifies both against current issuer and receiver trust configuration. The receiver acceptance key resolver and key-custody adapter are injected trust boundaries, not production key-management services. It does not provide legal trust-agreement adjudication, production key custody, automated key distribution, identity-provider authentication, distributed persistence/concurrency or a multi-host replay service. Production deployment requires an independently governed trust-root process, vetted cryptographic libraries, secure key custody, authenticated issuer/actor adapters, authoritative evidence verification and a hardened shared persistence/replay service.
 
 The new tests cover verified-store integration, rejection of bare grant callbacks, tenant isolation, immutable grant versions, expected-version revisions, revocation invalidating stale version pins, trust-key rotation metadata, key revocation audit events, duplicate key IDs, unsupported algorithms and fail-closed verification of retained federated grant provenance. These are reference-store tests, not a certification of the trust model.
 
@@ -209,3 +209,53 @@ Recovery locates the CEE journal containing the original operation, verifies the
 The execution service retains pipeline instances in a process-local cache. Deployments that need recovery after process restart must inject an `operation_pipeline_resolver` backed by a durable operation catalog; that resolver must return the executor configured for the exact original persisted pins. If the original pinned runtime cannot be recovered, the service returns an explicit `UNKNOWN / ORIGINAL_PINNED_RUNTIME_UNAVAILABLE` result and does not switch to the institution's newer active binding. The reference repository provides this resolver interface but does not yet implement a shared durable multi-tenant operation catalog or production pipeline reconstruction service.
 
 The factory must provide stable, durable pipeline instances/stores for the lifetime and recovery of operations; constructing a fresh in-memory pipeline for each request is not sufficient. The reference integration resolves and pins the active OIDC provider configuration, but it does not by itself validate a live ID token or contact that provider. The institution-specific factory must connect the selected provider configuration to an appropriate credential-verification adapter; the existing live OIDC integration tests remain opt-in. The synthetic reference pipeline tests demonstrate the binding, audit-pin, inspection and recovery contracts, not live identity authentication. Production use still requires shared durable registries and journals, production session authentication, live institution-controlled MINAH and identity-provider adapters, independently verified authority grants, trusted evidence services, a durable original-runtime catalog, and a reviewed recovery/consistency design.
+
+
+## PostgreSQL trust and delegated-authority persistence
+
+The PostgreSQL reference backend is implemented in
+\`protocol-reference/postgresql_institutional_trust_registry.py\`, with schema
+migration \`005_institutional_trust_registry.sql\`. It mirrors the authority
+grant and issuer-trust contract used by the SQLite reference registry:
+
+- tenant-scoped immutable grant versions and a current-version pointer;
+- expected-version revision and auditable revocation in one transaction;
+- actor, institution, authority, role, resource-type, resource-ID and validity
+  scope retained in the canonical grant snapshot;
+- issuer trust relationships and Ed25519 public-key references with validity,
+  overlapping rotation windows and one-way revocation;
+- retained issuer-signed grant envelopes and receiver-signed acceptance
+  receipts, reverified by \`load_verified_grant\` against current trust metadata;
+- append-only event/provenance records and database triggers preventing
+  ordinary update/delete of immutable snapshots and audit evidence.
+
+The PostgreSQL adapter implements the same
+\`VerifiedAuthorityGrantStore\` contract consumed by
+\`InstitutionalAuthorityResolver\`. It locks the current grant head while
+resolving the snapshot and locks issuer/key trust rows during signature
+verification, so a concurrent revision or revocation cannot silently change
+the verified snapshot midway through the read. Receiver approval is rechecked
+against the issuer signature under the acceptance transaction before
+persistence. A deferred database constraint requires a new head version to
+carry an audit event linked to the immediately previous version, preventing
+ordinary pointer rollback.
+
+The PostgreSQL backend is a reference persistence implementation, not a
+production-ready authority service. The caller must derive tenant context from
+an authenticated principal. The receiver approval verifier, receiver
+acceptance-key metadata resolver, public-key vault, and private-key signer
+remain external adapters. PostgreSQL triggers are not a defence against a
+database owner or superuser; production still needs least-privilege roles,
+row-level tenant isolation, connection/pool/TLS controls, backup and restore,
+failover and migration governance, key custody/HSM integration, and an
+independent security review. Legal competence and the sufficiency of the
+underlying trust/approval evidence remain separate adjudication requirements.
+
+
+**Federated revision limitation:** the PostgreSQL reference backend currently
+persists initial signed grant acceptance. A subsequent federated amendment
+must be a new issuer-signed version and a fresh receiver acceptance, but a
+dedicated revision-acceptance transaction is still outstanding. A locally
+created unsigned revision is intentionally rejected by federated
+\`load_verified_grant\`; it cannot inherit the previous version's signature
+or receiver approval.
