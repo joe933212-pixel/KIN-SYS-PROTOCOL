@@ -1,8 +1,9 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
-"""End-to-end MINAH -> IVM -> CEE execution slice, using synthetic adapters only.
+"""End-to-end MINAH -> IVM -> CEE execution slice with injectable persistence.
 
-The CEE lifecycle journal and IVM transition store are separate SQLite stores.
-This prototype explicitly does NOT claim a distributed atomic commit across them.
+SQLite remains the offline default. Institutional deployments may inject
+independent PostgreSQL CEE and IVM adapters. The persistence boundaries remain
+separate: this pipeline does NOT claim distributed atomic commit across them.
 A retry after an IVM commit replays the same idempotency key and reconciles CEE
 from the durable IVM outcome. Production deployment requires an independently
 reviewed recovery protocol and real identity/legal/model/runtime adapters.
@@ -354,7 +355,7 @@ class CEEJournal:
 
 
 class KinSysProtocolPipeline:
-    """Synthetic full-path harness that makes MINAH, IVM and CEE boundaries observable."""
+    """Full-path reference harness with independently injectable CEE and IVM stores."""
 
     EXECUTION_ORDER = ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")
     SUPPORTS_INSTITUTIONAL_RUNTIME_PINS = True
