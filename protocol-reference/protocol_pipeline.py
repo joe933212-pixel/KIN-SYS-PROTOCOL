@@ -378,13 +378,20 @@ class KinSysProtocolPipeline:
         jurisdiction_package_id: str | None = None,
         jurisdiction_package_version: str | None = None,
         authority_profile_version: str | None = None,
+        cee_journal: Any | None = None,
     ):
         self.identity_provider_id = identity_provider_id
         self.identity_provider_version = identity_provider_version
         self.jurisdiction_package_id = jurisdiction_package_id
         self.jurisdiction_package_version = jurisdiction_package_version
         self.authority_profile_version = authority_profile_version
-        self.cee = CEEJournal(cee_database)
+        # Inject a shared durable journal when an institutional deployment
+        # supplies one (for example PostgreSQLCEEJournal). The default remains
+        # the local SQLite reference journal for offline demonstrations.
+        self.cee = cee_journal if cee_journal is not None else CEEJournal(cee_database)
+        for method in ("start", "advance", "get", "events", "record_observation", "observations"):
+            if not callable(getattr(self.cee, method, None)):
+                raise TypeError("CEE_JOURNAL_INTERFACE_INVALID:" + method)
         self.ivm = ProtocolStore(ivm_database)
         self.minah = minah_adapter or DeterministicMinahAdapter()
         self.identity_adapter = identity_adapter or SyntheticIdentityAdapter()
