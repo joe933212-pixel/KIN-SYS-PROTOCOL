@@ -289,3 +289,32 @@ registry adapter, mTLS client-certificate provisioning and rotation, trusted
 receiver certificate identity mapping, rate limiting and operational retry
 scheduling/dead-letter policy. The sender worker is a one-claim delivery
 primitive, not a continuously running scheduler.
+
+## Sender outbox batch dispatch
+
+The PostgreSQL sender outbox exposes `claim_batch(...)` for bounded concurrent
+dispatch. It leases at most 100 pending, retryable, or expired-delivery rows in
+one short database transaction using `FOR UPDATE SKIP LOCKED`. Network calls
+are made only after the claim transaction has committed. Each claim carries its
+sender tenant/installation, message and receiver installation identifiers,
+original signed envelope, attempt count and lease owner.
+
+`FederationOutboxDispatcher.run_once()` performs one bounded poll and returns
+per-message delivery outcomes. It does not create threads, sleep, or run an
+unbounded loop. An institution may invoke it from its own supervised worker or
+scheduled job, with deployment-controlled poll cadence and concurrency. All
+dispatchers for one sender installation must share that installation's
+PostgreSQL outbox so row leases coordinate their work.
+
+The delivery worker persists completion only through the outbox's
+receiver-acknowledgement verifier. A transport response or HTTP status alone is
+not completion. Failed or incomplete deliveries release the active lease as
+retryable when the lease owner still holds it. A worker crash leaves the lease
+to expire for later reclamation.
+
+This increment does not yet implement a durable next-attempt schedule,
+exponential backoff, maximum-attempt/dead-letter policy, lease renewal for
+long-running requests, or an always-on process supervisor. Configure conservative
+poll cadence and lease duration; do not treat this bounded dispatcher as a
+production queue service until those operational controls and independent-host
+mTLS delivery tests are complete.
