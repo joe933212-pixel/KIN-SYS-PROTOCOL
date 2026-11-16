@@ -69,6 +69,15 @@ class _PeerCertificateWSGIHandler(WSGIRequestHandler):
 
 
 
+def _stop_receiver_process(process, stop):
+    """Stop the spawned receiver even when startup or assertions fail."""
+    stop.set()
+    process.join(timeout=3)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=3)
+
+
 def _serve_mtls_receiver_process(arguments):
     """Run the TLS receiver in an OS process separate from the sender test."""
     paths, ready, received, stop = arguments
@@ -287,8 +296,7 @@ class FederationLiveMTLSNetworkTests(unittest.TestCase):
             daemon=True,
         )
         process.start()
-        self.addCleanup(lambda: process.is_alive() and process.terminate())
-        self.addCleanup(lambda: process.join(timeout=3))
+        self.addCleanup(_stop_receiver_process, process, stop)
         port = ready.get(timeout=10)
 
         def factory(host, destination_port, *, pinned_ip, timeout, context):
@@ -313,7 +321,6 @@ class FederationLiveMTLSNetworkTests(unittest.TestCase):
             delivered["claims"]["issuer_installation_id"], "INSTALL-UG-01"
         )
         self.assertNotEqual(process.pid, os.getpid())
-        stop.set()
         process.join(timeout=3)
         self.assertFalse(process.is_alive())
 
