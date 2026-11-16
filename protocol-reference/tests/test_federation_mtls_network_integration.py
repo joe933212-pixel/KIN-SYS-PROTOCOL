@@ -10,6 +10,7 @@ weakening the production public-address policy.
 from __future__ import annotations
 
 import multiprocessing
+import queue
 import os
 import ssl
 import tempfile
@@ -335,7 +336,8 @@ class FederationLiveMTLSNetworkTests(unittest.TestCase):
                 "INSTALL-RW-01",
                 self._envelope(issuer="INSTALL-OTHER-99"),
             )
-        self.assertTrue(received.empty())
+        with self.assertRaises(queue.Empty):
+            received.get(timeout=0.2)
 
         self.assertNotEqual(process.pid, os.getpid())
         # The receiver is intentionally long-lived; signal its event loop to
