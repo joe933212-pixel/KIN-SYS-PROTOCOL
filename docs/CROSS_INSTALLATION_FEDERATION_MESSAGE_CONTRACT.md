@@ -312,9 +312,17 @@ not completion. Failed or incomplete deliveries release the active lease as
 retryable when the lease owner still holds it. A worker crash leaves the lease
 to expire for later reclamation.
 
-This increment does not yet implement a durable next-attempt schedule,
-exponential backoff, maximum-attempt/dead-letter policy, lease renewal for
-long-running requests, or an always-on process supervisor. Configure conservative
-poll cadence and lease duration; do not treat this bounded dispatcher as a
-production queue service until those operational controls and independent-host
-mTLS delivery tests are complete.
+Migration `009_federation_outbox_retry_policy.sql` adds a durable
+`next_attempt_at`, a per-message bounded `max_attempts` budget (default 8),
+and an auditable `DEAD_LETTER` terminal state. Retry scheduling uses a
+database-clock exponential delay beginning at 5 seconds and capped at one
+hour. A retryable failure is not claimable until its due time. A failure on
+the final permitted attempt moves the row to `DEAD_LETTER`; an expired lease
+on the final attempt is also dead-lettered rather than reclaimed indefinitely.
+The attempt counter advances when a lease is claimed, so process crashes count
+against the same finite delivery budget. Dead-letter rows are retained for
+operator investigation and are not automatically redriven.
+
+This remains a bounded dispatcher, not an always-on process supervisor.
+Lease renewal for long-running requests, operator-authorised dead-letter
+redrive, and independent-host mTLS delivery tests remain outstanding.
