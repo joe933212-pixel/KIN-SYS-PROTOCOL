@@ -25,7 +25,10 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from governed_contracts import CONTRACT_VERSION, compute_payload_digest
 from institutional_federation import sign_cross_installation_instruction
 from institutional_federation_acknowledgement import verify_receiver_acknowledgement
-from institutional_federated_receiver import InstitutionalFederatedInstructionReceiver
+from institutional_federated_receiver import (
+    FederatedInstructionReceiverError,
+    InstitutionalFederatedInstructionReceiver,
+)
 from postgresql_federation_inbox import PostgreSQLFederationInbox
 from postgresql_federation_outbox import PostgreSQLFederationOutbox
 from postgresql_migrations import apply_migrations
@@ -261,6 +264,39 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
             ),
             clock=lambda: self.now,
         )
+
+    def test_tampered_signature_is_rejected_before_durable_inbox_acceptance(self):
+        # A validly routed HTTPS delivery is not enough: the receiver must
+        # verify the issuer's Ed25519 envelope before it persists the message
+        # or allows any local CEE/IVM execution to begin.
+        tampered = {
+            "claims": dict(self.envelope["claims"]),
+            "signature": self.envelope["signature"],
+        }
+        self.assertIsInstance(tampered["signature"], str)
+        self.assertTrue(tampered["signature"])
+        first = tampered["signature"][0]
+        tampered["signature"] = ("A" if first != "A" else "B") + tampered["signature"][1:]
+
+        with self.assertRaises(FederatedInstructionReceiverError):
+            self.receiver.receive(tampered)
+
+        inbox_record = self.receiver_inbox.get(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id="MSG-PG-FED-UG-RW-001",
+        )
+        self.assertIsNone(inbox_record)
+        self.assertIsNone(
+            self.receiver_runtime.pipeline.cee.get("OP-PG-FED-UG-RW-001")
+        )
+        self.assertIsNone(
+            self.sender_runtime.pipeline.cee.get("OP-PG-FED-UG-RW-001")
+        )
+        with self.receiver_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM ivm_processes")
+                self.assertEqual(cursor.fetchone()[0], 0)
 
     def test_two_isolated_installations_complete_signed_postgresql_federation(self):
         with self.sender_connect() as connection:
