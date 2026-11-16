@@ -203,3 +203,9 @@ transaction for accepting a subsequent issuer-signed grant revision is still
 outstanding. Until that exists, a locally created unsigned revision has no
 fresh provenance/receipt and must fail closed under federated resolution; the
 previous version's signature and approval are never inherited.
+
+## Failure-injection recovery validation
+
+`protocol-reference/tests/test_postgresql_federation_commit_recovery.py` now injects a failure at the precise boundary after the receiver's local CEE/IVM operation has committed and its signed acknowledgement has been constructed, but before PostgreSQL inbox completion. The test expires the still-active inbox lease, reconstructs the receiver adapter over the same receiver inbox schema, redelivers the identical signed envelope, and requires recovery through the original pinned operation. It checks that the inbox reaches `COMPLETED`, the deterministic signed acknowledgement is unchanged, and the CEE journal contains exactly one `REQUESTED` event for the operation.
+
+The test deliberately retains the same reference execution-service/journal object while reconstructing the receiver adapter. It therefore validates the failure handoff, lease reclaim and recovery orchestration against the existing journal; it does **not** yet prove restoration of CEE/IVM journal state into a separate process or independent database server. That remains a separate durability gate and must be tested before claiming crash-safe multi-host recovery.
