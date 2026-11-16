@@ -408,7 +408,7 @@ class PostgreSQLFederationOutbox:
                             "lease_expires_at": row[9],
                             "lease_owner": row[10],
                         } for row in rows]
-                        return sorted(claims, key=lambda item: (item["attempt_count"], item["message_id"]))
+                        return claims
         except FederationOutboxError:
             raise
         except Exception as exc:
