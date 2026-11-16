@@ -16,7 +16,6 @@ from institutional_deployment_domain import (
     validate_binding, validate_institution, validate_jurisdiction_package,
     validate_minah_deployment,
 )
-from institutional_registry import InstitutionalRegistry, RegistryError
 
 VALIDATORS = {
     "institution": validate_institution,
@@ -53,9 +52,14 @@ class InstitutionalOnboardingAdministration:
 
     _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
-    def __init__(self, registry: InstitutionalRegistry, authority_resolver: Any,
+    def __init__(self, registry: Any, authority_resolver: Any,
                  evidence_verifier: Any):
-        if not isinstance(registry, InstitutionalRegistry):
+        required_registry_methods = (
+            "create_record_with_event", "get_current_record",
+            "list_records", "list_events",
+        )
+        if any(not callable(getattr(registry, method, None))
+               for method in required_registry_methods):
             raise InstitutionalOnboardingError("INSTITUTIONAL_REGISTRY_REQUIRED")
         if not callable(getattr(authority_resolver, "resolve", None)):
             raise InstitutionalOnboardingError("TRUSTED_AUTHORITY_RESOLVER_REQUIRED")
