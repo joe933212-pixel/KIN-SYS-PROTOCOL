@@ -45,6 +45,8 @@ class VerifiedAuthorityGrantStore(Protocol):
         self, tenant_id: str, grant_id: str, *,
         require_federated_provenance: bool,
         public_key_loader: Callable[[str], bytes] | None,
+        receiver_acceptance_key_loader: Callable[[str, str, str], dict[str, Any] | None] | None = None,
+        receiver_acceptance_public_key_loader: Callable[[str], bytes] | None = None,
         clock: Callable[[], float],
     ) -> dict[str, Any] | None:
         """Load the current grant head and verify retained federation provenance when present."""
@@ -176,6 +178,8 @@ class InstitutionalAuthorityResolver:
         verification_keys: dict[str, bytes] | None = None,
         trust_key_loader: Callable[[str, str], dict[str, Any] | None] | None = None,
         public_key_loader: Callable[[str], bytes] | None = None,
+        receiver_acceptance_key_loader: Callable[[str, str, str], dict[str, Any] | None] | None = None,
+        receiver_acceptance_public_key_loader: Callable[[str], bytes] | None = None,
         clock: Callable[[], float] = time.time,
     ):
         if (not callable(getattr(grant_store, "load_verified_grant", None))
@@ -189,11 +193,23 @@ class InstitutionalAuthorityResolver:
                 raise AuthorityResolutionError("HMAC_KEY_MUST_BE_AT_LEAST_32_BYTES")
         if bool(trust_key_loader) != bool(public_key_loader):
             raise AuthorityResolutionError("FEDERATED_TRUST_CONFIGURATION_INCOMPLETE")
+        if bool(receiver_acceptance_key_loader) != bool(receiver_acceptance_public_key_loader):
+            raise AuthorityResolutionError(
+                "RECEIVER_ACCEPTANCE_TRUST_CONFIGURATION_INCOMPLETE"
+            )
+        if (receiver_acceptance_key_loader is not None
+                and (not callable(receiver_acceptance_key_loader)
+                     or not callable(receiver_acceptance_public_key_loader))):
+            raise AuthorityResolutionError(
+                "RECEIVER_ACCEPTANCE_TRUST_CONFIGURATION_INCOMPLETE"
+            )
         if not keys and not trust_key_loader:
             raise AuthorityResolutionError("TRUST_CONFIGURATION_INCOMPLETE")
         self._keys = dict(keys)
         self._trust_key_loader = trust_key_loader
         self._public_key_loader = public_key_loader
+        self._receiver_acceptance_key_loader = receiver_acceptance_key_loader
+        self._receiver_acceptance_public_key_loader = receiver_acceptance_public_key_loader
         self._grant_store = grant_store
         self._consume_nonce = consume_nonce
         self._clock = clock
@@ -276,12 +292,23 @@ class InstitutionalAuthorityResolver:
         if not re.fullmatch(r"[A-Za-z0-9._:-]{16,128}", claims["nonce"]):
             raise AuthorityResolutionError("INVALID_ASSERTION_NONCE")
 
+        if algorithm == "Ed25519" and self._receiver_acceptance_key_loader is None:
+            raise AuthorityResolutionError(
+                "RECEIVER_ACCEPTANCE_TRUST_CONFIGURATION_INCOMPLETE"
+            )
+        store_args = {
+            "require_federated_provenance": (algorithm == "Ed25519"),
+            "public_key_loader": self._public_key_loader,
+            "clock": self._clock,
+        }
+        if self._receiver_acceptance_key_loader is not None:
+            store_args["receiver_acceptance_key_loader"] = self._receiver_acceptance_key_loader
+            store_args["receiver_acceptance_public_key_loader"] = (
+                self._receiver_acceptance_public_key_loader
+            )
         try:
             grant = self._grant_store.load_verified_grant(
-                tenant_id, claims["grant_id"],
-                require_federated_provenance=(algorithm == "Ed25519"),
-                public_key_loader=self._public_key_loader,
-                clock=self._clock,
+                tenant_id, claims["grant_id"], **store_args,
             )
         except AuthorityResolutionError:
             raise

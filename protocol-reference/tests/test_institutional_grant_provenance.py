@@ -6,7 +6,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from institutional_grant_provenance import (
     GrantProvenanceError, accept_authority_grant, sign_authority_grant,
-    verify_authority_grant,
+    verify_authority_grant, sign_receiver_acceptance_receipt,
+    verify_receiver_acceptance_receipt,
 )
 
 
@@ -118,6 +119,94 @@ class IssuerSignedGrantTests(unittest.TestCase):
         with self.assertRaisesRegex(GrantProvenanceError, "ISSUED_GRANT_MUST_BE_PENDING"):
             sign_authority_grant(dict(self.grant, status="ACTIVE"),
                                  key_id="issuer-key-01", private_key=self.private_key)
+
+
+
+
+    def test_receiver_receipt_binds_receiver_grant_and_complete_approval_bundle(self):
+        approval = {"actor_ref": "actor:bank-approver", "approval_ref": "bank:approval-9",
+                    "decision": "ACCEPT"}
+        accepted = accept_authority_grant(
+            self.envelope, tenant_id="tenant-receiver",
+            receiver_institution_id="BANK-UG-01",
+            trust_key_loader=self.trust_key, public_key_loader=self.public_key,
+            verify_receiver_approval=lambda grant, supplied: supplied == approval,
+            receiver_approval=approval, clock=lambda: 150)
+        receiver_private = Ed25519PrivateKey.generate()
+        receiver_public = receiver_private.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw)
+        receipt = sign_receiver_acceptance_receipt(
+            tenant_id="tenant-receiver", receiver_institution_id="BANK-UG-01",
+            grant_id="GRANT-FED-01", grant_version="1",
+            grant_digest=accepted["acceptance"]["grant_digest"],
+            receiver_approval=approval, accepted_at=150,
+            key_id="receiver-key-01", private_key=receiver_private)
+        record = {
+            "tenant_id": "tenant-receiver", "receiver_institution_id": "BANK-UG-01",
+            "key_id": "receiver-key-01", "algorithm": "Ed25519",
+            "status": "ACTIVE", "public_key_ref": "public:receiver-key-01",
+            "valid_from": 100, "valid_until": 300,
+        }
+        claims = verify_receiver_acceptance_receipt(
+            receipt, tenant_id="tenant-receiver",
+            receiver_institution_id="BANK-UG-01", grant=self.grant,
+            acceptance=accepted["acceptance"],
+            receiver_acceptance_key_loader=lambda tenant, institution, key: record,
+            receiver_acceptance_public_key_loader=lambda ref: receiver_public,
+            clock=lambda: 160)
+        self.assertEqual(claims["accepted_at"], 150)
+        self.assertEqual(claims["receiver_institution_id"], "BANK-UG-01")
+
+        tampered = dict(accepted["acceptance"],
+                        receiver_approval=dict(approval, decision="REJECT"))
+        with self.assertRaisesRegex(GrantProvenanceError,
+                                    "RECEIVER_ACCEPTANCE_RECEIPT_SCOPE_MISMATCH"):
+            verify_receiver_acceptance_receipt(
+                receipt, tenant_id="tenant-receiver",
+                receiver_institution_id="BANK-UG-01", grant=self.grant,
+                acceptance=tampered,
+                receiver_acceptance_key_loader=lambda tenant, institution, key: record,
+                receiver_acceptance_public_key_loader=lambda ref: receiver_public,
+                clock=lambda: 160)
+
+    def test_receiver_receipt_rejects_wrong_receiver_tenant_key_and_revocation(self):
+        approval = {"actor_ref": "actor:bank-approver", "approval_ref": "bank:approval-9"}
+        accepted = accept_authority_grant(
+            self.envelope, tenant_id="tenant-receiver",
+            receiver_institution_id="BANK-UG-01",
+            trust_key_loader=self.trust_key, public_key_loader=self.public_key,
+            verify_receiver_approval=lambda grant, supplied: supplied == approval,
+            receiver_approval=approval, clock=lambda: 150)
+        receiver_private = Ed25519PrivateKey.generate()
+        receiver_public = receiver_private.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw)
+        receipt = sign_receiver_acceptance_receipt(
+            tenant_id="tenant-receiver", receiver_institution_id="BANK-UG-01",
+            grant_id="GRANT-FED-01", grant_version="1",
+            grant_digest=accepted["acceptance"]["grant_digest"],
+            receiver_approval=approval, accepted_at=150,
+            key_id="receiver-key-01", private_key=receiver_private)
+        record = {
+            "tenant_id": "tenant-receiver", "receiver_institution_id": "BANK-UG-01",
+            "key_id": "receiver-key-01", "algorithm": "Ed25519",
+            "status": "ACTIVE", "public_key_ref": "public:receiver-key-01",
+            "valid_from": 100, "valid_until": 300,
+        }
+        def verify(key_record, tenant="tenant-receiver", receiver="BANK-UG-01"):
+            return verify_receiver_acceptance_receipt(
+                receipt, tenant_id=tenant, receiver_institution_id=receiver,
+                grant=self.grant, acceptance=accepted["acceptance"],
+                receiver_acceptance_key_loader=lambda t, i, k: key_record,
+                receiver_acceptance_public_key_loader=lambda ref: receiver_public,
+                clock=lambda: 160)
+        with self.assertRaisesRegex(GrantProvenanceError, "RECEIVER_ACCEPTANCE_RECEIPT_SCOPE_MISMATCH"):
+            verify(record, tenant="tenant-other")
+        with self.assertRaisesRegex(GrantProvenanceError, "RECEIVER_ACCEPTANCE_KEY_NOT_ACTIVE"):
+            verify(dict(record, status="REVOKED"))
+        with self.assertRaisesRegex(GrantProvenanceError, "RECEIVER_ACCEPTANCE_KEY_OUTSIDE_VALIDITY"):
+            verify(dict(record, valid_from=151))
 
 
 if __name__ == "__main__":

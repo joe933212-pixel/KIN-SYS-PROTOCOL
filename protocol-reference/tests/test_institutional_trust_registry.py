@@ -22,6 +22,16 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
         self.registry = InstitutionalTrustRegistry(self.path)
         self.addCleanup(self.registry.close)
         self.addCleanup(lambda: os.path.exists(self.path) and os.unlink(self.path))
+        self.receiver_private_key = Ed25519PrivateKey.generate()
+        self.receiver_public_bytes = self.receiver_private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw)
+        self.receiver_key_record = {
+            "tenant_id": "tenant-a", "receiver_institution_id": "BANK-UG-01",
+            "key_id": "receiver-acceptance-key", "algorithm": "Ed25519",
+            "status": "ACTIVE", "public_key_ref": "vault://public/receiver-acceptance-key",
+            "valid_from": 100, "valid_until": 2000,
+        }
         self.grant = {
             "grant_id": "GRANT-01", "tenant_id": "tenant-a", "status": "ACTIVE",
             "actor_ref": "actor:registrar", "institution_id": "BANK-UG-01",
@@ -54,6 +64,24 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
             actor_ref="actor:trust-admin", evidence_ref="evidence:key-approval")
         return public_bytes
 
+    def receiver_signing_key_loader(self, tenant_id, institution_id, key_id):
+        if (tenant_id, institution_id, key_id) == (
+            "tenant-a", "BANK-UG-01", "receiver-acceptance-key"
+        ):
+            return self.receiver_private_key
+        return None
+
+    def receiver_acceptance_key_loader(self, tenant_id, institution_id, key_id):
+        if (tenant_id, institution_id, key_id) == (
+            "tenant-a", "BANK-UG-01", "receiver-acceptance-key"
+        ):
+            return dict(self.receiver_key_record)
+        return None
+
+    def receiver_acceptance_public_key_loader(self, public_key_ref):
+        return (self.receiver_public_bytes
+                if public_key_ref == "vault://public/receiver-acceptance-key" else None)
+
     def accept_federated_grant(self, issuer_id, key_id, public_key_ref,
                                private_key, public_bytes):
         pending = dict(self.grant, status="PENDING",
@@ -75,6 +103,8 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
             event_id="grant-accept-event",
             actor_ref=approval["actor_ref"],
             evidence_ref=approval["approval_ref"],
+            receiver_signing_key_id="receiver-acceptance-key",
+            receiver_signing_key_loader=self.receiver_signing_key_loader,
             clock=lambda: 150,
         )
 
@@ -197,6 +227,8 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
             consume_nonce=InMemoryNonceGuard().consume,
             trust_key_loader=self.registry.load_trust_key,
             public_key_loader=lambda ref: public_bytes if ref == "vault://public/ed25519-issuer-key-1" else None,
+            receiver_acceptance_key_loader=self.receiver_acceptance_key_loader,
+            receiver_acceptance_public_key_loader=self.receiver_acceptance_public_key_loader,
             clock=lambda: 150)
         claims = {
             "key_id": "ed25519-issuer-key-1", "tenant_id": "tenant-a",
@@ -304,6 +336,8 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
                 national_ref: national_public,
                 other_ref: other_public,
             }.get(ref),
+            receiver_acceptance_key_loader=self.receiver_acceptance_key_loader,
+            receiver_acceptance_public_key_loader=self.receiver_acceptance_public_key_loader,
             clock=lambda: 150)
         claims = {
             "key_id": "other-issuer-key", "tenant_id": "tenant-a",
@@ -373,6 +407,42 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
             args["algorithm"] = unsupported
             with self.assertRaisesRegex(TrustRegistryError, "UNSUPPORTED_TRUST_KEY_ALGORITHM"):
                 self.registry.register_trust_key(**args)
+
+
+
+
+    def test_federated_resolver_requires_receiver_acceptance_trust_adapter(self):
+        issuer_private = Ed25519PrivateKey.generate()
+        issuer_ref = "vault://public/receiver-acceptance-required-issuer"
+        issuer_public = self.configure_issuer(
+            "NATIONAL-REGISTRY", "acceptance-required-issuer",
+            issuer_ref, issuer_private)
+        self.accept_federated_grant(
+            "NATIONAL-REGISTRY", "acceptance-required-issuer",
+            issuer_ref, issuer_private, issuer_public)
+        resolver = InstitutionalAuthorityResolver(
+            grant_store=self.registry,
+            consume_nonce=InMemoryNonceGuard().consume,
+            trust_key_loader=self.registry.load_trust_key,
+            public_key_loader=lambda ref: issuer_public if ref == issuer_ref else None,
+            clock=lambda: 150)
+        claims = {
+            "key_id": "acceptance-required-issuer", "tenant_id": "tenant-a",
+            "actor_ref": "actor:registrar", "grant_id": "GRANT-01",
+            "grant_version": "1", "issued_at": 140, "expires_at": 160,
+            "nonce": "receiver-acceptance-required-01",
+            "issuer_institution_id": "NATIONAL-REGISTRY",
+        }
+        assertion = {
+            "claims": claims,
+            "signature": sign_federated_actor_claims(claims, issuer_private),
+        }
+        with self.assertRaisesRegex(
+            ValueError, "RECEIVER_ACCEPTANCE_TRUST_CONFIGURATION_INCOMPLETE"
+        ):
+            resolver.resolve(
+                assertion, tenant_id="tenant-a",
+                resource_type="institution", resource_id="BANK-UG-01")
 
 
 if __name__ == "__main__":

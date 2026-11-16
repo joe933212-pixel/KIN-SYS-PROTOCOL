@@ -561,7 +561,8 @@
         "grant_id",
         "grant_version",
         "grant_digest",
-        "receiver_approval"
+        "receiver_approval",
+        "receiver_receipt"
       ],
       "properties": {
         "receiver_institution_id": {
@@ -591,6 +592,9 @@
               "$ref": "#/$defs/s"
             }
           }
+        },
+        "receiver_receipt": {
+          "$ref": "#/$defs/receiverGrantAcceptanceReceipt"
         }
       }
     },
@@ -708,6 +712,82 @@
           "$ref": "#/$defs/s"
         },
         "evidence_ref": {
+          "$ref": "#/$defs/s"
+        }
+      }
+    },
+    "receiverGrantAcceptanceReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claims",
+        "signature"
+      ],
+      "properties": {
+        "claims": {
+          "$ref": "#/$defs/receiverGrantAcceptanceReceiptClaims"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      }
+    },
+    "receiverGrantAcceptanceReceiptClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "algorithm",
+        "tenant_id",
+        "receiver_institution_id",
+        "grant_id",
+        "grant_version",
+        "grant_digest",
+        "receiver_approval_digest",
+        "actor_ref",
+        "approval_ref",
+        "accepted_at",
+        "key_id"
+      ],
+      "properties": {
+        "purpose": {
+          "const": "KIN-SYS-RECEIVER-GRANT-ACCEPTANCE-v1"
+        },
+        "algorithm": {
+          "const": "Ed25519"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "receiver_institution_id": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_id": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_version": {
+          "$ref": "#/$defs/s"
+        },
+        "grant_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "receiver_approval_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "actor_ref": {
+          "$ref": "#/$defs/s"
+        },
+        "approval_ref": {
+          "$ref": "#/$defs/s"
+        },
+        "accepted_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "key_id": {
           "$ref": "#/$defs/s"
         }
       }

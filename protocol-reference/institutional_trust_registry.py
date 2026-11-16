@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -293,7 +295,9 @@ class InstitutionalTrustRegistry:
         self, tenant_id: str, grant_id: str, *,
         require_federated_provenance: bool,
         public_key_loader: Any,
-        clock: Any,
+        receiver_acceptance_key_loader: Any = None,
+        receiver_acceptance_public_key_loader: Any = None,
+        clock: Any = time.time,
     ) -> dict[str, Any] | None:
         """Load the current grant and verify any retained issuer-signed provenance.
 
@@ -301,8 +305,8 @@ class InstitutionalTrustRegistry:
         resolver explicitly selects its local/internal profile. Federated
         assertions require a receiver-accepted issuer-signed grant. Whenever
         provenance exists, it is revalidated against the receiver's current
-        trust root, public key, immutable grant snapshot, digest and acceptance
-        audit event.
+        trust root, public key, immutable grant snapshot, digest, receiver-
+        signed acceptance receipt and acceptance audit event.
         """
         self._tenant(tenant_id)
         _required_identifier(grant_id, "INVALID_GRANT_ID")
@@ -346,6 +350,7 @@ class InstitutionalTrustRegistry:
 
             from institutional_grant_provenance import (
                 canonical_grant_bytes, verify_authority_grant,
+                verify_receiver_acceptance_receipt,
             )
 
             envelope = json.loads(provenance["issuer_envelope_json"])
@@ -366,7 +371,7 @@ class InstitutionalTrustRegistry:
 
             acceptance_fields = {
                 "receiver_institution_id", "grant_id", "grant_version",
-                "grant_digest", "receiver_approval",
+                "grant_digest", "receiver_approval", "receiver_receipt",
             }
             if not isinstance(acceptance, dict) or set(acceptance) != acceptance_fields:
                 raise TrustRegistryError("GRANT_ACCEPTANCE_RECORD_INVALID")
@@ -384,6 +389,31 @@ class InstitutionalTrustRegistry:
                 or acceptance["grant_digest"] != digest
             ):
                 raise TrustRegistryError("GRANT_ACCEPTANCE_SCOPE_MISMATCH")
+
+            receipt = acceptance["receiver_receipt"]
+            if not callable(receiver_acceptance_key_loader) or not callable(
+                receiver_acceptance_public_key_loader
+            ):
+                raise TrustRegistryError(
+                    "RECEIVER_ACCEPTANCE_TRUST_CONFIGURATION_INCOMPLETE"
+                )
+            acceptance_claims = {
+                key: value for key, value in acceptance.items()
+                if key != "receiver_receipt"
+            }
+            try:
+                verify_receiver_acceptance_receipt(
+                    receipt, tenant_id=tenant_id,
+                    receiver_institution_id=grant["institution_id"],
+                    grant=issuer_grant, acceptance=acceptance_claims,
+                    receiver_acceptance_key_loader=receiver_acceptance_key_loader,
+                    receiver_acceptance_public_key_loader=receiver_acceptance_public_key_loader,
+                    clock=clock,
+                )
+            except Exception as exc:
+                raise TrustRegistryError(
+                    "GRANT_ACCEPTANCE_RECEIPT_INVALID:" + str(exc)
+                ) from exc
 
             events = self.db.execute(
                 """SELECT actor_ref,evidence_ref,payload_json
@@ -435,6 +465,8 @@ class InstitutionalTrustRegistry:
                             verify_receiver_approval: Any,
                             public_key_loader: Any, event_id: str,
                             actor_ref: str, evidence_ref: str,
+                            receiver_signing_key_id: str,
+                            receiver_signing_key_loader: Any,
                             clock: Any = None) -> dict[str, Any]:
         """Verify, accept and persist a federated grant in one SQLite transaction.
 
@@ -444,7 +476,9 @@ class InstitutionalTrustRegistry:
         stores the original issuer envelope and receiver acceptance evidence
         alongside the immutable ACTIVE grant snapshot.
         """
-        from institutional_grant_provenance import accept_authority_grant
+        from institutional_grant_provenance import (
+            accept_authority_grant, sign_receiver_acceptance_receipt,
+        )
         self._tenant(tenant_id)
         for value, code in ((receiver_institution_id, "INVALID_RECEIVER_INSTITUTION"),
                             (event_id, "INVALID_EVENT_ID"),
@@ -453,6 +487,27 @@ class InstitutionalTrustRegistry:
             _required_identifier(value, code)
         if not isinstance(receiver_approval, dict):
             raise TrustRegistryError("RECEIVER_APPROVAL_REQUIRED")
+        _required_identifier(
+            receiver_signing_key_id, "RECEIVER_ACCEPTANCE_SIGNING_KEY_REQUIRED"
+        )
+        if not callable(receiver_signing_key_loader):
+            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_REQUIRED")
+        clock_fn = clock or time.time
+        if not callable(clock_fn):
+            raise TrustRegistryError("TRUST_REGISTRY_CLOCK_INVALID")
+        now_value = clock_fn()
+        if (isinstance(now_value, bool) or not isinstance(now_value, (int, float))
+                or not math.isfinite(now_value)):
+            raise TrustRegistryError("TRUST_REGISTRY_CLOCK_INVALID")
+        accepted_at = int(now_value)
+        try:
+            receiver_private_key = receiver_signing_key_loader(
+                tenant_id, receiver_institution_id, receiver_signing_key_id
+            )
+        except Exception as exc:
+            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_UNAVAILABLE") from exc
+        if not callable(getattr(receiver_private_key, "sign", None)):
+            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_UNAVAILABLE")
         if (receiver_approval.get("actor_ref") != actor_ref
                 or receiver_approval.get("approval_ref") != evidence_ref):
             raise TrustRegistryError("RECEIVER_APPROVAL_AUDIT_CONTEXT_MISMATCH")
@@ -464,13 +519,24 @@ class InstitutionalTrustRegistry:
             "verify_receiver_approval": verify_receiver_approval,
             "receiver_approval": receiver_approval,
         }
-        if clock is not None:
-            kwargs["clock"] = clock
+        kwargs["clock"] = lambda: now_value
         try:
             accepted = accept_authority_grant(**kwargs)
         except Exception as exc:
             raise TrustRegistryError("SIGNED_GRANT_ACCEPTANCE_REJECTED:" + str(exc)) from exc
         grant = accepted["grant"]
+        receipt = sign_receiver_acceptance_receipt(
+            tenant_id=tenant_id,
+            receiver_institution_id=receiver_institution_id,
+            grant_id=grant["grant_id"],
+            grant_version=grant["version"],
+            grant_digest=accepted["acceptance"]["grant_digest"],
+            receiver_approval=receiver_approval,
+            accepted_at=accepted_at,
+            key_id=receiver_signing_key_id,
+            private_key=receiver_private_key,
+        )
+        accepted["acceptance"]["receiver_receipt"] = receipt
         self._validate_grant(grant)
         if grant["tenant_id"] != tenant_id or grant["status"] != "ACTIVE":
             raise TrustRegistryError("ACCEPTED_GRANT_SCOPE_INVALID")
@@ -509,7 +575,7 @@ class InstitutionalTrustRegistry:
                 self.db.execute("ROLLBACK")
             raise
         return {"accepted": True, "grant": grant, "grant_digest": digest,
-                "version": grant["version"]}
+                "version": grant["version"], "receiver_receipt": receipt}
 
     def load_grant_provenance(self, *, tenant_id: str, grant_id: str,
                               version: str) -> dict[str, Any] | None:
