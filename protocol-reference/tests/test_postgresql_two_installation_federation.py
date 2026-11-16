@@ -71,8 +71,12 @@ class PostgreSQLTwoInstallationFederationTests(unittest.TestCase):
         import psycopg
         from psycopg import sql
         from psycopg.conninfo import conninfo_to_dict
+
         cls.psycopg, cls.sql = psycopg, sql
-        cls.conninfo_to_dict = conninfo_to_dict
+        # conninfo_to_dict is a module-level function, not an instance method.
+        # Store it as a staticmethod so access through a fixture instance does
+        # not inject an unintended self argument (including recovery-test reuse).
+        cls.conninfo_to_dict = staticmethod(conninfo_to_dict)
 
     def setUp(self):
         self.admin = self.psycopg.connect(DSN, autocommit=True)
