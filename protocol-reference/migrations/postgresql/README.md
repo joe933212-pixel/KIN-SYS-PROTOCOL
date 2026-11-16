@@ -219,3 +219,35 @@ and exercise crash windows, conflicting retries, and recovery across separate
 database instances. PostgreSQL is a reference backend, not production
 certification; tenant identity, database roles, row-level isolation, backups,
 TLS, failover, key custody and operational controls require independent review.
+
+
+## Durable PostgreSQL IVM transition store
+
+Migration `007_ivm_transition_store.sql` and
+`protocol-reference/postgresql_protocol_store.py` add a shared PostgreSQL
+implementation of the IVM transition-store contract. It persists process
+state, event identity and digest, transition history, and execution-fence
+watermarks. A successful transition writes its event, state change, history,
+and optional fencing watermark in one PostgreSQL transaction. Process rows
+are locked for state transitions; event identities and tenant/deployment
+fence scopes use transaction advisory locks so independently constructed
+workers coordinate through the same database authority.
+
+Identical event retries return the original decision without a second state
+transition. Reusing an event ID with different content or a different process
+fails closed. A stale fencing token or older execution epoch is rejected.
+Transition history is append-only at the database trigger boundary. The
+adapter exposes an integrity check that verifies accepted events have one
+history row, rejected events have none, and process state versions agree with
+the number of committed transitions.
+
+`KinSysProtocolPipeline` accepts an injected `ivm_store`, allowing an
+institutional runtime to pair `PostgreSQLCEEJournal` and
+`PostgreSQLProtocolStore` while preserving SQLite defaults for offline
+demonstrations. These are separate persistence systems: the two adapters do
+not create a distributed transaction. The current integration tests exercise
+atomicity within the IVM PostgreSQL transaction, concurrent independent
+workers, retry identity, fencing, adapter replacement, and the pipeline's
+integrity gate. They do not establish atomic commit across CEE and IVM, nor
+do they validate separate physical database servers or production
+deployment hardening.
