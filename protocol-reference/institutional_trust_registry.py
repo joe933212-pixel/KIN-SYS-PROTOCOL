@@ -500,14 +500,6 @@ class InstitutionalTrustRegistry:
                 or not math.isfinite(now_value)):
             raise TrustRegistryError("TRUST_REGISTRY_CLOCK_INVALID")
         accepted_at = int(now_value)
-        try:
-            receiver_private_key = receiver_signing_key_loader(
-                tenant_id, receiver_institution_id, receiver_signing_key_id
-            )
-        except Exception as exc:
-            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_UNAVAILABLE") from exc
-        if not callable(getattr(receiver_private_key, "sign", None)):
-            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_UNAVAILABLE")
         if (receiver_approval.get("actor_ref") != actor_ref
                 or receiver_approval.get("approval_ref") != evidence_ref):
             raise TrustRegistryError("RECEIVER_APPROVAL_AUDIT_CONTEXT_MISMATCH")
@@ -524,6 +516,14 @@ class InstitutionalTrustRegistry:
             accepted = accept_authority_grant(**kwargs)
         except Exception as exc:
             raise TrustRegistryError("SIGNED_GRANT_ACCEPTANCE_REJECTED:" + str(exc)) from exc
+        try:
+            receiver_private_key = receiver_signing_key_loader(
+                tenant_id, receiver_institution_id, receiver_signing_key_id
+            )
+        except Exception as exc:
+            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_UNAVAILABLE") from exc
+        if not callable(getattr(receiver_private_key, "sign", None)):
+            raise TrustRegistryError("RECEIVER_ACCEPTANCE_SIGNER_UNAVAILABLE")
         grant = accepted["grant"]
         receipt = sign_receiver_acceptance_receipt(
             tenant_id=tenant_id,

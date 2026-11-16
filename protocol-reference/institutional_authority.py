@@ -49,7 +49,7 @@ class VerifiedAuthorityGrantStore(Protocol):
         receiver_acceptance_public_key_loader: Callable[[str], bytes] | None = None,
         clock: Callable[[], float],
     ) -> dict[str, Any] | None:
-        """Load the current grant head and verify retained federation provenance when present."""
+        """Load the current grant head and verify issuer and receiver provenance when present."""
         ...
 
 
@@ -164,12 +164,14 @@ class InstitutionalAuthorityResolver:
     """Verify HMAC-local or Ed25519-federated assertions and delegated grants.
 
     grant_store must implement VerifiedAuthorityGrantStore; arbitrary grant
-    callbacks are not accepted. trust_key_loader(tenant_id, key_id) returns a
-    currently trusted key record containing issuer_institution_id, algorithm,
-    status, valid_from, valid_until and public_key_ref. public_key_loader(ref)
-    returns raw 32-byte Ed25519 public key bytes. Both key loaders must enforce
-    the receiving institution's trust policy and resolve references from
-    trusted custody.
+    callbacks are not accepted. trust_key_loader(tenant_id, key_id) resolves a
+    currently trusted issuer key record and public_key_loader(ref) resolves its
+    raw 32-byte Ed25519 key. receiver_acceptance_key_loader(tenant_id,
+    receiver_institution_id, key_id) resolves receiver-owned acceptance-key
+    metadata from an independent local trust configuration;
+    receiver_acceptance_public_key_loader(ref) resolves that raw public key.
+    The receiver key resolver must not trust metadata only from the mutable
+    grant/provenance database.
     """
     def __init__(
         self, *,

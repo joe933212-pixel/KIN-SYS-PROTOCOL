@@ -1,10 +1,10 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
-"""Issuer-signed authority-grant provenance and receiver-side acceptance.
+"""Issuer provenance and receiver-signed acceptance for delegated authority grants.
 
-The issuer signature proves integrity and origin under a receiver-configured
-trust key. It does not prove that the issuer is legally competent or that the
-approval evidence is legally sufficient. A receiver must separately approve
-acceptance through its own authenticated authority policy.
+The issuer signature proves origin under a receiver-configured trust key. The
+receiver's Ed25519 receipt separately proves acceptance under a receiver-owned
+key. Neither signature proves legal competence or evidence sufficiency; the
+receiver must still apply its own authenticated authority policy.
 """
 from __future__ import annotations
 

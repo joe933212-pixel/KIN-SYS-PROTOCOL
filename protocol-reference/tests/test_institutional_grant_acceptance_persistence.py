@@ -273,5 +273,35 @@ class PersistentGrantAcceptanceTests(unittest.TestCase):
             self.load_verified()
 
 
+
+
+    def test_receiver_signer_is_not_resolved_until_receiver_approval_succeeds(self):
+        order = []
+
+        def approve(grant, supplied):
+            order.append("approval")
+            return supplied == self.approval
+
+        def signing_key(tenant_id, institution_id, key_id):
+            order.append("signer")
+            return self.receiver_private_key
+
+        self.accept(
+            verify_receiver_approval=approve,
+            receiver_signing_key_loader=signing_key,
+        )
+        self.assertEqual(order, ["approval", "signer"])
+
+        order.clear()
+        with self.assertRaisesRegex(TrustRegistryError, "SIGNED_GRANT_ACCEPTANCE_REJECTED"):
+            self.accept(
+                verify_receiver_approval=lambda grant, supplied: (
+                    order.append("approval") or False
+                ),
+                receiver_signing_key_loader=signing_key,
+            )
+        self.assertEqual(order, ["approval"])
+
+
 if __name__ == "__main__":
     unittest.main()
