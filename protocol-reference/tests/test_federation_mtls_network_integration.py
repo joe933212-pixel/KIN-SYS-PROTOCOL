@@ -110,12 +110,17 @@ def _serve_mtls_receiver_process(arguments):
     )
     server.socket = context.wrap_socket(server.socket, server_side=True)
     server.timeout = 0.2
-    ready.put(server.server_port)
     try:
+        ready.put(server.server_port)
         while not stop.is_set():
             server.handle_request()
     finally:
         server.server_close()
+        # Queue feeder threads are non-daemon by default. Explicitly flush and
+        # close them so they cannot keep this spawned receiver process alive.
+        for channel in (received, ready):
+            channel.close()
+            channel.join_thread()
 
 
 class _LoopbackPinnedHTTPSConnection:
