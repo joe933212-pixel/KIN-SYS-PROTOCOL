@@ -251,3 +251,42 @@ workers, retry identity, fencing, adapter replacement, and the pipeline's
 integrity gate. They do not establish atomic commit across CEE and IVM, nor
 do they validate separate physical database servers or production
 deployment hardening.
+
+
+## Durable institutional onboarding and domain registry
+
+Migration `008_institutional_domain_registry.sql` adds PostgreSQL persistence
+for tenant-scoped institution, jurisdiction, MINAH deployment and institutional
+binding records. Immutable version snapshots and their lifecycle evidence are
+stored in `institutional_records` and `institutional_events`. Database
+triggers reject ordinary UPDATE and DELETE operations on both tables. A
+monotonic database sequence gives each snapshot and event a stable insertion
+order, so current-record resolution does not depend on wall-clock timestamp
+precision.
+
+`postgresql_institutional_registry.py` implements the same storage contract
+as the SQLite reference `InstitutionalRegistry`. Snapshot creation and
+registration evidence commit in one transaction; lifecycle snapshot creation
+and its event commit together; tenant-scoped event IDs are idempotent and
+content-bound. Transaction-scoped advisory locks serialize competing
+lifecycle changes for the same tenant/resource and concurrent reuse of an
+event identity. A stale expected version is rejected after the lock is
+acquired, rather than allowing two concurrent writers to create competing
+current snapshots.
+
+`InstitutionalOnboardingAdministration` now accepts either registry through
+the required storage-method contract. The authentication, authority-resolution
+and evidence-verification boundaries remain unchanged: the registry adapter
+does not authenticate actors, derive tenant identity, or authorise lifecycle
+transitions. The application must derive tenant IDs from verified principals
+and supply trusted authority and evidence verifiers.
+
+The PostgreSQL integration suite exercises persistence across independently
+constructed adapters, tenant isolation, event idempotency and conflict,
+concurrent stale-transition serialization, atomic rollback when audit-event
+insertion fails, database-enforced append-only records/events, and the
+onboarding administration facade using the PostgreSQL backend. This remains
+a reference backend, not production certification. Least-privilege database
+roles, row-level security or equivalent tenant enforcement, TLS, connection
+pooling, backups, failover, observability, secret/key custody and independent
+security review remain deployment requirements.
