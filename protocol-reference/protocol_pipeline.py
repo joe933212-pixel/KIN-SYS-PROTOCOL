@@ -455,8 +455,22 @@ class KinSysProtocolPipeline:
             raise ExecutionConflict("REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY")
 
     def _assert_store_integrity(self) -> None:
-        """Fail closed on SQLite structural errors; this is not a tamper-evidence check."""
-        for label, connection in (("CEE", self.cee.db), ("IVM", self.ivm.db)):
+        """Fail closed when a configured journal/store cannot verify its integrity."""
+        for label, store in (("CEE", self.cee), ("IVM", self.ivm)):
+            verifier = getattr(store, "verify_integrity", None)
+            if callable(verifier):
+                try:
+                    verifier()
+                except Exception as exc:
+                    raise ExecutionConflict(
+                        f"{label}_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                    ) from exc
+                continue
+            connection = getattr(store, "db", None)
+            if connection is None:
+                raise ExecutionConflict(
+                    f"{label}_STORE_INTEGRITY_CHECK_UNSUPPORTED_REQUIRES_MANUAL_RECONCILIATION"
+                )
             try:
                 rows = connection.execute("PRAGMA integrity_check").fetchall()
             except sqlite3.DatabaseError as exc:
