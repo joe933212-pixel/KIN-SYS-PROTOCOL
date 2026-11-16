@@ -236,14 +236,12 @@ class FederationLiveMTLSNetworkTests(unittest.TestCase):
         )
 
     def test_certificate_identity_must_match_envelope_issuer_over_live_tls(self):
-        response_error = None
-        try:
+        with self.assertRaisesRegex(
+            FederationHTTPTransportError, "REMOTE_HTTP_403"
+        ):
             self.transport.post(
                 "INSTALL-RW-01", self._envelope(issuer="INSTALL-OTHER-99")
             )
-        except FederationHTTPTransportError as exc:
-            response_error = str(exc)
-        self.assertIsNone(response_error)
         self.assertEqual(len(self.receiver.received), 0)
 
     def test_receiver_requires_a_client_certificate(self):
