@@ -2,11 +2,12 @@
 """Real PostgreSQL tests for shared institutional execution coordination."""
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sys
 import unittest
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,27 @@ from postgresql_migrations import apply_migrations
 from postgresql_execution_coordinator import PostgreSQLInstitutionalExecutionCoordinator
 from postgresql_minah_deployment_registry import PostgreSQLInstitutionalMinahDeploymentRegistry
 from institutional_minah_deployment import MinahDeploymentError
+
+
+def _acquire_execution_lease_in_process(arguments):
+    """Acquire through a fresh OS process and an independently opened DB connection."""
+    dsn, schema, tenant_id, deployment_id = arguments
+    import psycopg
+    from psycopg import sql
+
+    def connect():
+        connection = psycopg.connect(dsn)
+        connection.execute(
+            sql.SQL("SET search_path TO {}").format(sql.Identifier(schema))
+        )
+        connection.commit()
+        return connection
+
+    coordinator = PostgreSQLInstitutionalExecutionCoordinator(connect)
+    lease = coordinator.acquire_execution_lease(
+        tenant_id=tenant_id, deployment_id=deployment_id
+    )
+    return lease["fencing_token"]
 
 
 @unittest.skipUnless(DSN, "KIN_SYS_POSTGRES_TEST_DSN is not configured")
@@ -101,6 +123,20 @@ class PostgreSQLExecutionCoordinatorIntegrationTests(unittest.TestCase):
             tokens = list(pool.map(acquire, range(8)))
         self.assertEqual(len(set(tokens)), 8)
         self.assertEqual(sorted(tokens), list(range(min(tokens), min(tokens) + 8)))
+
+    def test_independent_os_processes_share_postgresql_fencing_authority(self):
+        # Spawn real worker processes rather than threads. Each worker imports
+        # its own coordinator instance and opens its own PostgreSQL connection;
+        # only the database rows coordinate the monotonic fencing sequence.
+        arguments = (DSN, self.schema, self.tenant, self.deployment)
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=6, mp_context=context) as pool:
+            tokens = list(pool.map(
+                _acquire_execution_lease_in_process,
+                [arguments] * 6,
+            ))
+        self.assertEqual(len(set(tokens)), 6)
+        self.assertEqual(sorted(tokens), list(range(min(tokens), min(tokens) + 6)))
 
     def test_lifecycle_epoch_change_fences_existing_lease(self):
         lease = self.coordinator_a.acquire_execution_lease(
