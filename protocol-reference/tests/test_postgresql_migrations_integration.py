@@ -50,7 +50,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.admin.close()
 
     def test_repository_migration_applies_and_is_idempotent_on_postgresql(self):
-        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008"])
         self.assertEqual(apply_migrations(self.connection), [])
         row = self.connection.execute(
             "SELECT version, filename, checksum_sha256 "
@@ -71,6 +71,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 ("005", "005_institutional_trust_registry.sql"),
                 ("006", "006_cee_journal.sql"),
                 ("007", "007_ivm_transition_store.sql"),
+                ("008", "008_institutional_domain_registry.sql"),
             ],
         )
         tables = {
@@ -95,6 +96,8 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertIn("ivm_events", tables)
         self.assertIn("ivm_transition_history", tables)
         self.assertIn("ivm_execution_fences", tables)
+        self.assertIn("institutional_records", tables)
+        self.assertIn("institutional_events", tables)
 
     def test_postgresql_rejects_changed_applied_migration_checksum(self):
         self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007"])
