@@ -249,11 +249,23 @@ missing peer identity, caller-header spoofing, request size, route/content-type,
 duplicate JSON keys, truncated bodies and error-detail suppression. These are
 deterministic adapter tests, not a live mTLS or two-host deployment test.
 
-Still outstanding after this increment: a production TLS/mTLS deployment
-profile with a concrete trusted peer resolver, an outbound HTTPS sender
-transport wired to the durable outbox and acknowledgement verifier, retry
-scheduling/dead-letter policy, authenticated installation discovery, and
-independent-host tests using separately deployed receiver and sender services.
+The new `protocol-reference/federation_mtls_identity.py` supplies a concrete
+peer resolver for a trusted TLS terminator. It reads only the server-controlled
+`SSL_CLIENT_CERT` WSGI environ value and extracts exactly one installation
+identity from a `spiffe://kin-sys/installations/{installation_id}` URI SAN.
+It rejects missing, malformed, oversized or ambiguous certificates and never
+falls back to caller-controlled `HTTP_*` headers. The TLS terminator remains
+responsible for client-certificate chain, validity, EKU and revocation checks;
+it must require a client certificate, strip any caller-supplied certificate
+headers, inject the verified certificate into `SSL_CLIENT_CERT`, and prevent
+direct access to the WSGI application. `mtls_peer_identity_resolver` can be
+passed directly to `FederationHttpIngressApplication`. Tests cover the URI
+identity contract and header-spoofing rejection; they do not yet exercise a
+live TLS handshake.
+
+Still outstanding: a live mTLS sender-to-receiver network test, authenticated
+installation discovery, and independent-host tests using separately deployed
+sender and receiver services.
 
 
 ## Sender-side HTTPS transport and outbox delivery worker
