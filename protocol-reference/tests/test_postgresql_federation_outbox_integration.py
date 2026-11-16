@@ -181,6 +181,16 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
             message_id="MSG-OUTBOX-001", worker_id="sender-worker",
             error_code="TRANSPORT_TIMEOUT",
         ))
+        # Retry scheduling is durable: advance the database clock in this
+        # integration test rather than bypassing the production due-time gate.
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE federation_outbox
+                   SET next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+                   WHERE sender_tenant_id = 'tenant-ug'
+                     AND sender_installation_id = 'INSTALL-UG-01'
+                     AND message_id = 'MSG-OUTBOX-001'"""
+            )
         retry = self.outbox.claim(
             sender_tenant_id="tenant-ug", sender_installation_id="INSTALL-UG-01",
             message_id="MSG-OUTBOX-001", worker_id="sender-worker-retry",
