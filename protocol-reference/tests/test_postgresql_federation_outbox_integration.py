@@ -263,5 +263,27 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
+
+    def test_batch_claim_leases_rows_before_returning_to_dispatcher(self):
+        claims = self.outbox.claim_batch(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            worker_id="sender-batch-worker",
+            limit=5,
+            lease_seconds=45,
+        )
+        self.assertEqual(len(claims), 1)
+        claim = claims[0]
+        self.assertEqual(claim["message_id"], "MSG-OUTBOX-001")
+        self.assertEqual(claim["receiver_installation_id"], "INSTALL-RW-01")
+        self.assertEqual(claim["lease_owner"], "sender-batch-worker")
+        self.assertEqual(claim["attempt_count"], 1)
+        self.assertEqual(self.outbox.claim_batch(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            worker_id="sender-other-worker",
+            limit=5,
+            lease_seconds=45,
+        ), [])
+\nif __name__ == "__main__":
     unittest.main()
