@@ -96,27 +96,37 @@ def _serve_mtls_receiver_process(arguments):
                 },
             }
 
-    app = FederationHttpIngressApplication(
-        receiver=Receiver(),
-        peer_identity_resolver=mtls_peer_identity_resolver,
-    )
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.load_cert_chain(paths["server_cert"], paths["server_key"])
-    context.load_verify_locations(cafile=paths["ca"])
-    context.verify_mode = ssl.CERT_REQUIRED
-    server = make_server(
-        "127.0.0.1", 0, app, server_class=WSGIServer,
-        handler_class=_PeerCertificateWSGIHandler,
-    )
-    server.socket = context.wrap_socket(server.socket, server_side=True)
-    server.timeout = 0.2
+    server = None
     try:
-        ready.put(server.server_port)
+        app = FederationHttpIngressApplication(
+            receiver=Receiver(),
+            peer_identity_resolver=mtls_peer_identity_resolver,
+        )
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(paths["server_cert"], paths["server_key"])
+        context.load_verify_locations(cafile=paths["ca"])
+        context.verify_mode = ssl.CERT_REQUIRED
+        server = make_server(
+            "127.0.0.1", 0, app, server_class=WSGIServer,
+            handler_class=_PeerCertificateWSGIHandler,
+        )
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        server.timeout = 0.2
+        # Send a structured startup result so the parent receives the actual
+        # child-side setup error instead of an opaque queue timeout.
+        ready.put({"port": server.server_port})
         while not stop.is_set():
             server.handle_request()
+    except BaseException as exc:
+        try:
+            ready.put({"error": type(exc).__name__, "detail": str(exc)})
+        except Exception:
+            pass
+        raise
     finally:
-        server.server_close()
+        if server is not None:
+            server.server_close()
         # Queue feeder threads are non-daemon by default. Explicitly flush and
         # close them so they cannot keep this spawned receiver process alive.
         for channel in (received, ready):
@@ -303,7 +313,15 @@ class FederationLiveMTLSNetworkTests(unittest.TestCase):
         )
         process.start()
         self.addCleanup(_stop_receiver_process, process, stop)
-        port = ready.get(timeout=10)
+        startup = ready.get(timeout=10)
+        if "error" in startup:
+            process.join(timeout=2)
+            self.fail(
+                "receiver process failed during startup: "
+                + startup["error"] + ": " + startup["detail"]
+            )
+        port = startup["port"]
+        self.assertTrue(process.is_alive(), "receiver exited immediately after startup")
 
         def factory(host, destination_port, *, pinned_ip, timeout, context):
             return _LoopbackPinnedHTTPSConnection(
