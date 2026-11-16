@@ -117,12 +117,14 @@ The receiver uses its existing institutional execution service, whose pinned
 CEE journal and IVM event checks provide operation-level replay and recovery
 semantics.
 
-The inbox transaction remains separate from the CEE/IVM stores. A process
-crash after an IVM commit but before inbox completion must be validated with
-an explicit restart/lease-reclaim integration test; this implementation does
-not claim a distributed transaction or exactly-once execution. The PostgreSQL
-integration tests are skipped outside CI unless
-`KIN_SYS_POSTGRES_TEST_DSN` is configured.
+The inbox transaction remains separate from the CEE/IVM stores. The
+PostgreSQL inbox integration suite now exercises a receiver process restart
+after the IVM commit but before inbox completion, reclaims the expired lease,
+restores the CEE/IVM adapters from their durable SQLite files, and verifies
+that the original IVM event is not executed twice. This validates that
+specific reference configuration only; it does not claim a distributed
+transaction or exactly-once network execution. The PostgreSQL integration
+tests are skipped outside CI unless `KIN_SYS_POSTGRES_TEST_DSN` is configured.
 
 
 ## Durable sender outbox and receiver acknowledgements
