@@ -30,8 +30,8 @@ ENVELOPE_FIELDS = {"claims", "response", "signature"}
 RESPONSE_FIELDS = {
     "message_id", "operation_id", "origin_installation_id",
     "origin_institution_id", "receiver_installation_id",
-    "receiver_institution_id", "receiver_decision", "receiver_runtime_pins",
-    "receiver_result",
+    "receiver_institution_id", "message_verified", "delivery_status",
+    "receiver_decision", "receiver_runtime_pins", "receiver_result",
 }
 
 
