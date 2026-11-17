@@ -128,7 +128,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertIn("institutional_events", tables)
 
     def test_postgresql_rejects_changed_applied_migration_checksum(self):
-        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011"])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             original = discover_migrations()[0][1].read_text(encoding="utf-8")
