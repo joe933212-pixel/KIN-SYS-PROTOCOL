@@ -35,7 +35,7 @@ from test_federation_mtls_network_integration import (
     _LoopbackPinnedHTTPSConnection,
     _PeerCertificateWSGIHandler,
 )
-from federation_https_transport import FederationHTTPSJSONTransport
+from federation_https_transport import FederationHTTPSJSONTransport, FederationHTTPTransportError
 
 
 def _receiver_process(arguments):
@@ -231,7 +231,11 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         self.receiver_connect = factory(self.receiver_database)
         with self.sender_connect() as connection:
             apply_migrations(connection)
+        with self.sender_connect() as sender_connection:
+            sender_database = sender_connection.execute("SELECT current_database()").fetchone()[0]
         with self.receiver_connect() as connection:
+            receiver_database = connection.execute("SELECT current_database()").fetchone()[0]
+            self.assertNotEqual(sender_database, receiver_database)
             apply_migrations(connection)
         self.receiver_options = dict(options)
         self.receiver_options["dbname"] = self.receiver_database
@@ -358,6 +362,15 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         first_process, first_stop, first_port = self._start_receiver()
         first_transport = self._transport(first_port)
         first_response = first_transport.post("INSTALL-RW-01", claimed["envelope"])
+        # The TLS client certificate identifies INSTALL-UG-01. A different
+        # envelope issuer must be rejected at ingress before receiver code.
+        wrong_peer_envelope = {
+            "claims": dict(claimed["envelope"]["claims"]),
+            "signature": claimed["envelope"]["signature"],
+        }
+        wrong_peer_envelope["claims"]["issuer_installation_id"] = "INSTALL-OTHER-99"
+        with self.assertRaisesRegex(FederationHTTPTransportError, "403"):
+            first_transport.post("INSTALL-RW-01", wrong_peer_envelope)
         self.assertEqual(first_response["http_status"], 200)
         self.assertTrue(first_response["message_verified"])
         self.assertFalse(first_response["origin_authority_inherited"])
