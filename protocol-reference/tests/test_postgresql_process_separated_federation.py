@@ -757,3 +757,88 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
             lease_seconds=30,
         ))
 
+
+
+    def test_postgresql_inbox_expired_lease_transfers_ownership_and_fences_stale_worker(self):
+        """A reclaimed lease fences the old worker from completing or failing."""
+        import time
+        from postgresql_federation_inbox import PostgreSQLFederationInbox
+
+        inbox = PostgreSQLFederationInbox(self.receiver_connect)
+        message_id = "MSG-PG-LEASE-TRANSFER-001"
+        envelope = {
+            "claims": {
+                "message_id": message_id,
+                "operation_id": "OP-PG-LEASE-TRANSFER-001",
+                "idempotency_key": "IDEM-PG-LEASE-TRANSFER-001",
+            },
+            "signature": "synthetic-test-envelope",
+        }
+        accepted = inbox.accept_verified(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            operation_id="OP-PG-LEASE-TRANSFER-001",
+            idempotency_key="IDEM-PG-LEASE-TRANSFER-001",
+            envelope=envelope,
+        )
+        self.assertTrue(accepted["inserted"])
+
+        first = inbox.claim(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id="rw-expiring-worker-A",
+            lease_seconds=1,
+        )
+        self.assertIsNotNone(first)
+        self.assertEqual(first["attempt_count"], 1)
+
+        # Wait beyond the database lease expiry, then let another worker reclaim.
+        time.sleep(1.2)
+        second = inbox.claim(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id="rw-recovery-worker-B",
+            lease_seconds=30,
+        )
+        self.assertIsNotNone(second)
+        self.assertEqual(second["attempt_count"], 2)
+        self.assertEqual(second["lease_owner"], "rw-recovery-worker-B")
+
+        # The first worker is fenced even though it still knows the message ID.
+        self.assertFalse(inbox.complete(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id="rw-expiring-worker-A",
+            decision_ref="CEE-DECISION-STALE-LEASE",
+            response={"decision": "STALE"},
+        ))
+        self.assertFalse(inbox.fail(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id="rw-expiring-worker-A",
+            error_code="STALE_WORKER_ATTEMPT",
+            retryable=True,
+        ))
+
+        self.assertTrue(inbox.complete(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id="rw-recovery-worker-B",
+            decision_ref="CEE-DECISION-RECOVERED-LEASE",
+            response={"decision": "PASSED", "recovered": True},
+        ))
+        record = inbox.get(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+        )
+        self.assertEqual(record["status"], "COMPLETED")
+        self.assertEqual(record["attempt_count"], 2)
+        self.assertEqual(record["receiver_decision_ref"], "CEE-DECISION-RECOVERED-LEASE")
+        self.assertEqual(record["response"], {"decision": "PASSED", "recovered": True})
