@@ -149,6 +149,26 @@ resolvers. A callback that merely returns a caller-constructed
 \`verified: true\` object is not a cryptographic trust boundary and must never
 be used.
 
+## Federation delivery tenant isolation
+
+Migration `011_federation_delivery_rls.sql` enables and forces PostgreSQL
+row-level security on both `federation_inbox` and `federation_outbox`.
+Receiver inbox rows are scoped by `receiver_tenant_id`; sender outbox rows
+are scoped by `sender_tenant_id`. Both policies fail closed when
+`kin_sys.tenant_id` is unset or empty, and enforce the same boundary for
+reads and writes.
+
+The inbox and outbox adapters set the tenant context transaction-locally for
+every database operation. The tenant value must still come from the
+authenticated institutional execution context, not from an untrusted message
+or caller-supplied header. This shared-database GUC design is defense in depth:
+a database principal permitted to issue arbitrary SQL can set a custom GUC.
+Production deployments must use least-privilege runtime roles, controlled
+connection access, and independent tenant-context derivation. The PostgreSQL
+nonce table, CEE journal, IVM transition store and institutional domain
+registry are separate persistence boundaries and are not covered by this
+migration.
+
 ## PostgreSQL authority and issuer-trust registry
 
 Migration \`005_institutional_trust_registry.sql\` and
