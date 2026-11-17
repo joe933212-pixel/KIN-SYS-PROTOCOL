@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from contextlib import closing
+from contextlib import closing, contextmanager
 from typing import Any, Callable
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -38,6 +38,21 @@ def _canonical_json(value: Any) -> tuple[str, str]:
         raise FederationOutboxError("FEDERATION_OUTBOX_JSON_INVALID") from exc
     return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
+
+
+    @contextmanager
+    def _tenant_connection(self, tenant_id: str):
+        """Bind every database operation to its authenticated tenant context."""
+        connection = self._connect()
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT set_config('kin_sys.tenant_id', %s, true)",
+                    (tenant_id,),
+                )
+                yield connection
+        finally:
+            connection.close()
 
 class PostgreSQLFederationOutbox:
     """Durable sender state using PostgreSQL row updates and expiring leases.
@@ -89,7 +104,7 @@ class PostgreSQLFederationOutbox:
         )
         encoded, digest = _canonical_json(envelope)
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -148,7 +163,7 @@ class PostgreSQLFederationOutbox:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise FederationOutboxError("OUTBOX_LEASE_DURATION_INVALID")
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -214,7 +229,7 @@ class PostgreSQLFederationOutbox:
         if not isinstance(error_code, str) or not ERROR_CODE.fullmatch(error_code):
             raise FederationOutboxError("OUTBOX_ERROR_CODE_INVALID")
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -261,7 +276,7 @@ class PostgreSQLFederationOutbox:
         if not isinstance(receipt, dict):
             raise FederationOutboxError("OUTBOX_ACKNOWLEDGEMENT_INVALID")
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """SELECT envelope_json FROM federation_outbox
@@ -283,7 +298,7 @@ class PostgreSQLFederationOutbox:
                 raise FederationOutboxError("OUTBOX_VERIFIED_ACKNOWLEDGEMENT_REQUIRED")
             claims, response = verified["claims"], verified["response"]
             encoded, receipt_digest = _canonical_json(receipt)
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -343,7 +358,7 @@ class PostgreSQLFederationOutbox:
         sender = _identifier(sender_installation_id, "OUTBOX_SENDER_INVALID")
         message = _identifier(message_id, "OUTBOX_MESSAGE_ID_INVALID")
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """SELECT operation_id, idempotency_key, receiver_installation_id,
@@ -391,7 +406,7 @@ class PostgreSQLFederationOutbox:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise FederationOutboxError("OUTBOX_LEASE_DURATION_INVALID")
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
