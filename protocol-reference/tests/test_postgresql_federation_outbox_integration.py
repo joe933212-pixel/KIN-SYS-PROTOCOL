@@ -421,7 +421,11 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
             )
         )
         self.admin.execute(
-            self.sql.SQL("GRANT SELECT, UPDATE ON federation_outbox TO {}").format(role)
+            self.sql.SQL("GRANT SELECT, UPDATE ON {}.{} TO {}").format(
+                self.sql.Identifier(self.schema),
+                self.sql.Identifier("federation_outbox"),
+                role,
+            )
         )
         connection = self.connect()
         try:
