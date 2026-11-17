@@ -429,23 +429,51 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
 
     def test_row_level_security_fails_closed_and_isolates_receiver_tenants(self):
         self.accept()
-        with self.connect() as connection:
-            # No tenant context: the forced policy exposes no inbox rows.
+        role_name = "kin_sys_inbox_rls_" + uuid.uuid4().hex[:12]
+        role = self.sql.Identifier(role_name)
+        self.admin.execute(self.sql.SQL("CREATE ROLE {} NOLOGIN").format(role))
+        self.admin.execute(
+            self.sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                self.sql.Identifier(self.schema), role,
+            )
+        )
+        self.admin.execute(
+            self.sql.SQL("GRANT SELECT, UPDATE ON federation_inbox TO {}").format(role)
+        )
+        connection = self.connect()
+        try:
+            # PostgreSQL superusers bypass RLS even when FORCE ROW LEVEL SECURITY
+            # is enabled. Exercise the policy as a non-owner, non-BYPASSRLS role.
+            connection.execute(self.sql.SQL("SET ROLE {}").format(role))
             self.assertEqual(connection.execute(
                 "SELECT count(*) FROM federation_inbox"
             ).fetchone()[0], 0)
+            connection.commit()
+
             connection.execute(
                 "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-other",)
             )
             self.assertEqual(connection.execute(
                 "SELECT count(*) FROM federation_inbox"
             ).fetchone()[0], 0)
-            # The wrong tenant cannot mutate the receiver's row either.
             changed = connection.execute(
                 """UPDATE federation_inbox SET status='REJECTED'
                    WHERE receiver_tenant_id='tenant-rw'"""
             )
             self.assertEqual(changed.rowcount, 0)
+            connection.commit()
+
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-rw",)
+            )
+            self.assertEqual(connection.execute(
+                "SELECT count(*) FROM federation_inbox"
+            ).fetchone()[0], 1)
+            connection.commit()
+        finally:
+            connection.close()
+            self.admin.execute(self.sql.SQL("DROP OWNED BY {}").format(role))
+            self.admin.execute(self.sql.SQL("DROP ROLE {}").format(role))
         stored = self.inbox_a.get(
             receiver_tenant_id="tenant-rw",
             issuer_installation_id="INSTALL-UG-01",
