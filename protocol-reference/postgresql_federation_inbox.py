@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from contextlib import closing
+from contextlib import closing, contextmanager
 from typing import Any, Callable
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -38,6 +38,21 @@ def _canonical_json(value: Any) -> tuple[str, str]:
         raise FederationInboxError("FEDERATION_INBOX_ENVELOPE_INVALID") from exc
     return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
+
+
+    @contextmanager
+    def _tenant_connection(self, tenant_id: str):
+        """Bind every database operation to its authenticated tenant context."""
+        connection = self._connect()
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT set_config('kin_sys.tenant_id', %s, true)",
+                    (tenant_id,),
+                )
+                yield connection
+        finally:
+            connection.close()
 
 class PostgreSQLFederationInbox:
     """Durable inbox using PostgreSQL row locks and expiring worker leases.
@@ -71,7 +86,7 @@ class PostgreSQLFederationInbox:
         idem = _identifier(idempotency_key, "INBOX_IDEMPOTENCY_KEY_INVALID")
         encoded, digest = _canonical_json(envelope)
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -152,7 +167,7 @@ class PostgreSQLFederationInbox:
             (issuer + "\\0" + nonce_value).encode("utf-8")
         ).hexdigest()
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -225,7 +240,7 @@ class PostgreSQLFederationInbox:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise FederationInboxError("INBOX_LEASE_DURATION_INVALID")
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -277,7 +292,7 @@ class PostgreSQLFederationInbox:
         decision = _identifier(decision_ref, "INBOX_DECISION_REF_INVALID")
         encoded, _ = _canonical_json(response)
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -311,7 +326,7 @@ class PostgreSQLFederationInbox:
             raise FederationInboxError("INBOX_RETRYABILITY_INVALID")
         status = "RETRYABLE_FAILURE" if retryable else "REJECTED"
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.transaction():
                     with connection.cursor() as cursor:
                         cursor.execute(
@@ -337,7 +352,7 @@ class PostgreSQLFederationInbox:
         issuer = _identifier(issuer_installation_id, "INBOX_ISSUER_INVALID")
         message = _identifier(message_id, "INBOX_MESSAGE_ID_INVALID")
         try:
-            with closing(self._connect()) as connection:
+            with self._tenant_connection(tenant) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """SELECT operation_id, idempotency_key, status, attempt_count,
