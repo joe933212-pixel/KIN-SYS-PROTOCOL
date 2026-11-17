@@ -222,6 +222,73 @@ class PostgreSQLInstitutionalTrustRegistryTests(unittest.TestCase):
         self.assertEqual(resolved["roles"], ["reviewer"])
         self.assertIsNone(self.registry.load_grant("tenant-b", "GRANT-01"))
 
+    def test_revocation_isolated_between_tenants_with_same_grant_id(self):
+        tenant_a = self.create_local_grant()
+        tenant_b = dict(
+            tenant_a,
+            tenant_id="tenant-b",
+            actor_ref="actor:registrar-b",
+            institution_id="BANK-KE-01",
+            resource_ids=["BANK-KE-01"],
+            authority_ref="authority:ke-registry",
+            approval_ref="approval:ke-issuer",
+        )
+        self.registry.create_grant_version(
+            tenant_id="tenant-b",
+            grant=tenant_b,
+            event_id="tenant-b-grant-created-1",
+            actor_ref="actor:ke-approver",
+            evidence_ref="evidence:ke-approval",
+        )
+
+        resolver_b = InstitutionalAuthorityResolver(
+            grant_store=self.registry,
+            consume_nonce=InMemoryNonceGuard().consume,
+            verification_keys={"local-key-b": self.hmac_key},
+            clock=lambda: self.now,
+        )
+
+        def resolve_b(nonce):
+            claims = {
+                "key_id": "local-key-b",
+                "tenant_id": "tenant-b",
+                "actor_ref": "actor:registrar-b",
+                "grant_id": "GRANT-01",
+                "grant_version": "1",
+                "issued_at": 140,
+                "expires_at": 160,
+                "nonce": nonce,
+            }
+            return resolver_b.resolve(
+                {"claims": claims, "signature": sign_actor_claims(claims, self.hmac_key)},
+                tenant_id="tenant-b",
+                resource_type="institution",
+                resource_id="BANK-KE-01",
+            )
+
+        self.assertEqual(resolve_b("tenant-b-before-revoke-0001")["grant_ref"], "GRANT-01@1")
+        self.registry.revoke_grant(
+            tenant_id="tenant-a",
+            grant_id="GRANT-01",
+            expected_version="1",
+            new_version="2",
+            event_id="tenant-a-grant-revoked-2",
+            actor_ref="actor:ug-authority-admin",
+            evidence_ref="evidence:ug-revocation",
+        )
+
+        self.assertEqual(
+            self.registry.load_grant("tenant-a", "GRANT-01")["status"], "REVOKED"
+        )
+        self.assertEqual(self.registry.load_grant("tenant-a", "GRANT-01")["version"], "2")
+        self.assertEqual(self.registry.load_grant("tenant-b", "GRANT-01"), tenant_b)
+        self.assertEqual(resolve_b("tenant-b-after-revoke-0002")["grant_ref"], "GRANT-01@1")
+        self.assertEqual(
+            [event["event_type"] for event in self.registry.list_grant_events(
+                tenant_id="tenant-b", grant_id="GRANT-01")],
+            ["GRANT_CREATED"],
+        )
+
     def test_immutable_versions_revision_head_and_audited_revocation(self):
         self.create_local_grant()
         revised = self.grant(version="2", roles=["reviewer", "approver"])
