@@ -40,7 +40,7 @@ from federation_https_transport import FederationHTTPSJSONTransport, FederationH
 
 def _receiver_process(arguments):
     """Construct and serve the complete receiver inside a spawned process."""
-    options, tls_paths, sender_public, receiver_private_raw, now, ready, stop = arguments
+    options, tls_paths, sender_public, receiver_private_raw, now, ready, stop, crash_after_ivm_commit = arguments
     server = None
     runtime = None
     try:
@@ -79,9 +79,23 @@ def _receiver_process(arguments):
             jurisdiction_package_version="1",
             authority_profile_version=runtime.authority_version,
         )
+        if crash_after_ivm_commit:
+            original_execute = runtime.pipeline.execute
+            def commit_then_terminate(request, *, execution_guard=None):
+                try:
+                    return original_execute(
+                        request, fail_after_ivm_commit=True,
+                        execution_guard=execution_guard,
+                    )
+                except BaseException:
+                    # Model abrupt process loss after durable IVM commit,
+                    # before receiver inbox completion can be written.
+                    os._exit(73)
+            runtime.pipeline.execute = commit_then_terminate
         runtime.service = InstitutionalInstructionExecutionService(
             runtime_binding_resolver=runtime,
             pipeline_factory=lambda _context: runtime.pipeline,
+            operation_pipeline_resolver=lambda **_kwargs: runtime.pipeline,
         )
 
         sender_key = Ed25519PublicKey.from_public_bytes(sender_public)
@@ -113,7 +127,7 @@ def _receiver_process(arguments):
             clock=lambda: now,
             inbox=PostgreSQLFederationInbox(connect),
             inbox_worker_id="rw-process-inbox-worker",
-            inbox_lease_seconds=30,
+            inbox_lease_seconds=1 if crash_after_ivm_commit else 30,
             receiver_signing_key_id="KEY-RW-01",
             receiver_signing_key_loader=lambda tenant, institution, key_id: (
                 receiver_key if (tenant, institution, key_id) ==
@@ -309,7 +323,7 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
             )
         self.admin.close()
 
-    def _start_receiver(self):
+    def _start_receiver(self, *, crash_after_ivm_commit=False):
         context = multiprocessing.get_context("spawn")
         ready = context.Queue()
         stop = context.Event()
@@ -320,7 +334,7 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
                 self.receiver_private.private_bytes(
                     Encoding.Raw, PrivateFormat.Raw, NoEncryption()
                 ),
-                self.now, ready, stop,
+                self.now, ready, stop, crash_after_ivm_commit,
             ),),
             daemon=True,
         )
@@ -426,3 +440,88 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         second_process.join(timeout=8)
         self.assertFalse(second_process.is_alive(), "restarted receiver process did not stop cleanly")
         self.assertEqual(second_process.exitcode, 0)
+
+
+
+    def test_postgresql_process_crash_after_ivm_commit_recovers_without_reexecution(self):
+        claimed = self.outbox.claim(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-PG-PROC-UG-RW-001",
+            worker_id="ug-crash-recovery-outbox-worker",
+        )
+        self.assertIsNotNone(claimed)
+
+        crashed_process, _stop, port = self._start_receiver(
+            crash_after_ivm_commit=True
+        )
+        with self.assertRaises(FederationHTTPTransportError):
+            self._transport(port).post("INSTALL-RW-01", claimed["envelope"])
+        crashed_process.join(timeout=8)
+        self.assertFalse(crashed_process.is_alive())
+        self.assertEqual(crashed_process.exitcode, 73)
+
+        with self.receiver_connect() as connection:
+            inbox_before = connection.execute(
+                """SELECT status,attempt_count FROM federation_inbox
+                   WHERE receiver_tenant_id='tenant-rw'
+                     AND issuer_installation_id='INSTALL-UG-01'
+                     AND message_id='MSG-PG-PROC-UG-RW-001'"""
+            ).fetchone()
+            ivm_before = connection.execute(
+                "SELECT state,state_version FROM ivm_processes"
+            ).fetchone()
+            cee_before = connection.execute(
+                """SELECT phase FROM cee_operations
+                   WHERE operation_id='OP-PG-PROC-UG-RW-001'"""
+            ).fetchone()
+        self.assertEqual(inbox_before, ("PROCESSING", 1))
+        self.assertEqual(ivm_before, ("ACTIVE", 1))
+        self.assertEqual(cee_before, ("COMMITTING",))
+
+        # The crashed process leaves its lease intact. After expiry, a clean
+        # process must recover the original pinned operation from PostgreSQL.
+        import time
+        time.sleep(1.2)
+        recovered_process, _recovery_stop, recovery_port = self._start_receiver()
+        recovered = self._transport(recovery_port).post(
+            "INSTALL-RW-01", claimed["envelope"]
+        )
+        self.assertEqual(recovered["http_status"], 200)
+        self.assertTrue(recovered["message_verified"])
+        self.assertEqual(recovered["receiver_decision"]["protocol_decision"], "PASSED")
+        self.assertIn("receiver_acknowledgement", recovered)
+
+        acknowledged = self.outbox.acknowledge(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-PG-PROC-UG-RW-001",
+            receipt=recovered["receiver_acknowledgement"],
+        )
+        self.assertTrue(acknowledged["acknowledged"])
+
+        with self.receiver_connect() as connection:
+            inbox_after = connection.execute(
+                """SELECT status,attempt_count FROM federation_inbox
+                   WHERE receiver_tenant_id='tenant-rw'
+                     AND issuer_installation_id='INSTALL-UG-01'
+                     AND message_id='MSG-PG-PROC-UG-RW-001'"""
+            ).fetchone()
+            ivm_after = connection.execute(
+                "SELECT state,state_version FROM ivm_processes"
+            ).fetchone()
+            ivm_count = connection.execute(
+                "SELECT COUNT(*) FROM ivm_processes"
+            ).fetchone()[0]
+            cee_after = connection.execute(
+                """SELECT phase FROM cee_operations
+                   WHERE operation_id='OP-PG-PROC-UG-RW-001'"""
+            ).fetchone()
+        self.assertEqual(inbox_after, ("COMPLETED", 2))
+        self.assertEqual(ivm_after, ("ACTIVE", 1))
+        self.assertEqual(ivm_count, 1)
+        self.assertEqual(cee_after, ("FINALIZED",))
+
+        recovered_process.join(timeout=8)
+        self.assertFalse(recovered_process.is_alive())
+        self.assertEqual(recovered_process.exitcode, 0)
