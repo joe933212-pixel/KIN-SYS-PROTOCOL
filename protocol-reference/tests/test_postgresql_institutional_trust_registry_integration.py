@@ -283,6 +283,25 @@ class PostgreSQLInstitutionalTrustRegistryTests(unittest.TestCase):
                    WHERE tenant_id='tenant-b' AND grant_id='GRANT-01'"""
             )
             self.assertEqual(update.rowcount, 0)
+
+            # WITH CHECK must also prevent a visible tenant-A row from being
+            # reassigned into tenant B, even when the caller can issue UPDATE.
+            with self.assertRaises(self.psycopg.Error):
+                connection.execute(
+                    """UPDATE authority_grant_versions SET tenant_id='tenant-b'
+                       WHERE tenant_id='tenant-a' AND grant_id='GRANT-01'"""
+                )
+            connection.rollback()
+
+            # A tenant-A delete targeting tenant B must affect no rows.
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-a",),
+            )
+            delete = connection.execute(
+                """DELETE FROM authority_grant_versions
+                   WHERE tenant_id='tenant-b' AND grant_id='GRANT-01'"""
+            )
+            self.assertEqual(delete.rowcount, 0)
             connection.commit()
 
             connection.execute(
