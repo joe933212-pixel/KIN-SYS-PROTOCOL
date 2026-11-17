@@ -424,6 +424,33 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
                 restarted_pipeline.close()
 
 
+    def test_row_level_security_fails_closed_and_isolates_receiver_tenants(self):
+        self.accept()
+        with self.connect() as connection:
+            # No tenant context: the forced policy exposes no inbox rows.
+            self.assertEqual(connection.execute(
+                "SELECT count(*) FROM federation_inbox"
+            ).fetchone()[0], 0)
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-other",)
+            )
+            self.assertEqual(connection.execute(
+                "SELECT count(*) FROM federation_inbox"
+            ).fetchone()[0], 0)
+            # The wrong tenant cannot mutate the receiver's row either.
+            changed = connection.execute(
+                """UPDATE federation_inbox SET status='REJECTED'
+                   WHERE receiver_tenant_id='tenant-rw'"""
+            )
+            self.assertEqual(changed.rowcount, 0)
+        stored = self.inbox_a.get(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id="MSG-UG-RW-001",
+        )
+        self.assertEqual(stored["status"], "RECEIVED")
+
+
 
 if __name__ == "__main__":
     unittest.main()
