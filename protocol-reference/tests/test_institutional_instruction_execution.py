@@ -939,7 +939,7 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
         self.assertEqual(authority.calls, 2)
         self.assertEqual(outcome["decision"]["protocol_decision"], "REJECTED")
         self.assertEqual(
-            outcome["decision"]["reason"],
+            outcome["decision"]["reason_code"],
             "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION",
         )
         operation = pipeline.cee.get(request["operation_id"])
