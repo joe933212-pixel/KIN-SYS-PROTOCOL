@@ -21,7 +21,7 @@ TESTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(TESTS))
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, PublicFormat
 
 from governed_contracts import CONTRACT_VERSION, compute_payload_digest
@@ -84,7 +84,7 @@ def _receiver_process(arguments):
             pipeline_factory=lambda _context: runtime.pipeline,
         )
 
-        sender_key = Ed25519PrivateKey.from_public_bytes(sender_public)
+        sender_key = Ed25519PublicKey.from_public_bytes(sender_public)
         receiver_key = Ed25519PrivateKey.from_private_bytes(receiver_private_raw)
         sender_trust = {
             "tenant_id": "tenant-rw",
@@ -107,7 +107,7 @@ def _receiver_process(arguments):
             trust_key_loader=lambda tenant, key_id: (
                 sender_trust if (tenant, key_id) == ("tenant-rw", "KEY-UG-01") else None
             ),
-            public_key_loader=lambda ref: sender_key.public_key().public_bytes(
+            public_key_loader=lambda ref: sender_key.public_bytes(
                 Encoding.Raw, PublicFormat.Raw
             ) if ref == "keyref:ug-sender" else b"",
             clock=lambda: now,
@@ -212,6 +212,7 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         self.paths = self.tls_fixture.paths
         self.client_context = self.tls_fixture.client_context
 
+        self.processes = []
         self.admin = self.psycopg.connect(self.dsn, autocommit=True)
         options = self.conninfo_to_dict(self.dsn)
         self.sender_database = "kin_sys_sender_" + uuid.uuid4().hex[:20]
@@ -294,6 +295,8 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         )
 
     def tearDown(self):
+        for process, stop in self.processes:
+            _stop_process(process, stop)
         for database in (self.sender_database, self.receiver_database):
             self.admin.execute(
                 self.sql.SQL("DROP DATABASE {} WITH (FORCE)").format(
@@ -318,6 +321,7 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
             daemon=True,
         )
         process.start()
+        self.processes.append((process, stop))
         self.addCleanup(_stop_process, process, stop)
         startup = ready.get(timeout=20)
         if "error" in startup:
