@@ -438,7 +438,11 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
             )
         )
         self.admin.execute(
-            self.sql.SQL("GRANT SELECT, UPDATE ON federation_inbox TO {}").format(role)
+            self.sql.SQL("GRANT SELECT, UPDATE ON {}.{} TO {}").format(
+                self.sql.Identifier(self.schema),
+                self.sql.Identifier("federation_inbox"),
+                role,
+            )
         )
         connection = self.connect()
         try:
