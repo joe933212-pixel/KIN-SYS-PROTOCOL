@@ -111,6 +111,9 @@ class PostgreSQLFederationInboxIntegrationTests(unittest.TestCase):
         duplicate = self.accept_authenticated()
         self.assertFalse(duplicate["inserted"])
         with self.connect() as connection:
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-rw",)
+            )
             inbox_count = connection.execute(
                 "SELECT count(*) FROM federation_inbox"
             ).fetchone()[0]
