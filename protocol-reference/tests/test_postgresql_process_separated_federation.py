@@ -127,7 +127,7 @@ def _receiver_process(arguments):
             ) if ref == "keyref:ug-sender" else b"",
             clock=lambda: now,
             inbox=PostgreSQLFederationInbox(connect),
-            inbox_worker_id="rw-process-inbox-worker",
+            inbox_worker_id=f"rw-process-inbox-worker-{os.getpid()}",
             inbox_lease_seconds=1 if crash_after_ivm_commit else 30,
             receiver_signing_key_id="KEY-RW-01",
             receiver_signing_key_loader=lambda tenant, institution, key_id: (
@@ -842,3 +842,94 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         self.assertEqual(record["attempt_count"], 2)
         self.assertEqual(record["receiver_decision_ref"], "CEE-DECISION-RECOVERED-LEASE")
         self.assertEqual(record["response"], {"decision": "PASSED", "recovered": True})
+
+
+    def test_concurrent_duplicate_https_deliveries_execute_once_across_receiver_processes(self):
+        """Two independent receiver processes race on one signed HTTPS delivery."""
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        claimed = self.outbox.claim(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-PG-PROC-UG-RW-001",
+            worker_id="ug-concurrent-http-outbox-worker",
+        )
+        self.assertIsNotNone(claimed)
+
+        # Each process owns a separate HTTPS listener and independently
+        # reconstructs the receiver runtime, but both share the receiver DB.
+        first_process, first_stop, first_port = self._start_receiver()
+        second_process, second_stop, second_port = self._start_receiver()
+        transports = (
+            self._transport(first_port),
+            self._transport(second_port),
+        )
+        barrier = Barrier(2)
+
+        def deliver(transport):
+            barrier.wait(timeout=10)
+            return transport.post("INSTALL-RW-01", claimed["envelope"])
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(deliver, transports[0])
+            second_future = pool.submit(deliver, transports[1])
+            responses = [
+                first_future.result(timeout=45),
+                second_future.result(timeout=45),
+            ]
+
+        self.assertTrue(all(item["http_status"] == 200 for item in responses))
+        self.assertTrue(all(item["message_verified"] for item in responses))
+        self.assertEqual(
+            sum(item.get("duplicate_delivery") is False for item in responses),
+            1,
+            "exactly one receiver process must own the first execution",
+        )
+        self.assertTrue(
+            all(item.get("duplicate_delivery") is True for item in responses
+                if item.get("delivery_status") == "COMPLETED"
+                and item.get("receiver_acknowledgement") is not None)
+            or any(item.get("delivery_status") == "PROCESSING" for item in responses),
+            "the losing request must observe either the active lease or completed replay",
+        )
+
+        # A final replay after both racing requests settle must return the
+        # durable signed acknowledgement without executing a second time.
+        replay = self._transport(first_port).post(
+            "INSTALL-RW-01", claimed["envelope"]
+        )
+        self.assertEqual(replay["http_status"], 200)
+        self.assertTrue(replay["duplicate_delivery"])
+        self.assertIn("receiver_acknowledgement", replay)
+
+        with self.receiver_connect() as connection:
+            inbox = connection.execute(
+                """SELECT status,attempt_count FROM federation_inbox
+                   WHERE receiver_tenant_id='tenant-rw'
+                     AND issuer_installation_id='INSTALL-UG-01'
+                     AND message_id='MSG-PG-PROC-UG-RW-001'"""
+            ).fetchone()
+            ivm_count = connection.execute(
+                "SELECT COUNT(*) FROM ivm_processes"
+            ).fetchone()[0]
+            process_row = connection.execute(
+                "SELECT state,state_version FROM ivm_processes"
+            ).fetchone()
+            cee_phase = connection.execute(
+                """SELECT phase FROM cee_operations
+                   WHERE operation_id='OP-PG-PROC-UG-RW-001'"""
+            ).fetchone()
+        self.assertEqual(inbox, ("COMPLETED", 1))
+        self.assertEqual(ivm_count, 1)
+        self.assertEqual(process_row, ("ACTIVE", 1))
+        self.assertEqual(cee_phase, ("FINALIZED",))
+
+        for process, stop in (
+            (first_process, first_stop),
+            (second_process, second_stop),
+        ):
+            stop.set()
+            process.join(timeout=8)
+            self.assertFalse(process.is_alive(), "concurrent receiver process did not stop")
+            self.assertEqual(process.exitcode, 0)
