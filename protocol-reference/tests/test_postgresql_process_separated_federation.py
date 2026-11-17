@@ -879,7 +879,15 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
                 second_future.result(timeout=45),
             ]
 
-        self.assertTrue(all(item["http_status"] == 200 for item in responses))
+        # The process that wins the inbox lease completes with HTTP 200;
+        # a concurrent loser may correctly observe the active lease as 202,
+        # or arrive after completion and receive the durable replay as 200.
+        statuses = [item["http_status"] for item in responses]
+        self.assertTrue(
+            all(status in (200, 202) for status in statuses),
+            f"unexpected federation HTTP statuses: {statuses}",
+        )
+        self.assertIn(200, statuses, "at least one delivery must complete")
         self.assertTrue(all(item["message_verified"] for item in responses))
         self.assertEqual(
             sum(item.get("duplicate_delivery") is False for item in responses),
