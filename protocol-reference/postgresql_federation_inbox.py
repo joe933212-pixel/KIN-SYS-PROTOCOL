@@ -39,6 +39,13 @@ def _canonical_json(value: Any) -> tuple[str, str]:
     return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+class PostgreSQLFederationInbox:
+    """Durable inbox using PostgreSQL row locks and expiring worker leases.
+
+    connection_factory must return a fresh psycopg 3 connection. Each method
+    owns and closes its connection. All workers for one receiver tenant must
+    use the same PostgreSQL authority.
+    """
 
     @contextmanager
     def _tenant_connection(self, tenant_id: str):
@@ -53,14 +60,6 @@ def _canonical_json(value: Any) -> tuple[str, str]:
                 yield connection
         finally:
             connection.close()
-
-class PostgreSQLFederationInbox:
-    """Durable inbox using PostgreSQL row locks and expiring worker leases.
-
-    connection_factory must return a fresh psycopg 3 connection. Each method
-    owns and closes its connection. All workers for one receiver tenant must
-    use the same PostgreSQL authority.
-    """
 
     def __init__(self, connection_factory: Callable[[], Any]):
         if not callable(connection_factory):
