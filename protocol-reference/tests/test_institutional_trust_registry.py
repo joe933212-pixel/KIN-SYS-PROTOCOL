@@ -241,7 +241,7 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
         self.assertEqual(
             [event["event_type"] for event in self.registry.list_grant_events(
                 tenant_id="tenant-b", grant_id="GRANT-01")],
-            ["GRANT_CREATED"],
+            ["GRANT_VERSION_CREATED"],
         )
 
     def test_tenant_context_and_grant_scope_are_enforced(self):
