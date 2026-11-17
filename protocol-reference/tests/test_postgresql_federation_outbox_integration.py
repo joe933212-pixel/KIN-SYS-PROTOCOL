@@ -412,11 +412,26 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(stored["dead_lettered_at"])
 
     def test_row_level_security_fails_closed_and_isolates_sender_tenants(self):
-        with self.connect() as connection:
-            # No tenant context: the forced policy exposes no outbox rows.
+        role_name = "kin_sys_outbox_rls_" + uuid.uuid4().hex[:12]
+        role = self.sql.Identifier(role_name)
+        self.admin.execute(self.sql.SQL("CREATE ROLE {} NOLOGIN").format(role))
+        self.admin.execute(
+            self.sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                self.sql.Identifier(self.schema), role,
+            )
+        )
+        self.admin.execute(
+            self.sql.SQL("GRANT SELECT, UPDATE ON federation_outbox TO {}").format(role)
+        )
+        connection = self.connect()
+        try:
+            # Superusers bypass RLS; use a non-owner, non-BYPASSRLS role.
+            connection.execute(self.sql.SQL("SET ROLE {}").format(role))
             self.assertEqual(connection.execute(
                 "SELECT count(*) FROM federation_outbox"
             ).fetchone()[0], 0)
+            connection.commit()
+
             connection.execute(
                 "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-other",)
             )
@@ -428,12 +443,26 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
                    WHERE sender_tenant_id='tenant-ug'"""
             )
             self.assertEqual(changed.rowcount, 0)
+            connection.commit()
+
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-ug",)
+            )
+            self.assertEqual(connection.execute(
+                "SELECT count(*) FROM federation_outbox"
+            ).fetchone()[0], 1)
+            connection.commit()
+        finally:
+            connection.close()
+            self.admin.execute(self.sql.SQL("DROP OWNED BY {}").format(role))
+            self.admin.execute(self.sql.SQL("DROP ROLE {}").format(role))
         stored = self.outbox.get(
             sender_tenant_id="tenant-ug",
             sender_installation_id="INSTALL-UG-01",
             message_id="MSG-OUTBOX-001",
         )
         self.assertEqual(stored["status"], "PENDING")
+
 
 
 if __name__ == "__main__":
