@@ -545,9 +545,22 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         self.assertIsNotNone(claimed)
 
         first_process, first_stop, first_port = self._start_receiver()
-        first_response = self._transport(first_port).post(
-            "INSTALL-RW-01", claimed["envelope"]
-        )
+
+        class _DropResponseAfterRemoteCommit:
+            def __init__(self, transport):
+                self.transport = transport
+                self.remote_response = None
+
+            def post(self, installation_id, envelope):
+                self.remote_response = self.transport.post(installation_id, envelope)
+                # The receiver has already committed its inbox result and
+                # signed acknowledgement; the sender-side connection now fails.
+                raise FederationHTTPTransportError("SIMULATED_RESPONSE_LOSS")
+
+        dropped = _DropResponseAfterRemoteCommit(self._transport(first_port))
+        with self.assertRaisesRegex(FederationHTTPTransportError, "SIMULATED_RESPONSE_LOSS"):
+            dropped.post("INSTALL-RW-01", claimed["envelope"])
+        first_response = dropped.remote_response
         self.assertEqual(first_response["http_status"], 200)
         self.assertIn("receiver_acknowledgement", first_response)
 
