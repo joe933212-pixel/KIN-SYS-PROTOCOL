@@ -181,11 +181,27 @@ This is a PostgreSQL reference backend, not a production certification.
 Tenant IDs remain caller-supplied and must be derived from authenticated
 principals. Receiver approval, receiver acceptance-key trust, public-key
 retrieval and private-key custody remain explicit external trust boundaries.
-Database triggers protect ordinary application writes but do not protect
-against a database owner/superuser disabling triggers or altering the schema.
-Production still requires least-privilege roles, reviewed row-level isolation,
-TLS, backup/restore, failover, migration governance, HSM/secret-manager
-integration, independent security review and operational revocation controls.
+
+Migration `010_institutional_trust_registry_rls.sql` enables and forces
+PostgreSQL row-level security on all eight trust-registry tables. Policies
+filter reads and constrain writes using the transaction-local
+`kin_sys.tenant_id` setting. The PostgreSQL adapter sets that value with
+`set_config(..., true)` inside each operation's transaction, so an unset
+setting fails closed and the value does not leak when a connection is reused.
+The integration suite exercises these policies under a dedicated NOLOGIN role
+that is neither the table owner nor a BYPASSRLS role, including unfiltered
+reads, cross-tenant updates and transaction-context reset.
+
+This RLS layer is defense in depth, not a substitute for authenticated tenant
+selection: a database principal able to issue arbitrary SQL can set a custom
+GUC itself. The service must derive tenant IDs from authenticated principals,
+use a narrowly privileged runtime role that is not a superuser and does not
+have BYPASSRLS, and prevent untrusted callers from obtaining raw database
+credentials or arbitrary SQL execution. Database owners/superusers can still
+alter policies or assume privileged roles. Production still requires least-
+privilege role provisioning, TLS, backup/restore, failover, migration
+governance, HSM/secret-manager integration, independent security review and
+operational revocation controls.
 
 
 **Current revision limitation:** the PostgreSQL adapter's signed acceptance
