@@ -846,5 +846,117 @@ class InstitutionalInstructionExecutionTests(unittest.TestCase):
                 terminal_event = pipeline.cee.events(request["operation_id"])[-1]
                 self.assertTrue(terminal_event["detail"]["ivm_not_invoked"])
 
+
+    def test_authority_revocation_between_initial_check_and_ivm_commit(self):
+        class RevokedAfterInitialVerification:
+            def __init__(self):
+                self.calls = 0
+
+            def verify_action(self, request):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "verified": True, "status": "VERIFIED",
+                        "mode": "LIVE_AUTHORITY_REGISTRY",
+                        "grant_ref": "GRANT-UG-01@1",
+                    }
+                return {
+                    "verified": False, "status": "REJECTED",
+                    "mode": "LIVE_AUTHORITY_REGISTRY",
+                    "reason": "AUTHORITY_GRANT_REVOKED",
+                }
+
+        evidence = {
+            "consignment_id": "PROCESS-AUTHORITY-REVOCATION",
+            "commodity": "SYNTHETIC_MAIZE",
+            "origin": "UGANDA-DEMO",
+            "destination": "BORDER-DEMO",
+            "rule_refs": ["SYNTHETIC-RULE-1"],
+        }
+        profile = {
+            "profile_version": "kin-sys-minah-profile-0.1",
+            "deployment_id": "MINAH-UG-01",
+            "owner_scope": "INSTITUTION",
+            "owner_ref": "tenant-ug",
+            "use_case": "INSTITUTIONAL_AUTHORITY_REVOCATION_TEST",
+            "jurisdictions": ["UG-DEMO"],
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            "model_ref": "institutional-minah-test-v1",
+            "deployment_mode": "SELF_HOSTED",
+            "may_authorise": False,
+        }
+        authority = RevokedAfterInitialVerification()
+        pipeline = KinSysProtocolPipeline(
+            authority_adapter=authority,
+            minah_profile=profile,
+            cee_database=":memory:",
+            ivm_database=":memory:",
+            identity_provider_id="IDP-UG-01",
+            identity_provider_version="2.0",
+            jurisdiction_package_id="JUR-UG-01",
+            jurisdiction_package_version="4.0",
+            authority_profile_version="BANK-AUTHORITY:1.0",
+        )
+        self.addCleanup(pipeline.close)
+
+        resolver = RuntimeResolver()
+        resolver.context.update({
+            "jurisdiction_ref": "UG-DEMO",
+            "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            "minah_config": {
+                "deployment_id": "MINAH-UG-01",
+                "owner_ref": "tenant-ug",
+                "model_ref": "institutional-minah-test-v1",
+                "jurisdictions": ["UG-DEMO"],
+                "policy_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+                "source_pack_version": "SYNTHETIC-NO-LEGAL-SOURCES",
+            },
+        })
+        service = InstitutionalInstructionExecutionService(
+            runtime_binding_resolver=resolver,
+            pipeline_factory=lambda context: pipeline,
+        )
+        request = instruction()
+        request.update({
+            "request_id": "REQ-AUTHORITY-REVOCATION",
+            "operation_id": "OP-AUTHORITY-REVOCATION",
+            "idempotency_key": "idempotency-authority-revocation",
+            "jurisdiction": "UG-DEMO",
+            "rule_pack_version": "KIN-SYS-DEMO-RULES:1.0",
+            "target_ref": "PROCESS-AUTHORITY-REVOCATION",
+            "evidence": evidence,
+            "evidence_refs": ["evidence:authority-revocation"],
+        })
+        request["payload_digest"] = compute_payload_digest(request)
+
+        outcome = service.execute(
+            tenant_id="tenant-ug", institution_id="BANK-UG-01",
+            binding_id="BIND-UG-01", instruction=request, evidence=evidence,
+        )
+
+        self.assertEqual(authority.calls, 2)
+        self.assertEqual(outcome["decision"]["protocol_decision"], "REJECTED")
+        self.assertEqual(
+            outcome["decision"]["reason"],
+            "AUTHORITY_REVOKED_OR_NOT_VALID_AT_EXECUTION",
+        )
+        operation = pipeline.cee.get(request["operation_id"])
+        self.assertEqual(operation["phase"], "FINALIZED")
+        self.assertIsNone(operation["ivm_json"])
+        event_id = "EV-" + hashlib.sha256(
+            request["idempotency_key"].encode("utf-8")
+        ).hexdigest()[:24]
+        self.assertIsNone(pipeline.ivm.event(event_id))
+        self.assertEqual(pipeline.ivm.history(request["target_ref"]), [])
+        observations = pipeline.cee.observations(request["operation_id"])
+        revocation = [
+            item for item in observations
+            if item["kind"] == "AUTHORITY_REVALIDATION"
+        ]
+        self.assertEqual(len(revocation), 1)
+        self.assertEqual(revocation[0]["status"], "REJECTED")
+
 if __name__ == "__main__":
     unittest.main()
