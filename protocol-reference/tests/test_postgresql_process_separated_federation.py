@@ -660,3 +660,100 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         self.assertFalse(second_process.is_alive())
         self.assertEqual(second_process.exitcode, 0)
 
+    def test_postgresql_inbox_concurrent_workers_have_single_lease_owner(self):
+        """Concurrent claims serialize; stale workers cannot complete a lease."""
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from postgresql_federation_inbox import PostgreSQLFederationInbox
+
+        inbox = PostgreSQLFederationInbox(self.receiver_connect)
+        message_id = "MSG-PG-LEASE-CONTENTION-001"
+        envelope = {
+            "claims": {
+                "message_id": message_id,
+                "operation_id": "OP-PG-LEASE-CONTENTION-001",
+                "idempotency_key": "IDEM-PG-LEASE-CONTENTION-001",
+            },
+            "signature": "synthetic-test-envelope",
+        }
+        accepted = inbox.accept_verified(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            operation_id="OP-PG-LEASE-CONTENTION-001",
+            idempotency_key="IDEM-PG-LEASE-CONTENTION-001",
+            envelope=envelope,
+        )
+        self.assertTrue(accepted["inserted"])
+
+        barrier = Barrier(2)
+
+        def claim(worker_id):
+            barrier.wait(timeout=5)
+            return inbox.claim(
+                receiver_tenant_id="tenant-rw",
+                issuer_installation_id="INSTALL-UG-01",
+                message_id=message_id,
+                worker_id=worker_id,
+                lease_seconds=30,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(claim, "rw-concurrent-worker-A")
+            second = pool.submit(claim, "rw-concurrent-worker-B")
+            claims = [first.result(timeout=10), second.result(timeout=10)]
+
+        winners = [item for item in claims if item is not None]
+        losers = [item for item in claims if item is None]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(len(losers), 1)
+        winner = winners[0]
+        self.assertEqual(winner["attempt_count"], 1)
+
+        # The losing worker cannot steal an unexpired lease or complete it.
+        self.assertIsNone(inbox.claim(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id="rw-late-worker",
+            lease_seconds=30,
+        ))
+        loser_id = (
+            "rw-concurrent-worker-B"
+            if winner["lease_owner"] == "rw-concurrent-worker-A"
+            else "rw-concurrent-worker-A"
+        )
+        self.assertFalse(inbox.complete(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id=loser_id,
+            decision_ref="CEE-DECISION-LEASE-CONTENTION",
+            response={"decision": "PASSED"},
+        ))
+
+        # Only the actual lease owner can complete; completion clears the lease.
+        self.assertTrue(inbox.complete(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id=winner["lease_owner"],
+            decision_ref="CEE-DECISION-LEASE-CONTENTION",
+            response={"decision": "PASSED"},
+        ))
+        record = inbox.get(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+        )
+        self.assertEqual(record["status"], "COMPLETED")
+        self.assertEqual(record["attempt_count"], 1)
+        self.assertEqual(record["response"], {"decision": "PASSED"})
+        self.assertIsNone(inbox.claim(
+            receiver_tenant_id="tenant-rw",
+            issuer_installation_id="INSTALL-UG-01",
+            message_id=message_id,
+            worker_id="rw-post-completion-worker",
+            lease_seconds=30,
+        ))
+
