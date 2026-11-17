@@ -222,6 +222,86 @@ class PostgreSQLInstitutionalTrustRegistryTests(unittest.TestCase):
         self.assertEqual(resolved["roles"], ["reviewer"])
         self.assertIsNone(self.registry.load_grant("tenant-b", "GRANT-01"))
 
+    def test_database_row_level_security_fails_closed_and_isolates_tenants(self):
+        # Exercise the policies as a non-owner, non-BYPASSRLS database role.
+        self.create_local_grant()
+        tenant_b = dict(
+            self.grant(),
+            tenant_id="tenant-b",
+            actor_ref="actor:registrar-b",
+            institution_id="BANK-KE-01",
+            authority_ref="authority:ke-registry",
+            resource_ids=["BANK-KE-01"],
+            approval_ref="approval:ke-01",
+        )
+        self.registry.create_grant_version(
+            tenant_id="tenant-b",
+            grant=tenant_b,
+            event_id="tenant-b-grant-created-rls",
+            actor_ref="actor:ke-approver",
+            evidence_ref="evidence:ke-approval",
+        )
+
+        role_name = "kin_sys_rls_" + uuid.uuid4().hex[:16]
+        role = self.sql.Identifier(role_name)
+        self.admin.execute(self.sql.SQL("CREATE ROLE {} NOLOGIN").format(role))
+        self.admin.execute(
+            self.sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                self.sql.Identifier(self.schema), role,
+            )
+        )
+        self.admin.execute(
+            self.sql.SQL(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {} TO {}"
+            ).format(self.sql.Identifier(self.schema), role)
+        )
+
+        connection = self.connect()
+        try:
+            connection.execute(self.sql.SQL("SET ROLE {}").format(role))
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-a",),
+            )
+            rows = connection.execute(
+                "SELECT tenant_id FROM authority_grant_versions WHERE grant_id='GRANT-01'"
+            ).fetchall()
+            self.assertEqual(rows, [("tenant-a",)])
+            connection.commit()
+
+            # SET LOCAL context must not leak when this connection is reused.
+            rows_without_context = connection.execute(
+                "SELECT tenant_id FROM authority_grant_versions WHERE grant_id='GRANT-01'"
+            ).fetchall()
+            self.assertEqual(rows_without_context, [])
+            connection.rollback()
+
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-a",),
+            )
+            update = connection.execute(
+                """UPDATE authority_grant_versions SET status='REVOKED'
+                   WHERE tenant_id='tenant-b' AND grant_id='GRANT-01'"""
+            )
+            self.assertEqual(update.rowcount, 0)
+            connection.commit()
+
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-b",),
+            )
+            rows_tenant_b = connection.execute(
+                "SELECT tenant_id FROM authority_grant_versions WHERE grant_id='GRANT-01'"
+            ).fetchall()
+            self.assertEqual(rows_tenant_b, [("tenant-b",)])
+            connection.commit()
+        finally:
+            connection.close()
+            self.admin.execute(
+                self.sql.SQL("DROP OWNED BY {}").format(role)
+            )
+            self.admin.execute(
+                self.sql.SQL("DROP ROLE {}").format(role)
+            )
+
     def test_revocation_isolated_between_tenants_with_same_grant_id(self):
         tenant_a = self.create_local_grant()
         tenant_b = dict(
