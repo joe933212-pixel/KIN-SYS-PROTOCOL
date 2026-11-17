@@ -185,6 +185,9 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
         # integration test rather than bypassing the production due-time gate.
         with self.connect() as connection:
             connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-ug",)
+            )
+            connection.execute(
                 """UPDATE federation_outbox
                    SET next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
                    WHERE sender_tenant_id = 'tenant-ug'
@@ -203,6 +206,9 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
             message_id="MSG-OUTBOX-001", worker_id="sender-crashed",
         )
         with self.connect() as connection:
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-ug",)
+            )
             connection.execute(
                 """UPDATE federation_outbox SET lease_expires_at = CURRENT_TIMESTAMP
                    - INTERVAL '1 second'
@@ -320,6 +326,9 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
         ))
         with self.connect() as connection:
             connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-ug",)
+            )
+            connection.execute(
                 """UPDATE federation_outbox
                    SET next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
                    WHERE sender_tenant_id = 'tenant-ug'
@@ -334,6 +343,9 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
 
     def test_retry_budget_dead_letters_failed_delivery(self):
         with self.connect() as connection:
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-ug",)
+            )
             connection.execute(
                 """UPDATE federation_outbox SET max_attempts = 1
                    WHERE sender_tenant_id = 'tenant-ug'
@@ -365,6 +377,9 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
     def test_expired_final_delivery_lease_is_dead_lettered_not_reclaimed(self):
         with self.connect() as connection:
             connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-ug",)
+            )
+            connection.execute(
                 """UPDATE federation_outbox SET max_attempts = 1
                    WHERE sender_tenant_id = 'tenant-ug'
                      AND sender_installation_id = 'INSTALL-UG-01'
@@ -375,6 +390,9 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
             message_id="MSG-OUTBOX-001", worker_id="crashed-final-attempt",
         )
         with self.connect() as connection:
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-ug",)
+            )
             connection.execute(
                 """UPDATE federation_outbox SET lease_expires_at = CURRENT_TIMESTAMP
                    - INTERVAL '1 second'
