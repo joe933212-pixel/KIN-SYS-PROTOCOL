@@ -533,3 +533,117 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
             "recovered receiver process did not stop cleanly",
         )
         self.assertEqual(recovered_process.exitcode, 0)
+
+    def test_lost_acknowledgement_response_replays_durably_without_reexecution(self):
+        claimed = self.outbox.claim(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-PG-PROC-UG-RW-001",
+            worker_id="ug-lost-ack-outbox-worker",
+            lease_seconds=1,
+        )
+        self.assertIsNotNone(claimed)
+
+        first_process, first_stop, first_port = self._start_receiver()
+        first_response = self._transport(first_port).post(
+            "INSTALL-RW-01", claimed["envelope"]
+        )
+        self.assertEqual(first_response["http_status"], 200)
+        self.assertIn("receiver_acknowledgement", first_response)
+
+        # Model the sender losing the HTTP response after the receiver has
+        # committed COMPLETED and its signed acknowledgement. The sender does
+        # not call acknowledge(), so its outbox lease must expire and retry.
+        lost_receipt = first_response["receiver_acknowledgement"]
+        first_stop.set()
+        first_process.join(timeout=8)
+        self.assertFalse(first_process.is_alive())
+        self.assertEqual(first_process.exitcode, 0)
+
+        with self.sender_connect() as connection:
+            sender_before_retry = connection.execute(
+                \"\"\"SELECT status,attempt_count FROM federation_outbox
+                   WHERE sender_tenant_id='tenant-ug'
+                     AND sender_installation_id='INSTALL-UG-01'
+                     AND message_id='MSG-PG-PROC-UG-RW-001'\
+                \"\"\"
+            ).fetchone()
+        self.assertEqual(sender_before_retry, ("DELIVERING", 1))
+
+        import time
+        time.sleep(1.2)
+        retried = self.outbox.claim(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-PG-PROC-UG-RW-001",
+            worker_id="ug-lost-ack-retry-worker",
+            lease_seconds=10,
+        )
+        self.assertIsNotNone(retried)
+        self.assertEqual(retried["attempt_count"], 2)
+
+        # A new receiver process returns the exact persisted receipt. It must
+        # not run MINAH/CEE/IVM again merely because the sender missed the reply.
+        second_process, second_stop, second_port = self._start_receiver()
+        replay = self._transport(second_port).post(
+            "INSTALL-RW-01", retried["envelope"]
+        )
+        self.assertEqual(replay["http_status"], 200)
+        self.assertTrue(replay["duplicate_delivery"])
+        self.assertEqual(replay["receiver_acknowledgement"], lost_receipt)
+
+        acknowledged = self.outbox.acknowledge(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-PG-PROC-UG-RW-001",
+            receipt=replay["receiver_acknowledgement"],
+        )
+        self.assertTrue(acknowledged["acknowledged"])
+        self.assertFalse(acknowledged["duplicate"])
+
+        # Re-submitting the same verified receipt is idempotent; a conflicting
+        # receipt remains rejected by the outbox's digest binding.
+        duplicate_ack = self.outbox.acknowledge(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-PG-PROC-UG-RW-001",
+            receipt=replay["receiver_acknowledgement"],
+        )
+        self.assertTrue(duplicate_ack["acknowledged"])
+        self.assertTrue(duplicate_ack["duplicate"])
+
+        with self.receiver_connect() as connection:
+            inbox = connection.execute(
+                \"\"\"SELECT status,attempt_count FROM federation_inbox
+                   WHERE receiver_tenant_id='tenant-rw'
+                     AND issuer_installation_id='INSTALL-UG-01'
+                     AND message_id='MSG-PG-PROC-UG-RW-001'\
+                \"\"\"
+            ).fetchone()
+            ivm_count = connection.execute(
+                "SELECT COUNT(*) FROM ivm_processes"
+            ).fetchone()[0]
+            process_row = connection.execute(
+                "SELECT state,state_version FROM ivm_processes"
+            ).fetchone()
+        self.assertEqual(inbox, ("COMPLETED", 1))
+        self.assertEqual(ivm_count, 1)
+        self.assertEqual(process_row, ("ACTIVE", 1))
+
+        with self.sender_connect() as connection:
+            sender_after_ack = connection.execute(
+                \"\"\"SELECT status,attempt_count,acknowledgement_sha256
+                   FROM federation_outbox
+                   WHERE sender_tenant_id='tenant-ug'
+                     AND sender_installation_id='INSTALL-UG-01'
+                     AND message_id='MSG-PG-PROC-UG-RW-001'\
+                \"\"\"
+            ).fetchone()
+        self.assertEqual(sender_after_ack[0:2], ("ACKNOWLEDGED", 2))
+        self.assertTrue(sender_after_ack[2])
+
+        second_stop.set()
+        second_process.join(timeout=8)
+        self.assertFalse(second_process.is_alive())
+        self.assertEqual(second_process.exitcode, 0)
+
