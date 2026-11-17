@@ -50,7 +50,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.admin.close()
 
     def test_repository_migration_applies_and_is_idempotent_on_postgresql(self):
-        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011"])
         self.assertEqual(apply_migrations(self.connection), [])
         row = self.connection.execute(
             "SELECT version, filename, checksum_sha256 "
@@ -74,6 +74,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 ("008", "008_institutional_domain_registry.sql"),
                 ("009", "009_federation_outbox_retry_policy.sql"),
                 ("010", "010_institutional_trust_registry_rls.sql"),
+                ("011", "011_federation_delivery_rls.sql"),
             ],
         )
         tables = {
@@ -87,6 +88,31 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertIn("consumed_federation_nonces", tables)
         self.assertIn("federation_inbox", tables)
         self.assertIn("federation_outbox", tables)
+        policies = self.connection.execute(
+            """
+            SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
+                   p.polname, pg_get_expr(p.polqual, p.polrelid),
+                   pg_get_expr(p.polwithcheck, p.polrelid)
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              LEFT JOIN pg_policy p ON p.polrelid = c.oid
+             WHERE n.nspname = %s
+               AND c.relname IN ('federation_inbox', 'federation_outbox')
+             ORDER BY c.relname
+            """,
+            (self.schema,),
+        ).fetchall()
+        self.assertEqual([row[0] for row in policies], [
+            "federation_inbox", "federation_outbox",
+        ])
+        for table, enabled, forced, policy, using, with_check in policies:
+            with self.subTest(table=table):
+                self.assertTrue(enabled)
+                self.assertTrue(forced)
+                self.assertEqual(policy, "kin_sys_tenant_isolation")
+                self.assertIn("kin_sys.tenant_id", using or "")
+                self.assertIn("kin_sys.tenant_id", with_check or "")
+
         self.assertIn("authority_grant_versions", tables)
         self.assertIn("trusted_issuer_relationships", tables)
         self.assertIn("institutional_trust_keys", tables)
