@@ -3,9 +3,10 @@
 
 The sender and receiver use separate PostgreSQL databases. The receiver's
 MINAH -> CEE -> IVM runtime, durable inbox and signed acknowledgement key are
-constructed inside a spawned OS process. A second receiver process is then
-started against the same receiver database to verify completed-delivery
-recovery without executing the instruction again.
+constructed inside spawned OS processes. Coverage includes completed-delivery
+replay after a clean restart and abrupt receiver-process loss after the durable
+IVM commit but before inbox completion. The latter must recover the original
+pinned CEE/IVM operation after lease expiry, without executing it twice.
 """
 from __future__ import annotations
 
