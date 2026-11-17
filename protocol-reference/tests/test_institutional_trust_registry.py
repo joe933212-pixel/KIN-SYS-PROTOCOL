@@ -179,6 +179,71 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
                 assertion, tenant_id="tenant-a",
                 resource_type="institution", resource_id="BANK-UG-01")
 
+    def test_revocation_in_one_tenant_does_not_mutate_another_tenants_grant(self):
+        # Two independent institutions may use the same local grant identifier.
+        # A revocation in tenant-a must not advance or invalidate tenant-b's head.
+        self.create()
+        tenant_b_grant = dict(
+            self.grant,
+            tenant_id="tenant-b",
+            actor_ref="actor:registrar-b",
+            institution_id="BANK-KE-01",
+            resource_ids=["BANK-KE-01"],
+            authority_ref="authority:ke-registry",
+            approval_ref="approval:ke-01",
+        )
+        self.registry.create_grant_version(
+            tenant_id="tenant-b", grant=tenant_b_grant,
+            event_id="tenant-b-grant-event-1",
+            actor_ref="actor:ke-approver", evidence_ref="evidence:ke-approval",
+        )
+
+        key = b"tenant-isolation-test-signing-key-32-bytes"
+        resolver_b = InstitutionalAuthorityResolver(
+            verification_keys={"issuer-key-b": key},
+            grant_store=self.registry,
+            consume_nonce=InMemoryNonceGuard().consume,
+            clock=lambda: 150,
+        )
+
+        def resolve_tenant_b(nonce):
+            claims = {
+                "key_id": "issuer-key-b", "tenant_id": "tenant-b",
+                "actor_ref": "actor:registrar-b", "grant_id": "GRANT-01",
+                "grant_version": "1", "issued_at": 140, "expires_at": 160,
+                "nonce": nonce,
+            }
+            assertion = {
+                "claims": claims,
+                "signature": sign_actor_claims(claims, key),
+            }
+            return resolver_b.resolve(
+                assertion, tenant_id="tenant-b",
+                resource_type="institution", resource_id="BANK-KE-01",
+            )
+
+        self.assertEqual(resolve_tenant_b("tenant-b-nonce-before-0001")["grant_ref"],
+                         "GRANT-01@1")
+
+        self.registry.revoke_grant(
+            tenant_id="tenant-a", grant_id="GRANT-01", expected_version="1",
+            new_version="2", event_id="tenant-a-grant-revoked",
+            actor_ref="actor:authority-admin", evidence_ref="approval:revoke-tenant-a",
+        )
+
+        tenant_a_current = self.registry.load_grant("tenant-a", "GRANT-01")
+        tenant_b_current = self.registry.load_grant("tenant-b", "GRANT-01")
+        self.assertEqual(tenant_a_current["status"], "REVOKED")
+        self.assertEqual(tenant_a_current["version"], "2")
+        self.assertEqual(tenant_b_current, tenant_b_grant)
+        self.assertEqual(resolve_tenant_b("tenant-b-nonce-after-0002")["grant_ref"],
+                         "GRANT-01@1")
+        self.assertEqual(
+            [event["event_type"] for event in self.registry.list_grant_events(
+                tenant_id="tenant-b", grant_id="GRANT-01")],
+            ["GRANT_CREATED"],
+        )
+
     def test_tenant_context_and_grant_scope_are_enforced(self):
         with self.assertRaisesRegex(TrustRegistryError, "TENANT_CONTEXT_REQUIRED"):
             self.registry.load_grant("", "GRANT-01")
