@@ -523,6 +523,13 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
         self.assertEqual(ivm_count, 1)
         self.assertEqual(cee_after, ("FINALIZED",))
 
+        # Stop the receiver's serve_forever loop before joining it. The
+        # process is intentionally long-lived after it has completed the
+        # request; joining without signalling stop would hang until timeout.
+        _recovery_stop.set()
         recovered_process.join(timeout=8)
-        self.assertFalse(recovered_process.is_alive())
+        self.assertFalse(
+            recovered_process.is_alive(),
+            "recovered receiver process did not stop cleanly",
+        )
         self.assertEqual(recovered_process.exitcode, 0)
