@@ -13,7 +13,7 @@ import json
 import math
 import re
 import time
-from contextlib import closing
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -81,6 +81,25 @@ class PostgreSQLInstitutionalTrustRegistry:
         if not callable(connection_factory):
             raise TrustRegistryError("POSTGRES_CONNECTION_FACTORY_REQUIRED")
         self._connect = connection_factory
+
+    @contextmanager
+    def _tenant_connection(self, tenant_id: str):
+        """Run one operation with transaction-local PostgreSQL tenant context.
+
+        RLS fails closed when this setting is absent. SET LOCAL semantics via
+        set_config(..., true) prevent tenant context leaking across pooled
+        connection transactions.
+        """
+        connection = self._connect()
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT set_config('kin_sys.tenant_id', %s, true)",
+                    (tenant_id,),
+                )
+                yield connection
+        finally:
+            connection.close()
 
     @staticmethod
     def _tenant(tenant_id: str) -> str:
@@ -194,7 +213,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         ):
             _identifier(value, code)
         now = datetime.now(timezone.utc)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -237,7 +256,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         if grant["tenant_id"] != tenant or grant["grant_id"] != grant_id:
             raise TrustRegistryError("GRANT_TENANT_OR_ID_MISMATCH")
         now = datetime.now(timezone.utc)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -268,7 +287,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         _identifier(expected_version, "INVALID_EXPECTED_GRANT_VERSION")
         _identifier(new_version, "INVALID_NEW_GRANT_VERSION")
         now = datetime.now(timezone.utc)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -304,7 +323,7 @@ class PostgreSQLInstitutionalTrustRegistry:
     def load_grant(self, tenant_id: str, grant_id: str) -> dict[str, Any] | None:
         tenant = self._tenant(tenant_id)
         _identifier(grant_id, "INVALID_GRANT_ID")
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT v.payload_json FROM authority_grant_heads h
@@ -320,7 +339,7 @@ class PostgreSQLInstitutionalTrustRegistry:
     def list_grant_events(self, *, tenant_id: str, grant_id: str) -> list[dict[str, Any]]:
         tenant = self._tenant(tenant_id)
         _identifier(grant_id, "INVALID_GRANT_ID")
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT event_id,version,event_type,actor_ref,evidence_ref,
@@ -367,14 +386,14 @@ class PostgreSQLInstitutionalTrustRegistry:
     def load_trust_key(self, tenant_id: str, key_id: str) -> dict[str, Any] | None:
         tenant = self._tenant(tenant_id)
         _identifier(key_id, "INVALID_KEY_ID")
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.cursor() as cursor:
                 return self._load_trust_key_cursor(cursor, tenant, key_id)
 
     def get_trust_key(self, *, tenant_id: str, key_id: str) -> dict[str, Any] | None:
         tenant = self._tenant(tenant_id)
         _identifier(key_id, "INVALID_KEY_ID")
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT issuer_institution_id,key_id,algorithm,public_key_ref,
@@ -409,7 +428,7 @@ class PostgreSQLInstitutionalTrustRegistry:
             raise TrustRegistryError("INVALID_TRUST_RELATIONSHIP_VALIDITY")
         now = datetime.now(timezone.utc)
         event_id = _event_id("issuer-trust", tenant, issuer)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -446,7 +465,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         _identifier(evidence_ref, "TRUST_EVIDENCE_REQUIRED")
         _identifier(event_id, "INVALID_EVENT_ID")
         now = datetime.now(timezone.utc)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -483,7 +502,7 @@ class PostgreSQLInstitutionalTrustRegistry:
     ) -> list[dict[str, Any]]:
         tenant = self._tenant(tenant_id)
         issuer = _identifier(issuer_institution_id, "INVALID_ISSUER_ID")
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT event_id,event_type,actor_ref,evidence_ref,payload_json,created_at
@@ -520,7 +539,7 @@ class PostgreSQLInstitutionalTrustRegistry:
             raise TrustRegistryError("INVALID_TRUST_KEY_VALIDITY")
         now = datetime.now(timezone.utc)
         event_id = _event_id("key-register", tenant, key)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -569,7 +588,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         _identifier(evidence_ref, "TRUST_EVIDENCE_REQUIRED")
         _identifier(event_id, "INVALID_EVENT_ID")
         now = datetime.now(timezone.utc)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -604,7 +623,7 @@ class PostgreSQLInstitutionalTrustRegistry:
     def list_trust_key_events(self, *, tenant_id: str, key_id: str) -> list[dict[str, Any]]:
         tenant = self._tenant(tenant_id)
         key = _identifier(key_id, "INVALID_KEY_ID")
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT event_id,event_type,actor_ref,evidence_ref,payload_json,created_at
@@ -694,7 +713,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         if grant["tenant_id"] != tenant or grant["status"] != "ACTIVE":
             raise TrustRegistryError("ACCEPTED_GRANT_SCOPE_INVALID")
         now = datetime.now(timezone.utc)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -867,7 +886,7 @@ class PostgreSQLInstitutionalTrustRegistry:
             "acceptance": accepted["acceptance"],
         }
 
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -953,7 +972,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         tenant = self._tenant(tenant_id)
         _identifier(grant_id, "INVALID_GRANT_ID")
         _identifier(version, "INVALID_GRANT_VERSION")
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT grant_digest,issuer_envelope_json,acceptance_json,created_at
@@ -988,7 +1007,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         _identifier(grant_id, "INVALID_GRANT_ID")
         if type(require_federated_provenance) is not bool or not callable(clock):
             raise TrustRegistryError("VERIFIED_GRANT_REQUEST_INVALID")
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     try:
