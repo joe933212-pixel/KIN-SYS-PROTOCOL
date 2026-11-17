@@ -39,6 +39,13 @@ def _canonical_json(value: Any) -> tuple[str, str]:
     return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+class PostgreSQLFederationOutbox:
+    """Durable sender state using PostgreSQL row updates and expiring leases.
+
+    connection_factory returns a fresh psycopg 3 connection. Each method owns
+    and closes its connection. All sender workers for an installation must
+    share the same PostgreSQL authority.
+    """
 
     @contextmanager
     def _tenant_connection(self, tenant_id: str):
@@ -53,14 +60,6 @@ def _canonical_json(value: Any) -> tuple[str, str]:
                 yield connection
         finally:
             connection.close()
-
-class PostgreSQLFederationOutbox:
-    """Durable sender state using PostgreSQL row updates and expiring leases.
-
-    connection_factory returns a fresh psycopg 3 connection. Each method owns
-    and closes its connection. All sender workers for an installation must
-    share the same PostgreSQL authority.
-    """
 
     def __init__(
         self, connection_factory: Callable[[], Any],
