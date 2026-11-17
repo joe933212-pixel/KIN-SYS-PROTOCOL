@@ -753,5 +753,43 @@ class PostgreSQLInstitutionalTrustRegistryTests(unittest.TestCase):
             )
 
 
+    def test_row_level_security_is_enabled_and_forced_on_every_trust_table(self):
+        expected = {
+            "authority_grant_versions",
+            "authority_grant_heads",
+            "authority_grant_events",
+            "accepted_grant_provenance",
+            "trusted_issuer_relationships",
+            "trusted_issuer_events",
+            "institutional_trust_keys",
+            "institutional_trust_key_events",
+        }
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
+                       p.polname, pg_get_expr(p.polqual, p.polrelid),
+                       pg_get_expr(p.polwithcheck, p.polrelid)
+                  FROM pg_class c
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                  LEFT JOIN pg_policy p ON p.polrelid = c.oid
+                 WHERE n.nspname = current_schema()
+                   AND c.relname = ANY(%s)
+                 ORDER BY c.relname
+                """,
+                (sorted(expected),),
+            ).fetchall()
+
+        self.assertEqual({row[0] for row in rows}, expected)
+        self.assertEqual(len(rows), len(expected))
+        for table, enabled, forced, policy, using, with_check in rows:
+            with self.subTest(table=table):
+                self.assertTrue(enabled, f"{table} must have RLS enabled")
+                self.assertTrue(forced, f"{table} must force RLS for its owner")
+                self.assertEqual(policy, "kin_sys_tenant_isolation")
+                self.assertIn("kin_sys.tenant_id", using or "")
+                self.assertIn("kin_sys.tenant_id", with_check or "")
+
+
 if __name__ == "__main__":
     unittest.main()
