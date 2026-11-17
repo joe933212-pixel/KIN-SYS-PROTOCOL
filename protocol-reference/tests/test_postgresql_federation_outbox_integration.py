@@ -393,5 +393,30 @@ class PostgreSQLFederationOutboxIntegrationTests(unittest.TestCase):
         self.assertEqual(stored["status"], "DEAD_LETTER")
         self.assertIsNotNone(stored["dead_lettered_at"])
 
+    def test_row_level_security_fails_closed_and_isolates_sender_tenants(self):
+        with self.connect() as connection:
+            # No tenant context: the forced policy exposes no outbox rows.
+            self.assertEqual(connection.execute(
+                "SELECT count(*) FROM federation_outbox"
+            ).fetchone()[0], 0)
+            connection.execute(
+                "SELECT set_config('kin_sys.tenant_id', %s, true)", ("tenant-other",)
+            )
+            self.assertEqual(connection.execute(
+                "SELECT count(*) FROM federation_outbox"
+            ).fetchone()[0], 0)
+            changed = connection.execute(
+                """UPDATE federation_outbox SET status='RETRYABLE_FAILURE'
+                   WHERE sender_tenant_id='tenant-ug'"""
+            )
+            self.assertEqual(changed.rowcount, 0)
+        stored = self.outbox.get(
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            message_id="MSG-OUTBOX-001",
+        )
+        self.assertEqual(stored["status"], "PENDING")
+
+
 if __name__ == "__main__":
     unittest.main()
