@@ -562,11 +562,11 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
 
         with self.sender_connect() as connection:
             sender_before_retry = connection.execute(
-                \"\"\"SELECT status,attempt_count FROM federation_outbox
+                """SELECT status,attempt_count FROM federation_outbox
                    WHERE sender_tenant_id='tenant-ug'
                      AND sender_installation_id='INSTALL-UG-01'
-                     AND message_id='MSG-PG-PROC-UG-RW-001'\
-                \"\"\"
+                     AND message_id='MSG-PG-PROC-UG-RW-001'
+                """
             ).fetchone()
         self.assertEqual(sender_before_retry, ("DELIVERING", 1))
 
@@ -614,11 +614,11 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
 
         with self.receiver_connect() as connection:
             inbox = connection.execute(
-                \"\"\"SELECT status,attempt_count FROM federation_inbox
+                """SELECT status,attempt_count FROM federation_inbox
                    WHERE receiver_tenant_id='tenant-rw'
                      AND issuer_installation_id='INSTALL-UG-01'
-                     AND message_id='MSG-PG-PROC-UG-RW-001'\
-                \"\"\"
+                     AND message_id='MSG-PG-PROC-UG-RW-001'
+                """
             ).fetchone()
             ivm_count = connection.execute(
                 "SELECT COUNT(*) FROM ivm_processes"
@@ -632,12 +632,12 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
 
         with self.sender_connect() as connection:
             sender_after_ack = connection.execute(
-                \"\"\"SELECT status,attempt_count,acknowledgement_sha256
+                """SELECT status,attempt_count,acknowledgement_sha256
                    FROM federation_outbox
                    WHERE sender_tenant_id='tenant-ug'
                      AND sender_installation_id='INSTALL-UG-01'
-                     AND message_id='MSG-PG-PROC-UG-RW-001'\
-                \"\"\"
+                     AND message_id='MSG-PG-PROC-UG-RW-001'
+                """
             ).fetchone()
         self.assertEqual(sender_after_ack[0:2], ("ACKNOWLEDGED", 2))
         self.assertTrue(sender_after_ack[2])
