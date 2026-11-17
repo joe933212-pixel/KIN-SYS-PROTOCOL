@@ -894,12 +894,10 @@ class PostgreSQLProcessSeparatedFederationTests(unittest.TestCase):
             1,
             "exactly one receiver process must own the first execution",
         )
-        self.assertTrue(
-            all(item.get("duplicate_delivery") is True for item in responses
-                if item.get("delivery_status") == "COMPLETED"
-                and item.get("receiver_acknowledgement") is not None)
-            or any(item.get("delivery_status") == "PROCESSING" for item in responses),
-            "the losing request must observe either the active lease or completed replay",
+        self.assertEqual(
+            sum(item.get("duplicate_delivery") is True for item in responses),
+            1,
+            "exactly one concurrent request must be classified as a duplicate",
         )
 
         # A final replay after both racing requests settle must return the
