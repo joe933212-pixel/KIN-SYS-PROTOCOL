@@ -480,5 +480,21 @@ class FederatedReceiverTests(unittest.TestCase):
             )
 
 
+    def test_revoked_sender_trust_rejects_previously_signed_instruction_before_acceptance(self):
+        # The envelope remains cryptographically valid, but receiver policy is
+        # evaluated at delivery time. A previously trusted sender cannot rely
+        # on an old signature after the receiving institution revokes its key.
+        self.key_record["status"] = "REVOKED"
+
+        with self.assertRaisesRegex(
+            FederatedInstructionReceiverError,
+            "FEDERATION_TRUST_KEY_MISMATCH_OR_INACTIVE",
+        ):
+            self.receiver.receive(self.envelope)
+
+        self.assertEqual(self.executor.calls, [])
+        self.assertEqual(self.replay, set())
+
+
 if __name__ == "__main__":
     unittest.main()
