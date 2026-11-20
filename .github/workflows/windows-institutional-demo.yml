@@ -36,9 +36,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - name: Run institutional and portable reference tests
+      - name: Run institutional, federation transport and portable reference tests
         shell: pwsh
         run: |
+          python -m unittest discover -s protocol-reference/tests -p "test_institutional_federation_http.py" -v
           python -m unittest discover -s protocol-reference/tests -p "test_institutional_domain_http.py" -v
           python -m unittest discover -s protocol-reference/tests -p "test_institutional_onboarding_administration.py" -v
           python -m unittest discover -s protocol-reference/tests -p "test_portable_sandbox.py" -v
