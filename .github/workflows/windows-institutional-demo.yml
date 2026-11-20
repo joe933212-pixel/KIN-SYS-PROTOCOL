@@ -1,0 +1,52 @@
+name: Windows institutional demo validation
+
+on:
+  push:
+    branches: [feat/windows-institutional-demo]
+    paths:
+      - "sandbox/**"
+      - "scripts/**"
+      - "protocol-reference/**"
+      - "docs/WINDOWS_INSTITUTIONAL_DEMO_PLAN.md"
+      - ".github/workflows/windows-institutional-demo.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sandbox/**"
+      - "scripts/**"
+      - "protocol-reference/**"
+      - "docs/WINDOWS_INSTITUTIONAL_DEMO_PLAN.md"
+      - ".github/workflows/windows-institutional-demo.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-institutional-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reference-tests:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python for source tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Run institutional and portable reference tests
+        shell: pwsh
+        run: |
+          python -m unittest protocol-reference.tests.test_institutional_domain_http protocol-reference.tests.test_institutional_onboarding_administration protocol-reference.tests.test_portable_sandbox -v
+      - name: Build portable Windows package
+        shell: pwsh
+        run: .\scripts\package-portable-windows.ps1
+      - name: Verify package checksum
+        shell: pwsh
+        run: |
+          $archive = "dist/KIN-SYS-Portable-Windows-x64.zip"
+          $expected = (Get-Content "$archive.sha256" -Raw).Trim().Split(" ")[0]
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Bundle checksum verification failed." }
