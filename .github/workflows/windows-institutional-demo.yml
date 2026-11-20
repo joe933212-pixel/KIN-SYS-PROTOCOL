@@ -39,7 +39,9 @@ jobs:
       - name: Run institutional and portable reference tests
         shell: pwsh
         run: |
-          python -m unittest protocol-reference.tests.test_institutional_domain_http protocol-reference.tests.test_institutional_onboarding_administration protocol-reference.tests.test_portable_sandbox -v
+          python -m unittest discover -s protocol-reference/tests -p "test_institutional_domain_http.py" -v
+          python -m unittest discover -s protocol-reference/tests -p "test_institutional_onboarding_administration.py" -v
+          python -m unittest discover -s protocol-reference/tests -p "test_portable_sandbox.py" -v
       - name: Build portable Windows package
         shell: pwsh
         run: .\scripts\package-portable-windows.ps1
