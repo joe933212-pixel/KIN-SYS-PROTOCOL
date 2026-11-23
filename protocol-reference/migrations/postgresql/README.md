@@ -302,6 +302,18 @@ monotonic database sequence gives each snapshot and event a stable insertion
 order, so current-record resolution does not depend on wall-clock timestamp
 precision.
 
+Migration `012_institutional_domain_registry_rls.sql` enables and forces
+row-level security on both domain-registry tables. Their policies scope reads
+and writes to the transaction-local `kin_sys.tenant_id` setting and fail
+closed when it is absent or empty. The PostgreSQL adapter establishes that
+setting inside every operation's transaction and closes the connection after
+the transaction completes. The caller must derive the tenant from an
+authenticated institutional principal; caller-supplied tenant IDs are not an
+authentication mechanism. As with the other custom-GUC policies, this is
+defense in depth: production roles must be least-privilege, non-superuser and
+must not have `BYPASSRLS`; arbitrary SQL under a role that can set the custom
+GUC can select another tenant.
+
 `postgresql_institutional_registry.py` implements the same storage contract
 as the SQLite reference `InstitutionalRegistry`. Snapshot creation and
 registration evidence commit in one transaction; lifecycle snapshot creation
