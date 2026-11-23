@@ -263,8 +263,8 @@ class PostgreSQLInstitutionalRegistryIntegrationTests(unittest.TestCase):
             ).fetchall()
             self.assertEqual(rows, [])
             # The same missing context must also reject writes.
-            with connection.transaction():
-                with self.assertRaises(self.psycopg.Error):
+            with self.assertRaises(self.psycopg.Error):
+                with connection.transaction():
                     connection.execute(
                         """
                         INSERT INTO institutional_records
@@ -287,7 +287,14 @@ class PostgreSQLInstitutionalRegistryIntegrationTests(unittest.TestCase):
                     "SELECT tenant_id FROM institutional_records WHERE tenant_id='tenant-a'"
                 ).fetchall()
                 self.assertEqual(rows, [])
-                with self.assertRaises(self.psycopg.Error):
+                # Let the error escape the savepoint so psycopg rolls it back.
+                pass
+            with self.assertRaises(self.psycopg.Error):
+                with connection.transaction():
+                    connection.execute(
+                        "SELECT set_config('kin_sys.tenant_id', %s, true)",
+                        ("tenant-b",),
+                    )
                     connection.execute(
                         """
                         INSERT INTO institutional_records
