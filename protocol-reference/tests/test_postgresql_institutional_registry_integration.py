@@ -224,6 +224,64 @@ class PostgreSQLInstitutionalRegistryIntegrationTests(unittest.TestCase):
             tenant_id="tenant-a", resource_type="institution",
             resource_id="BANK-UG-01")), 1)
 
+    
+    def test_domain_registry_rls_fails_closed_without_or_with_wrong_tenant_context(self):
+        self.create()
+        with self.connect() as connection:
+            # An unset transaction-local tenant must see no institutional rows.
+            rows = connection.execute(
+                "SELECT tenant_id FROM institutional_records WHERE tenant_id='tenant-a'"
+            ).fetchall()
+            self.assertEqual(rows, [])
+
+            # A different tenant cannot read or write the target tenant's rows.
+            with connection.transaction():
+                connection.execute(
+                    "SELECT set_config('kin_sys.tenant_id', %s, true)",
+                    ("tenant-b",),
+                )
+                rows = connection.execute(
+                    "SELECT tenant_id FROM institutional_records WHERE tenant_id='tenant-a'"
+                ).fetchall()
+                self.assertEqual(rows, [])
+                with self.assertRaises(self.psycopg.Error):
+                    connection.execute(
+                        """
+                        INSERT INTO institutional_records
+                            (tenant_id,resource_type,resource_id,version,status,
+                             payload_json,payload_digest,created_at)
+                        VALUES
+                            ('tenant-a','institution','BANK-UG-02','1.0',
+                             'PENDING_VERIFICATION','{}'::jsonb,%s,now())
+                        """,
+                        ("sha256:" + "a" * 64,),
+                    )
+
+    def test_domain_registry_rls_is_enabled_and_forced_on_both_tables(self):
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
+                       p.polname, pg_get_expr(p.polqual, p.polrelid),
+                       pg_get_expr(p.polwithcheck, p.polrelid)
+                  FROM pg_class c
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                  LEFT JOIN pg_policy p ON p.polrelid = c.oid
+                 WHERE n.nspname = current_schema()
+                   AND c.relname = ANY(%s)
+                 ORDER BY c.relname
+                """,
+                (["institutional_records", "institutional_events"],),
+            ).fetchall()
+        self.assertEqual(len(rows), 2)
+        for table, enabled, forced, policy, using, with_check in rows:
+            with self.subTest(table=table):
+                self.assertTrue(enabled)
+                self.assertTrue(forced)
+                self.assertEqual(policy, "kin_sys_tenant_isolation")
+                self.assertIn("kin_sys.tenant_id", using or "")
+                self.assertIn("kin_sys.tenant_id", with_check or "")
+
 
 if __name__ == "__main__":
     unittest.main()
