@@ -301,8 +301,10 @@ issuer/key pair as the resource ID, so a grant scoped to one issuer's key cannot
 be reused to register or revoke a key under another issuer.
 
 Local grant issuance is restricted to the tenant's own institution and issuer.
-The service rejects self-delegation; a beneficiary change requires a new grant,
-not an amendment. Amendments pin the expected current version and preserve the
+The service rejects self-delegation during issuance and amendment; a
+beneficiary change requires a new grant, not an amendment. A separately
+authorised revoker may still revoke a bootstrapped or self-held grant, so the
+self-delegation safeguard cannot prevent emergency removal of authority. Amendments pin the expected current version and preserve the
 grant ID, local issuer, institution, beneficiary and authority reference.
 Revocation advances the grant head to a new immutable REVOKED version.
 Federation trust roots and Ed25519 public-key references are separately

@@ -388,6 +388,27 @@ class InstitutionalTrustAdministrationTests(unittest.TestCase):
         )
         self.assertEqual(events[-1]["event_type"], "ISSUER_TRUST_REVOKED")
 
+
+
+    def test_separately_authorised_revoker_can_revoke_a_bootstrapped_self_grant(self):
+        bootstrap_grant = self.local_grant(actor_ref="actor:local-admin")
+        self.registry.create_grant_version(
+            tenant_id="tenant-a", grant=bootstrap_grant,
+            event_id="bootstrap-self-grant", actor_ref="actor:bootstrap-ceremony",
+            evidence_ref="evidence:bootstrap-ceremony",
+        )
+        self.authority.principal["roles"] = ["authority_grant_revoker"]
+        result = self.admin.revoke_grant(
+            tenant_id="tenant-a", grant_id="LOCAL-01", expected_version="1",
+            new_version="2", actor_assertion={"signed": "local"},
+            event_id="bootstrap-self-revoke", evidence_ref="evidence:self-revoke",
+        )
+        self.assertTrue(result["revoked"])
+        self.assertEqual(
+            self.registry.load_grant("tenant-a", "LOCAL-01")["status"],
+            "REVOKED",
+        )
+
     def test_evidence_refusal_prevents_registry_mutation(self):
         self.authority.principal["roles"] = ["authority_grant_issuer"]
         self.evidence.reject = True

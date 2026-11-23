@@ -233,6 +233,7 @@ class InstitutionalTrustAdministration:
         tenant_id: str,
         principal: dict[str, Any],
         active_required: bool = True,
+        prevent_self_delegation: bool = True,
     ) -> None:
         if not isinstance(grant, dict) or grant.get("tenant_id") != tenant_id:
             raise InstitutionalTrustAdministrationError("GRANT_TENANT_CONTEXT_MISMATCH")
@@ -245,7 +246,8 @@ class InstitutionalTrustAdministration:
         allowed_statuses = {"ACTIVE"} if active_required else {"ACTIVE", "SUSPENDED"}
         if grant.get("status") not in allowed_statuses:
             raise InstitutionalTrustAdministrationError("LOCAL_GRANT_STATUS_NOT_ALLOWED")
-        if grant.get("actor_ref") == principal["actor_ref"]:
+        if (prevent_self_delegation
+                and grant.get("actor_ref") == principal["actor_ref"]):
             raise InstitutionalTrustAdministrationError(
                 "SELF_DELEGATION_REQUIRES_SEPARATE_APPROVAL"
             )
@@ -349,6 +351,7 @@ class InstitutionalTrustAdministration:
             raise InstitutionalTrustAdministrationError("STALE_GRANT_VERSION")
         self._local_grant(
             current, tenant_id=tenant, principal=principal, active_required=False,
+            prevent_self_delegation=False,
         )
         subject = {
             "grant_id": grant_key, "expected_version": expected,
