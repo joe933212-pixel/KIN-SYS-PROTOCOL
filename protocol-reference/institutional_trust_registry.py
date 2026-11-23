@@ -335,11 +335,13 @@ class InstitutionalTrustRegistry:
             raise TrustRegistryConflict("AUTHORITY_GRANT_ALREADY_REVOKED")
         revoked = dict(current, status="REVOKED", version=new_version,
                        approval_ref=evidence_ref)
-        return self.create_grant_revision(
+        result = self.create_grant_revision(
             tenant_id=tenant_id, grant_id=grant_id,
             expected_version=expected_version, grant=revoked,
             event_id=event_id, actor_ref=actor_ref, evidence_ref=evidence_ref,
             event_type="GRANT_REVOKED", authorization=authorization)
+        return dict(result, revoked=True, grant_id=grant_id,
+                    status="REVOKED", version=new_version)
 
     def load_grant(self, tenant_id: str, grant_id: str) -> dict[str, Any] | None:
         """Return the current grant head for administrative inspection.
@@ -749,7 +751,8 @@ class InstitutionalTrustRegistry:
                JOIN trusted_issuer_relationships i
                  ON i.tenant_id=k.tenant_id
                 AND i.issuer_institution_id=k.issuer_institution_id
-               WHERE k.tenant_id=? AND k.key_id=? AND i.status='ACTIVE'""",
+               WHERE k.tenant_id=? AND k.key_id=?
+                 AND k.status='ACTIVE' AND i.status='ACTIVE'""",
             (tenant_id, key_id)).fetchone()
         return dict(row) if row else None
 
