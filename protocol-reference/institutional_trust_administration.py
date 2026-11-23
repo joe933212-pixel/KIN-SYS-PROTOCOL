@@ -107,6 +107,15 @@ class InstitutionalTrustAdministration:
             raise InstitutionalTrustAdministrationError(code)
         return value
 
+    @staticmethod
+    def _trust_key_resource_id(issuer_institution_id: str, key_id: str) -> str:
+        # Length prefixes make the issuer/key pair unambiguous even when an
+        # institution identifier itself contains the delimiter character.
+        return (
+            "trust-key:" + str(len(issuer_institution_id)) + ":"
+            + issuer_institution_id + ":" + str(len(key_id)) + ":" + key_id
+        )
+
     @classmethod
     def _subject_digest(cls, subject: dict[str, Any]) -> str:
         try:
@@ -447,7 +456,8 @@ class InstitutionalTrustAdministration:
             )
         principal = self._authorise(
             actor_assertion, tenant_id=tenant, resource_type="trust_key",
-            resource_id=key, action="REGISTER_TRUST_KEY",
+            resource_id=self._trust_key_resource_id(issuer, key),
+            action="REGISTER_TRUST_KEY",
         )
         if issuer == principal["institution_id"]:
             raise InstitutionalTrustAdministrationError(
@@ -475,18 +485,22 @@ class InstitutionalTrustAdministration:
         return self._result(result, principal, evidence)
 
     def revoke_trust_key(
-        self, *, tenant_id: str, key_id: str, actor_assertion: dict[str, Any],
-        event_id: str, evidence_ref: str,
+        self, *, tenant_id: str, issuer_institution_id: str, key_id: str,
+        actor_assertion: dict[str, Any], event_id: str, evidence_ref: str,
     ) -> dict[str, Any]:
         tenant = self._required(tenant_id, "TENANT_CONTEXT_REQUIRED")
+        issuer = self._required(issuer_institution_id, "INVALID_ISSUER_ID")
         key = self._required(key_id, "INVALID_KEY_ID")
         principal = self._authorise(
             actor_assertion, tenant_id=tenant, resource_type="trust_key",
-            resource_id=key, action="REVOKE_TRUST_KEY",
+            resource_id=self._trust_key_resource_id(issuer, key),
+            action="REVOKE_TRUST_KEY",
         )
         record = self._registry.get_trust_key(tenant_id=tenant, key_id=key)
         if record is None or record.get("status") != "ACTIVE":
             raise InstitutionalTrustAdministrationError("ACTIVE_TRUST_KEY_NOT_FOUND")
+        if record.get("issuer_institution_id") != issuer:
+            raise InstitutionalTrustAdministrationError("TRUST_KEY_ISSUER_MISMATCH")
         if record.get("issuer_institution_id") == principal["institution_id"]:
             raise InstitutionalTrustAdministrationError(
                 "LOCAL_HMAC_KEYS_ARE_NOT_FEDERATION_TRUST_KEYS"

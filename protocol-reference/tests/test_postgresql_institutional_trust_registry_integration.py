@@ -20,6 +20,7 @@ from institutional_authority import (
     sign_actor_claims, sign_federated_actor_claims,
 )
 from institutional_grant_provenance import sign_authority_grant
+from institutional_trust_administration import InstitutionalTrustAdministration
 from institutional_trust_registry import TrustRegistryConflict, TrustRegistryError
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -793,3 +794,56 @@ class PostgreSQLInstitutionalTrustRegistryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_authority_gated_trust_administration_uses_postgresql_registry(self):
+        class Authority:
+            def resolve(self, assertion, *, tenant_id, resource_type, resource_id):
+                self.last = (tenant_id, resource_type, resource_id)
+                return {
+                    "authenticated": True, "verified": True,
+                    "actor_ref": "actor:local-admin",
+                    "institution_id": "BANK-UG-01",
+                    "authority_ref": "authority:local-admin",
+                    "grant_ref": "LOCAL-ADMIN@1",
+                    "roles": ["authority_grant_issuer"],
+                    "assertion_algorithm": "HMAC-SHA256",
+                    "assertion_issuer_institution_id": None,
+                }
+
+        class Evidence:
+            def verify(self, evidence_ref, *, context):
+                self.context = context
+                return {
+                    "verified": True, "evidence_ref": evidence_ref,
+                    "verification_ref": "verification:" + evidence_ref,
+                    "evidence_digest": "sha256:" + ("b" * 64),
+                }
+
+        authority = Authority()
+        evidence = Evidence()
+        service = InstitutionalTrustAdministration(
+            registry=self.registry, authority_resolver=authority,
+            evidence_verifier=evidence,
+        )
+        local = self.grant(grant_id="LOCAL-ADMIN-SERVICE", version="1")
+        local["issuer_institution_id"] = "BANK-UG-01"
+        result = service.create_grant_version(
+            tenant_id="tenant-a", grant=local,
+            actor_assertion={"signed": "receiver-local"},
+            event_id="service-create-1",
+            evidence_ref="evidence:local-grant-approval",
+        )
+        self.assertTrue(result["created"])
+        self.assertEqual(authority.last, (
+            "tenant-a", "authority_grant", "LOCAL-ADMIN-SERVICE",
+        ))
+        current = self.registry.load_grant("tenant-a", "LOCAL-ADMIN-SERVICE")
+        self.assertEqual(current["status"], "ACTIVE")
+        events = self.registry.list_grant_events(
+            tenant_id="tenant-a", grant_id="LOCAL-ADMIN-SERVICE",
+        )
+        self.assertEqual(events[-1]["actor_ref"], "actor:local-admin")
+        self.assertEqual(
+            events[-1]["evidence_ref"], "verification:evidence:local-grant-approval",
+        )

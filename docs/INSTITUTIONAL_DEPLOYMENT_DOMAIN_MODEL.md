@@ -296,7 +296,9 @@ institution_trust_establisher, institution_trust_revoker,
 institution_trust_key_registrar, institution_trust_key_revoker, and
 federated_grant_acceptor. The resolver independently enforces the actor,
 tenant, grant-version, resource-type and resource-ID scope before the service
-checks the action role.
+checks the action role. Trust-key operations use an unambiguous length-prefixed
+issuer/key pair as the resource ID, so a grant scoped to one issuer's key cannot
+be reused to register or revoke a key under another issuer.
 
 Local grant issuance is restricted to the tenant's own institution and issuer.
 The service rejects self-delegation; a beneficiary change requires a new grant,
