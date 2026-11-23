@@ -128,6 +128,83 @@ class PostgreSQLInstitutionalTrustRegistry:
                 raise TrustRegistryError("INVALID_GRANT_SCOPE")
 
     @staticmethod
+    def _assert_admin_authorization(
+        self, cursor: Any, tenant_id: str,
+        authorization: dict[str, Any] | None, *,
+        additional_grant_id: str | None = None,
+    ) -> None:
+        if authorization is None:
+            return
+        required = {
+            "tenant_id", "grant_id", "grant_version", "actor_ref",
+            "institution_id", "authority_ref", "role", "resource_type",
+            "resource_id", "checked_at",
+        }
+        if not isinstance(authorization, dict) or set(authorization) != required:
+            raise TrustRegistryError("ADMIN_AUTHORIZATION_CONTEXT_INVALID")
+        if authorization["tenant_id"] != tenant_id:
+            raise TrustRegistryError("ADMIN_AUTHORIZATION_TENANT_MISMATCH")
+        for field in (
+            "grant_id", "grant_version", "actor_ref", "institution_id",
+            "authority_ref", "role", "resource_type",
+        ):
+            _identifier(
+                authorization[field], "ADMIN_AUTHORIZATION_" + field.upper() + "_INVALID",
+            )
+        resource_id = authorization["resource_id"]
+        if (not isinstance(resource_id, str) or not resource_id.strip()
+                or len(resource_id) > 512 or any(ord(ch) < 32 for ch in resource_id)):
+            raise TrustRegistryError("ADMIN_AUTHORIZATION_RESOURCE_ID_INVALID")
+        checked_at = authorization["checked_at"]
+        if type(checked_at) is not int:
+            raise TrustRegistryError("ADMIN_AUTHORIZATION_TIME_INVALID")
+
+        # Lock authority and target grant IDs in deterministic order before row locks.
+        lock_ids = {authorization["grant_id"]}
+        if additional_grant_id is not None:
+            lock_ids.add(_identifier(additional_grant_id, "INVALID_TARGET_GRANT_ID"))
+        for grant_key in sorted(lock_ids):
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (tenant_id + ":" + grant_key,),
+            )
+        cursor.execute(
+            """SELECT h.current_version,v.payload_json,v.payload_sha256
+               FROM authority_grant_heads h
+               JOIN authority_grant_versions v
+                 ON v.tenant_id=h.tenant_id AND v.grant_id=h.grant_id
+                AND v.version=h.current_version
+               WHERE h.tenant_id=%s AND h.grant_id=%s
+               FOR UPDATE OF h""",
+            (tenant_id, authorization["grant_id"]),
+        )
+        row = cursor.fetchone()
+        if row is None or row[0] != authorization["grant_version"]:
+            raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_NOT_CURRENT")
+        grant = _object(row[1], "ADMIN_AUTHORITY_GRANT_INVALID")
+        self._validate_grant(grant)
+        digest = hashlib.sha256(_canonical(grant).encode("utf-8")).hexdigest()
+        if digest != row[2]:
+            raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_DIGEST_MISMATCH")
+        if (
+            grant["tenant_id"] != tenant_id
+            or grant["status"] != "ACTIVE"
+            or grant["actor_ref"] != authorization["actor_ref"]
+            or grant["institution_id"] != authorization["institution_id"]
+            or grant["issuer_institution_id"] != authorization["institution_id"]
+            or grant["authority_ref"] != authorization["authority_ref"]
+        ):
+            raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_NOT_CURRENT")
+        if (
+            authorization["role"] not in grant["roles"]
+            or authorization["resource_type"] not in grant["resource_types"]
+            or ("*" not in grant["resource_ids"]
+                and authorization["resource_id"] not in grant["resource_ids"])
+        ):
+            raise TrustRegistryError("ADMIN_AUTHORITY_SCOPE_MISMATCH")
+        if not grant["valid_from"] <= checked_at < grant["valid_until"]:
+            raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_OUTSIDE_VALIDITY")
+
     def _event(
         cursor: Any, *, tenant_id: str, event_id: str, grant_id: str,
         version: str, event_type: str, actor_ref: str, evidence_ref: str,
@@ -202,6 +279,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         self, *, tenant_id: str, grant: dict[str, Any], event_id: str,
         actor_ref: str, evidence_ref: str,
         event_type: str = "GRANT_VERSION_CREATED",
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         tenant = self._tenant(tenant_id)
         self._validate_grant(grant)
@@ -216,6 +294,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=grant["grant_id"],
+                    )
                     cursor.execute(
                         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                         (tenant + ":" + grant["grant_id"],),
@@ -248,6 +330,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         self, *, tenant_id: str, grant_id: str, expected_version: str,
         grant: dict[str, Any], event_id: str, actor_ref: str,
         evidence_ref: str, event_type: str = "GRANT_AMENDED",
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         tenant = self._tenant(tenant_id)
         _identifier(grant_id, "INVALID_GRANT_ID")
@@ -259,6 +342,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=grant_id,
+                    )
                     cursor.execute(
                         """SELECT current_version FROM authority_grant_heads
                            WHERE tenant_id=%s AND grant_id=%s FOR UPDATE""",
@@ -281,6 +368,7 @@ class PostgreSQLInstitutionalTrustRegistry:
     def revoke_grant(
         self, *, tenant_id: str, grant_id: str, expected_version: str,
         new_version: str, event_id: str, actor_ref: str, evidence_ref: str,
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         tenant = self._tenant(tenant_id)
         _identifier(grant_id, "INVALID_GRANT_ID")
@@ -290,6 +378,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=grant_id,
+                    )
                     cursor.execute(
                         """SELECT h.current_version,v.payload_json
                            FROM authority_grant_heads h
@@ -416,6 +508,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         self, *, tenant_id: str, issuer_institution_id: str,
         trust_basis_ref: str, valid_from: int, valid_until: int,
         actor_ref: str, evidence_ref: str,
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         tenant = self._tenant(tenant_id)
         issuer = _identifier(issuer_institution_id, "INVALID_ISSUER_ID")
@@ -431,6 +524,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=None,
+                    )
                     cursor.execute(
                         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                         (tenant + ":issuer:" + issuer,),
@@ -458,6 +555,7 @@ class PostgreSQLInstitutionalTrustRegistry:
     def revoke_trusted_issuer(
         self, *, tenant_id: str, issuer_institution_id: str,
         actor_ref: str, evidence_ref: str, event_id: str,
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         tenant = self._tenant(tenant_id)
         issuer = _identifier(issuer_institution_id, "INVALID_ISSUER_ID")
@@ -468,6 +566,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=None,
+                    )
                     cursor.execute(
                         """UPDATE trusted_issuer_relationships SET status='REVOKED'
                            WHERE tenant_id=%s AND issuer_institution_id=%s AND status='ACTIVE'
@@ -523,6 +625,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         self, *, tenant_id: str, issuer_institution_id: str, key_id: str,
         algorithm: str, public_key_ref: str, valid_from: int, valid_until: int,
         actor_ref: str, evidence_ref: str,
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         tenant = self._tenant(tenant_id)
         issuer = _identifier(issuer_institution_id, "INVALID_ISSUER_ID")
@@ -542,6 +645,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=None,
+                    )
                     cursor.execute(
                         """SELECT status,valid_from,valid_until
                            FROM trusted_issuer_relationships
@@ -581,6 +688,7 @@ class PostgreSQLInstitutionalTrustRegistry:
     def revoke_trust_key(
         self, *, tenant_id: str, key_id: str, actor_ref: str,
         evidence_ref: str, event_id: str,
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         tenant = self._tenant(tenant_id)
         key = _identifier(key_id, "INVALID_KEY_ID")
@@ -591,6 +699,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=None,
+                    )
                     cursor.execute(
                         """UPDATE institutional_trust_keys SET status='REVOKED'
                            WHERE tenant_id=%s AND key_id=%s AND status='ACTIVE'
@@ -646,6 +758,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         event_id: str, actor_ref: str, evidence_ref: str,
         receiver_signing_key_id: str, receiver_signing_key_loader: Any,
         clock: Any = None,
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Verify issuer grant, obtain receiver approval, then atomically persist.
 
@@ -716,6 +829,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=grant["grant_id"],
+                    )
                     cursor.execute(
                         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                         (tenant + ":" + grant["grant_id"],),
@@ -785,6 +902,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         public_key_loader: Any, event_id: str, actor_ref: str,
         evidence_ref: str, receiver_signing_key_id: str,
         receiver_signing_key_loader: Any, clock: Any = None,
+        authorization: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Accept a fresh issuer-signed version of an existing federated grant.
 
@@ -889,6 +1007,10 @@ class PostgreSQLInstitutionalTrustRegistry:
         with self._tenant_connection(tenant) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
+                    self._assert_admin_authorization(
+                        cursor, tenant, authorization,
+                        additional_grant_id=grant_key,
+                    )
                     cursor.execute(
                         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                         (tenant + ":" + grant_key,),

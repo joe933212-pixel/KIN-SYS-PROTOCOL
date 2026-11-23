@@ -132,6 +132,69 @@ class InstitutionalTrustRegistry:
     def _tenant(tenant_id: str) -> None:
         _required_identifier(tenant_id, "TENANT_CONTEXT_REQUIRED")
 
+    def _assert_admin_authorization(
+        self, tenant_id: str, authorization: dict[str, Any] | None,
+    ) -> None:
+        if authorization is None:
+            return
+        required = {
+            "tenant_id", "grant_id", "grant_version", "actor_ref",
+            "institution_id", "authority_ref", "role", "resource_type",
+            "resource_id", "checked_at",
+        }
+        if not isinstance(authorization, dict) or set(authorization) != required:
+            raise TrustRegistryError("ADMIN_AUTHORIZATION_CONTEXT_INVALID")
+        if authorization["tenant_id"] != tenant_id:
+            raise TrustRegistryError("ADMIN_AUTHORIZATION_TENANT_MISMATCH")
+        for field in (
+            "grant_id", "grant_version", "actor_ref", "institution_id",
+            "authority_ref", "role", "resource_type",
+        ):
+            _required_identifier(
+                authorization[field], "ADMIN_AUTHORIZATION_" + field.upper() + "_INVALID",
+            )
+        resource_id = authorization["resource_id"]
+        if (not isinstance(resource_id, str) or not resource_id.strip()
+                or len(resource_id) > 512 or any(ord(ch) < 32 for ch in resource_id)):
+            raise TrustRegistryError("ADMIN_AUTHORIZATION_RESOURCE_ID_INVALID")
+        checked_at = authorization["checked_at"]
+        if type(checked_at) is not int:
+            raise TrustRegistryError("ADMIN_AUTHORIZATION_TIME_INVALID")
+        row = self.db.execute(
+            """SELECT h.current_version,v.payload_json
+               FROM authority_grant_heads h
+               JOIN authority_grant_versions v
+                 ON v.tenant_id=h.tenant_id AND v.grant_id=h.grant_id
+                AND v.version=h.current_version
+               WHERE h.tenant_id=? AND h.grant_id=?""",
+            (tenant_id, authorization["grant_id"]),
+        ).fetchone()
+        if row is None or row["current_version"] != authorization["grant_version"]:
+            raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_NOT_CURRENT")
+        try:
+            grant = json.loads(row["payload_json"])
+            self._validate_grant(grant)
+        except Exception as exc:
+            raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_INVALID") from exc
+        if (
+            grant["tenant_id"] != tenant_id
+            or grant["status"] != "ACTIVE"
+            or grant["actor_ref"] != authorization["actor_ref"]
+            or grant["institution_id"] != authorization["institution_id"]
+            or grant["issuer_institution_id"] != authorization["institution_id"]
+            or grant["authority_ref"] != authorization["authority_ref"]
+        ):
+            raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_NOT_CURRENT")
+        if (
+            authorization["role"] not in grant["roles"]
+            or authorization["resource_type"] not in grant["resource_types"]
+            or ("*" not in grant["resource_ids"]
+                and authorization["resource_id"] not in grant["resource_ids"])
+        ):
+            raise TrustRegistryError("ADMIN_AUTHORITY_SCOPE_MISMATCH")
+        if not grant["valid_from"] <= checked_at < grant["valid_until"]:
+            raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_OUTSIDE_VALIDITY")
+
     @staticmethod
     def _validate_grant(grant: dict[str, Any]) -> None:
         if not isinstance(grant, dict) or set(grant) != GRANT_FIELDS:
@@ -155,7 +218,8 @@ class InstitutionalTrustRegistry:
 
     def create_grant_version(self, *, tenant_id: str, grant: dict[str, Any],
                              event_id: str, actor_ref: str, evidence_ref: str,
-                             event_type: str = "GRANT_VERSION_CREATED") -> dict[str, Any]:
+                             event_type: str = "GRANT_VERSION_CREATED",
+                             authorization: dict[str, Any] | None = None) -> dict[str, Any]:
         self._tenant(tenant_id)
         self._validate_grant(grant)
         if grant["tenant_id"] != tenant_id:
@@ -168,6 +232,7 @@ class InstitutionalTrustRegistry:
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            self._assert_admin_authorization(tenant_id, authorization)
             old = self.db.execute(
                 "SELECT payload_json FROM authority_grant_versions WHERE tenant_id=? AND grant_id=? AND version=?",
                 (tenant_id, grant["grant_id"], grant["version"])).fetchone()
@@ -212,7 +277,8 @@ class InstitutionalTrustRegistry:
     def create_grant_revision(self, *, tenant_id: str, grant_id: str,
                               expected_version: str, grant: dict[str, Any],
                               event_id: str, actor_ref: str, evidence_ref: str,
-                              event_type: str = "GRANT_AMENDED") -> dict[str, Any]:
+                              event_type: str = "GRANT_AMENDED",
+                              authorization: dict[str, Any] | None = None) -> dict[str, Any]:
         self._tenant(tenant_id)
         self._validate_grant(grant)
         if grant["tenant_id"] != tenant_id or grant["grant_id"] != grant_id:
@@ -224,6 +290,7 @@ class InstitutionalTrustRegistry:
         body = _canonical(grant)
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            self._assert_admin_authorization(tenant_id, authorization)
             head = self.db.execute(
                 "SELECT current_version FROM authority_grant_heads WHERE tenant_id=? AND grant_id=?",
                 (tenant_id, grant_id)).fetchone()
@@ -256,7 +323,7 @@ class InstitutionalTrustRegistry:
 
     def revoke_grant(self, *, tenant_id: str, grant_id: str,
                      expected_version: str, new_version: str, event_id: str,
-                     actor_ref: str, evidence_ref: str) -> dict[str, Any]:
+                     actor_ref: str, evidence_ref: str, authorization: dict[str, Any] | None = None) -> dict[str, Any]:
         current = self.load_grant(tenant_id, grant_id)
         if current is None:
             raise TrustRegistryError("AUTHORITY_GRANT_NOT_FOUND")
@@ -270,7 +337,7 @@ class InstitutionalTrustRegistry:
             tenant_id=tenant_id, grant_id=grant_id,
             expected_version=expected_version, grant=revoked,
             event_id=event_id, actor_ref=actor_ref, evidence_ref=evidence_ref,
-            event_type="GRANT_REVOKED")
+            event_type="GRANT_REVOKED", authorization=authorization)
 
     def load_grant(self, tenant_id: str, grant_id: str) -> dict[str, Any] | None:
         """Return the current grant head for administrative inspection.
@@ -467,7 +534,8 @@ class InstitutionalTrustRegistry:
                             actor_ref: str, evidence_ref: str,
                             receiver_signing_key_id: str,
                             receiver_signing_key_loader: Any,
-                            clock: Any = None) -> dict[str, Any]:
+                            clock: Any = None,
+                            authorization: dict[str, Any] | None = None) -> dict[str, Any]:
         """Verify, accept and persist a federated grant in one SQLite transaction.
 
         The receiver approval adapter must authenticate the receiver-side actor
@@ -547,6 +615,7 @@ class InstitutionalTrustRegistry:
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            self._assert_admin_authorization(tenant_id, authorization)
             head = self.db.execute(
                 "SELECT current_version FROM authority_grant_heads WHERE tenant_id=? AND grant_id=?",
                 (tenant_id, grant["grant_id"])).fetchone()
@@ -597,7 +666,7 @@ class InstitutionalTrustRegistry:
 
     def register_trusted_issuer(self, *, tenant_id: str, issuer_institution_id: str,
                                 trust_basis_ref: str, valid_from: int, valid_until: int,
-                                actor_ref: str, evidence_ref: str) -> dict[str, Any]:
+                                actor_ref: str, evidence_ref: str, authorization: dict[str, Any] | None = None) -> dict[str, Any]:
         """Establish this tenant's explicit trust relationship with an issuer."""
         self._tenant(tenant_id)
         for value, code in ((issuer_institution_id, "INVALID_ISSUER_ID"),
@@ -611,6 +680,7 @@ class InstitutionalTrustRegistry:
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            self._assert_admin_authorization(tenant_id, authorization)
             try:
                 self.db.execute(
                     "INSERT INTO trusted_issuer_relationships VALUES(?,?,?,?,?,?,?)",
@@ -632,7 +702,7 @@ class InstitutionalTrustRegistry:
 
     def revoke_trusted_issuer(self, *, tenant_id: str, issuer_institution_id: str,
                               actor_ref: str, evidence_ref: str,
-                              event_id: str) -> dict[str, Any]:
+                              event_id: str, authorization: dict[str, Any] | None = None) -> dict[str, Any]:
         self._tenant(tenant_id)
         for value, code in ((issuer_institution_id, "INVALID_ISSUER_ID"),
                             (actor_ref, "INVALID_EVENT_ACTOR"),
@@ -642,6 +712,7 @@ class InstitutionalTrustRegistry:
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            self._assert_admin_authorization(tenant_id, authorization)
             row = self.db.execute(
                 "SELECT status FROM trusted_issuer_relationships WHERE tenant_id=? AND issuer_institution_id=?",
                 (tenant_id, issuer_institution_id)).fetchone()
@@ -698,7 +769,7 @@ class InstitutionalTrustRegistry:
     def register_trust_key(self, *, tenant_id: str, issuer_institution_id: str,
                            key_id: str, algorithm: str, public_key_ref: str,
                            valid_from: int, valid_until: int,
-                           actor_ref: str, evidence_ref: str) -> dict[str, Any]:
+                           actor_ref: str, evidence_ref: str, authorization: dict[str, Any] | None = None) -> dict[str, Any]:
         self._tenant(tenant_id)
         for value, code in ((issuer_institution_id, "INVALID_ISSUER_ID"),
                             (key_id, "INVALID_KEY_ID"),
@@ -715,6 +786,7 @@ class InstitutionalTrustRegistry:
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            self._assert_admin_authorization(tenant_id, authorization)
             try:
                 self.db.execute(
                     "INSERT INTO institutional_trust_keys VALUES(?,?,?,?,?,?,?,?,?)",
@@ -745,7 +817,7 @@ class InstitutionalTrustRegistry:
         return dict(row) if row else None
 
     def revoke_trust_key(self, *, tenant_id: str, key_id: str, actor_ref: str,
-                         evidence_ref: str, event_id: str) -> dict[str, Any]:
+                         evidence_ref: str, event_id: str, authorization: dict[str, Any] | None = None) -> dict[str, Any]:
         self._tenant(tenant_id)
         for value, code in ((key_id, "INVALID_KEY_ID"), (actor_ref, "INVALID_EVENT_ACTOR"),
                             (evidence_ref, "TRUST_EVIDENCE_REQUIRED"),
@@ -754,6 +826,7 @@ class InstitutionalTrustRegistry:
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            self._assert_admin_authorization(tenant_id, authorization)
             row = self.db.execute(
                 "SELECT status FROM institutional_trust_keys WHERE tenant_id=? AND key_id=?",
                 (tenant_id, key_id)).fetchone()

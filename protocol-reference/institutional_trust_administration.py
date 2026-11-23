@@ -12,6 +12,7 @@ There is no self-authorising bootstrap operation in this service.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import time
 from typing import Any, Protocol
@@ -175,9 +176,55 @@ class InstitutionalTrustAdministration:
             ("institution_id", "TRUST_ADMIN_INSTITUTION_INVALID"),
             ("authority_ref", "TRUST_ADMIN_AUTHORITY_REF_INVALID"),
             ("grant_ref", "TRUST_ADMIN_GRANT_REF_INVALID"),
+            ("grant_id", "TRUST_ADMIN_GRANT_ID_INVALID"),
+            ("grant_version", "TRUST_ADMIN_GRANT_VERSION_INVALID"),
         ):
             self._required(principal.get(field), code)
+        if principal.get("grant_ref") != (
+            principal["grant_id"] + "@" + principal["grant_version"]
+        ):
+            raise InstitutionalTrustAdministrationError(
+                "TRUST_ADMIN_GRANT_REFERENCE_MISMATCH"
+            )
         return principal
+
+    def _mutation_authorization(
+        self, principal: dict[str, Any], *, tenant_id: str,
+        resource_type: str, resource_id: str, action: str,
+    ) -> dict[str, Any]:
+        """Pin the exact local authority grant for atomic store-side revalidation."""
+        role = ROLE_BY_ACTION.get(action)
+        if role is None:
+            raise InstitutionalTrustAdministrationError(
+                "TRUST_ADMIN_ACTION_UNSUPPORTED"
+            )
+        checked_at = self._clock()
+        if (isinstance(checked_at, bool)
+                or not isinstance(checked_at, (int, float))
+                or not math.isfinite(checked_at)):
+            raise InstitutionalTrustAdministrationError(
+                "TRUST_ADMIN_CLOCK_INVALID"
+            )
+        return {
+            "tenant_id": self._required(tenant_id, "TENANT_CONTEXT_REQUIRED"),
+            "grant_id": self._required(
+                principal.get("grant_id"), "TRUST_ADMIN_GRANT_ID_INVALID",
+            ),
+            "grant_version": self._required(
+                principal.get("grant_version"), "TRUST_ADMIN_GRANT_VERSION_INVALID",
+            ),
+            "actor_ref": principal["actor_ref"],
+            "institution_id": principal["institution_id"],
+            "authority_ref": principal["authority_ref"],
+            "role": role,
+            "resource_type": self._required(
+                resource_type, "TRUST_ADMIN_RESOURCE_TYPE_INVALID",
+            ),
+            "resource_id": self._required(
+                resource_id, "TRUST_ADMIN_RESOURCE_ID_INVALID",
+            ),
+            "checked_at": int(checked_at),
+        }
 
     def _verify_evidence(
         self,
@@ -282,10 +329,14 @@ class InstitutionalTrustAdministration:
             resource_type="authority_grant", resource_id=grant_id,
             action="CREATE_GRANT", subject=grant,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=tenant, resource_type="authority_grant",
+            resource_id=grant_id, action="CREATE_GRANT",
+        )
         result = self._registry.create_grant_version(
             tenant_id=tenant, grant=grant, event_id=event_id,
             actor_ref=principal["actor_ref"],
-            evidence_ref=evidence["verification_ref"],
+            evidence_ref=evidence["verification_ref"], authorization=authorization,
         )
         return self._result(result, principal, evidence)
 
@@ -320,10 +371,14 @@ class InstitutionalTrustAdministration:
             resource_type="authority_grant", resource_id=grant_key,
             action="REVISE_GRANT", subject=grant, expected_version=expected,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=tenant, resource_type="authority_grant",
+            resource_id=grant_key, action="REVISE_GRANT",
+        )
         result = self._registry.create_grant_revision(
             tenant_id=tenant, grant_id=grant_key, expected_version=expected,
             grant=grant, event_id=event_id, actor_ref=principal["actor_ref"],
-            evidence_ref=evidence["verification_ref"],
+            evidence_ref=evidence["verification_ref"], authorization=authorization,
         )
         return self._result(result, principal, evidence)
 
@@ -363,10 +418,14 @@ class InstitutionalTrustAdministration:
             resource_type="authority_grant", resource_id=grant_key,
             action="REVOKE_GRANT", subject=subject, expected_version=expected,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=tenant, resource_type="authority_grant",
+            resource_id=grant_key, action="REVOKE_GRANT",
+        )
         result = self._registry.revoke_grant(
             tenant_id=tenant, grant_id=grant_key, expected_version=expected,
             new_version=new, event_id=event_id, actor_ref=principal["actor_ref"],
-            evidence_ref=evidence["verification_ref"],
+            evidence_ref=evidence["verification_ref"], authorization=authorization,
         )
         return self._result(result, principal, evidence)
 
@@ -400,11 +459,15 @@ class InstitutionalTrustAdministration:
             resource_type="trusted_issuer", resource_id=issuer,
             action="ESTABLISH_ISSUER_TRUST", subject=subject,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=tenant, resource_type="trusted_issuer",
+            resource_id=issuer, action="ESTABLISH_ISSUER_TRUST",
+        )
         result = self._registry.register_trusted_issuer(
             tenant_id=tenant, issuer_institution_id=issuer,
             trust_basis_ref=trust_basis_ref, valid_from=valid_from,
             valid_until=valid_until, actor_ref=principal["actor_ref"],
-            evidence_ref=evidence["verification_ref"],
+            evidence_ref=evidence["verification_ref"], authorization=authorization,
         )
         return self._result(result, principal, evidence)
 
@@ -438,10 +501,15 @@ class InstitutionalTrustAdministration:
             resource_type="trusted_issuer", resource_id=issuer,
             action="REVOKE_ISSUER_TRUST", subject=subject,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=tenant, resource_type="trusted_issuer",
+            resource_id=issuer, action="REVOKE_ISSUER_TRUST",
+        )
         result = self._registry.revoke_trusted_issuer(
             tenant_id=tenant, issuer_institution_id=issuer,
             actor_ref=principal["actor_ref"],
             evidence_ref=evidence["verification_ref"], event_id=event_id,
+            authorization=authorization,
         )
         return self._result(result, principal, evidence)
 
@@ -478,12 +546,17 @@ class InstitutionalTrustAdministration:
             resource_type="trust_key", resource_id=key,
             action="REGISTER_TRUST_KEY", subject=subject,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=tenant, resource_type="trust_key",
+            resource_id=self._trust_key_resource_id(issuer, key),
+            action="REGISTER_TRUST_KEY",
+        )
         result = self._registry.register_trust_key(
             tenant_id=tenant, issuer_institution_id=issuer, key_id=key,
             algorithm=algorithm, public_key_ref=public_key_ref,
             valid_from=valid_from, valid_until=valid_until,
             actor_ref=principal["actor_ref"],
-            evidence_ref=evidence["verification_ref"],
+            evidence_ref=evidence["verification_ref"], authorization=authorization,
         )
         return self._result(result, principal, evidence)
 
@@ -517,9 +590,15 @@ class InstitutionalTrustAdministration:
             resource_type="trust_key", resource_id=key,
             action="REVOKE_TRUST_KEY", subject=subject,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=tenant, resource_type="trust_key",
+            resource_id=self._trust_key_resource_id(issuer, key),
+            action="REVOKE_TRUST_KEY",
+        )
         result = self._registry.revoke_trust_key(
             tenant_id=tenant, key_id=key, actor_ref=principal["actor_ref"],
             evidence_ref=evidence["verification_ref"], event_id=event_id,
+            authorization=authorization,
         )
         return self._result(result, principal, evidence)
 
@@ -639,6 +718,11 @@ class InstitutionalTrustAdministration:
         verifier = self._receiver_approval_verifier(
             pending_grant, approval, principal, tenant_id, receiver_institution_id,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=self._required(tenant_id, "TENANT_CONTEXT_REQUIRED"),
+            resource_type="authority_grant", resource_id=pending_grant["grant_id"],
+            action="ACCEPT_FEDERATED_GRANT",
+        )
         try:
             result = self._registry.accept_signed_grant(
                 tenant_id=tenant_id, envelope=envelope,
@@ -650,7 +734,7 @@ class InstitutionalTrustAdministration:
                 evidence_ref=evidence_ref,
                 receiver_signing_key_id=signing_key_id,
                 receiver_signing_key_loader=signer_loader,
-                clock=self._clock,
+                clock=self._clock, authorization=authorization,
             )
         except Exception as exc:
             raise InstitutionalTrustAdministrationError(
@@ -715,6 +799,10 @@ class InstitutionalTrustAdministration:
         verifier = self._receiver_approval_verifier(
             pending_grant, approval, principal, tenant, receiver,
         )
+        authorization = self._mutation_authorization(
+            principal, tenant_id=tenant, resource_type="authority_grant",
+            resource_id=grant_key, action="ACCEPT_FEDERATED_GRANT",
+        )
         try:
             result = revision_method(
                 tenant_id=tenant, grant_id=grant_key, expected_version=expected,
@@ -724,6 +812,7 @@ class InstitutionalTrustAdministration:
                 actor_ref=principal["actor_ref"], evidence_ref=evidence_ref,
                 receiver_signing_key_id=signing_key_id,
                 receiver_signing_key_loader=signer_loader, clock=self._clock,
+                authorization=authorization,
             )
         except Exception as exc:
             raise InstitutionalTrustAdministrationError(

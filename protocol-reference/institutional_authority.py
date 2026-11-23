@@ -351,6 +351,8 @@ class InstitutionalAuthorityResolver:
             "actor_ref": grant["actor_ref"], "institution_id": grant["institution_id"],
             "authenticated": True, "verified": True, "authority_ref": grant["authority_ref"],
             "roles": list(grant["roles"]),
+            "grant_id": grant["grant_id"],
+            "grant_version": grant["version"],
             "grant_ref": grant["grant_id"] + "@" + grant["version"],
             "grant_issuer_institution_id": grant["issuer_institution_id"],
             "grant_approval_ref": grant["approval_ref"],
