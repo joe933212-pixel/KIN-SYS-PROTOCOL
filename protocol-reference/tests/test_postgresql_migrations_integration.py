@@ -50,7 +50,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.admin.close()
 
     def test_repository_migration_applies_and_is_idempotent_on_postgresql(self):
-        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012"])
         self.assertEqual(apply_migrations(self.connection), [])
         row = self.connection.execute(
             "SELECT version, filename, checksum_sha256 "
@@ -75,6 +75,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 ("009", "009_federation_outbox_retry_policy.sql"),
                 ("010", "010_institutional_trust_registry_rls.sql"),
                 ("011", "011_federation_delivery_rls.sql"),
+                ("012", "012_institutional_domain_registry_rls.sql"),
             ],
         )
         tables = {
@@ -97,13 +98,17 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
               JOIN pg_namespace n ON n.oid = c.relnamespace
               LEFT JOIN pg_policy p ON p.polrelid = c.oid
              WHERE n.nspname = %s
-               AND c.relname IN ('federation_inbox', 'federation_outbox')
+               AND c.relname IN (
+                   'federation_inbox', 'federation_outbox',
+                   'institutional_records', 'institutional_events'
+               )
              ORDER BY c.relname
             """,
             (self.schema,),
         ).fetchall()
         self.assertEqual([row[0] for row in policies], [
             "federation_inbox", "federation_outbox",
+            "institutional_events", "institutional_records",
         ])
         for table, enabled, forced, policy, using, with_check in policies:
             with self.subTest(table=table):
@@ -128,7 +133,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertIn("institutional_events", tables)
 
     def test_postgresql_rejects_changed_applied_migration_checksum(self):
-        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011"])
+        self.assertEqual(apply_migrations(self.connection), ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012"])
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             original = discover_migrations()[0][1].read_text(encoding="utf-8")
