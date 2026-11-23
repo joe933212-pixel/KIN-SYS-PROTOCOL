@@ -97,3 +97,19 @@ This is the message-security boundary only. Network delivery, authenticated inst
 
 
 The receiver-side adapter `institutional_federated_receiver.py` now verifies an incoming envelope before forwarding the digest-bound instruction to a receiver-configured local governed execution service. Receiver tenant, institution and binding are fixed by receiver-local configuration; origin claims cannot select them. The intended production executor is `InstitutionalInstructionExecutionService`, preserving local MINAH, identity, authority, CEE and final-decision controls. Tests currently prove routing and rejection behavior with a recording executor, not yet two complete independent runtime stacks. See `tests/test_institutional_federated_receiver.py` and the cross-installation federation contract.
+
+
+## Institutional trust and delegated-authority administration
+
+The trust-registry persistence adapters are not tenant-facing administration
+APIs. The application service in institutional_trust_administration.py gates
+grant creation, revision and revocation, issuer trust establishment/revocation,
+Ed25519 trust-key registration/revocation, and receiver acceptance of
+federated grants. It requires an exact resource-scoped local HMAC assertion,
+an action-specific delegated role, and a verified evidence receipt. HMAC is
+used only for the receiver-local administrative boundary; cross-institution
+issuer grants and acceptance receipts use Ed25519. The service has no
+self-authorising bootstrap path, and its evidence, session and key-custody
+interfaces remain deployment adapters rather than production services. See
+docs/INSTITUTIONAL_DEPLOYMENT_DOMAIN_MODEL.md for the role model, bootstrap
+boundary and remaining limitations.

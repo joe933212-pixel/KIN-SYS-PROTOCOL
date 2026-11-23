@@ -272,3 +272,77 @@ head has no fresh provenance, federated resolution rejects it. The reference
 backend does not yet provide a governed public administration endpoint for
 this method; callers must supply the authenticated tenant, independently
 authorised receiver-approval verifier, and receiver key-custody adapters.
+
+
+## Authority-gated trust administration service
+
+The application-layer service in
+protocol-reference/institutional_trust_administration.py now provides a
+governed write path over the SQLite and PostgreSQL trust-registry interfaces.
+The persistence adapters remain callable by trusted internal code, but they
+must not be exposed directly as an HTTP or tenant-facing administration API.
+
+Every service mutation resolves an assertion through
+InstitutionalAuthorityResolver for the exact resource type and resource ID,
+then checks a distinct role. The service accepts only the receiver's local
+HMAC-SHA256 administration profile; it rejects Ed25519/federated actor
+assertions at this local administrative boundary. Cross-institution issuer
+grants still use Ed25519 envelopes, and the receiver's acceptance receipt is
+signed by a separately injected receiver key-custody adapter.
+
+The action roles are authority_grant_issuer,
+authority_grant_amender, authority_grant_revoker,
+institution_trust_establisher, institution_trust_revoker,
+institution_trust_key_registrar, institution_trust_key_revoker, and
+federated_grant_acceptor. The resolver independently enforces the actor,
+tenant, grant-version, resource-type and resource-ID scope before the service
+checks the action role.
+
+Local grant issuance is restricted to the tenant's own institution and issuer.
+The service rejects self-delegation; a beneficiary change requires a new grant,
+not an amendment. Amendments pin the expected current version and preserve the
+grant ID, local issuer, institution, beneficiary and authority reference.
+Revocation advances the grant head to a new immutable REVOKED version.
+Federation trust roots and Ed25519 public-key references are separately
+established, rotated with overlapping validity windows, and revoked through
+distinct roles. Revoking an issuer root makes its associated keys unusable.
+
+The evidence-verifier interface receives a purpose, tenant, institution,
+resource, action, expected version and canonical subject digest. It must return
+a durable verification receipt reference and a SHA-256 evidence digest. For
+local registry mutations, the receipt reference—not an unchecked caller
+reference—is stored as the event's evidence reference. Federated acceptance
+retains the original approval reference and embeds the verification receipt
+inside the receiver-approval bundle covered by the receiver's Ed25519 receipt.
+
+The service also wraps initial federated-grant acceptance and, where the
+backend supports it, federated revision acceptance. It first verifies the
+issuer's Ed25519 envelope against the receiver's current trust root/key, then
+constructs the receiver-approval verifier internally from the receiver-local
+authority principal and exact pending grant; callers cannot inject an arbitrary
+approval callback. The persistence adapter repeats issuer/trust verification
+inside its transaction, so a concurrent trust or head change cannot be hidden
+by the application-layer precheck. It also verifies the grant digest, expected
+head, receiver receipt and audit lineage. PostgreSQL supports the atomic federated revision operation;
+the SQLite reference backend explicitly reports that it does not implement
+that revision operation.
+
+There is deliberately no self-authorising bootstrap method. The first local
+administrative authority grant and the first trust-administration role must be
+seeded through a separately controlled institutional ceremony, with an
+independent operator identity and durable evidence. Tenant IDs must still be
+derived from an authenticated institutional session by the API boundary.
+The evidence verifier, local HMAC key provisioning, receiver private-key
+provider and issuer public-key resolver are interfaces/trust boundaries, not
+production identity, legal-authority or key-management services. No HTTP
+administration endpoint is added in this increment.
+
+This is application-layer reference behavior, not production certification.
+Production still requires independently governed bootstrap and trust-root
+procedures, authenticated session-to-tenant binding, live identity-provider
+integration, legal-authority and evidence adjudication, HSM/KMS custody,
+distributed persistence and replay protection, least-privilege database
+roles, operational controls and independent security review. The data schema
+is unchanged because this increment adds no persisted domain fields; the
+existing grant, issuer, key, receipt and audit records remain the storage
+contract.
