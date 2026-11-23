@@ -33,6 +33,19 @@ class PostgreSQLInstitutionalRegistryIntegrationTests(unittest.TestCase):
         self.admin.execute(
             self.sql.SQL("CREATE SCHEMA {}").format(self.sql.Identifier(self.schema))
         )
+        # Run integration operations as a non-owner, non-superuser role so
+        # FORCE ROW LEVEL SECURITY is actually exercised (superusers bypass RLS).
+        self.role = "kin_sys_domain_test_" + uuid.uuid4().hex[:16]
+        self.admin.execute(
+            self.sql.SQL("CREATE ROLE {} NOLOGIN NOSUPERUSER NOBYPASSRLS").format(
+                self.sql.Identifier(self.role)
+            )
+        )
+        self.admin.execute(
+            self.sql.SQL("GRANT USAGE, CREATE ON SCHEMA {} TO {}").format(
+                self.sql.Identifier(self.schema), self.sql.Identifier(self.role)
+            )
+        )
 
         def connect():
             connection = self.psycopg.connect(DSN)
@@ -40,6 +53,9 @@ class PostgreSQLInstitutionalRegistryIntegrationTests(unittest.TestCase):
                 self.sql.SQL("SET search_path TO {}").format(
                     self.sql.Identifier(self.schema)
                 )
+            )
+            connection.execute(
+                self.sql.SQL("SET ROLE {}").format(self.sql.Identifier(self.role))
             )
             connection.commit()
             return connection
@@ -53,6 +69,9 @@ class PostgreSQLInstitutionalRegistryIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.admin.execute(
             self.sql.SQL("DROP SCHEMA {} CASCADE").format(self.sql.Identifier(self.schema))
+        )
+        self.admin.execute(
+            self.sql.SQL("DROP ROLE {}").format(self.sql.Identifier(self.role))
         )
         self.admin.close()
 
