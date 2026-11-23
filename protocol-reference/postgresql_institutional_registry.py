@@ -9,7 +9,7 @@ responsibility of the onboarding and lifecycle administration boundaries.
 from __future__ import annotations
 
 import json
-from contextlib import closing
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -25,6 +25,26 @@ class PostgreSQLInstitutionalRegistry:
     Each method owns and closes its connection. All writes use one PostgreSQL
     transaction, including the record snapshot and its associated audit event.
     """
+
+    @contextmanager
+    def _tenant_connection(self, tenant_id: str):
+        """Run one operation with transaction-local PostgreSQL tenant context.
+
+        RLS denies access when the setting is absent. Transaction-local
+        set_config prevents tenant context leaking across pooled connections.
+        The tenant ID must already have been derived from an authenticated
+        institutional principal by the calling application boundary.
+        """
+        connection = self._connect()
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT set_config('kin_sys.tenant_id', %s, true)",
+                    (tenant_id,),
+                )
+                yield connection
+        finally:
+            connection.close()
 
     def __init__(self, connection_factory: Callable[[], Any]):
         if not callable(connection_factory):
@@ -88,7 +108,7 @@ class PostgreSQLInstitutionalRegistry:
         body, digest = _json(payload), _digest(payload)
         event_body = _json(event_payload)
         now = datetime.now(timezone.utc)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant_id) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     self._lock_scopes(
@@ -144,7 +164,7 @@ class PostgreSQLInstitutionalRegistry:
         if not isinstance(payload, dict):
             raise RegistryError("RECORD_MUST_BE_OBJECT")
         body, digest = _json(payload), _digest(payload)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant_id) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -195,7 +215,7 @@ class PostgreSQLInstitutionalRegistry:
             raise RegistryError("TRANSITION_AUDIT_FIELDS_REQUIRED")
         body, digest, event_body = _json(snapshot), _digest(snapshot), _json(event)
         now = datetime.now(timezone.utc)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant_id) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     self._lock_scopes(
@@ -257,7 +277,7 @@ class PostgreSQLInstitutionalRegistry:
     def get_record(self, *, tenant_id: str, resource_type: str,
                    resource_id: str, version: str) -> dict[str, Any] | None:
         self._check(tenant_id, resource_type, resource_id, version)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant_id) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT status,payload_json,payload_digest,created_at
@@ -277,7 +297,7 @@ class PostgreSQLInstitutionalRegistry:
     def get_current_record(self, *, tenant_id: str, resource_type: str,
                            resource_id: str) -> dict[str, Any] | None:
         self._check(tenant_id, resource_type, resource_id)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant_id) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT version,status,payload_json,payload_digest,created_at
@@ -306,7 +326,7 @@ class PostgreSQLInstitutionalRegistry:
             query += " AND resource_id=%s"
             args += (resource_id,)
         query += " ORDER BY resource_id,record_order"
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant_id) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(query, args)
                 rows = cursor.fetchall()
@@ -324,7 +344,7 @@ class PostgreSQLInstitutionalRegistry:
         if not isinstance(payload, dict):
             raise RegistryError("EVENT_PAYLOAD_MUST_BE_OBJECT")
         body = _json(payload)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant_id) as connection:
             with connection.transaction():
                 with connection.cursor() as cursor:
                     self._lock_scopes(cursor, self._event_scope(tenant_id, event_id))
@@ -357,7 +377,7 @@ class PostgreSQLInstitutionalRegistry:
     def list_events(self, *, tenant_id: str, resource_type: str,
                     resource_id: str) -> list[dict[str, Any]]:
         self._check(tenant_id, resource_type, resource_id)
-        with closing(self._connect()) as connection:
+        with self._tenant_connection(tenant_id) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """SELECT event_id,version,event_type,actor_ref,evidence_ref,
