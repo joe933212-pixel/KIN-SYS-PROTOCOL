@@ -187,6 +187,8 @@ class PostgreSQLInstitutionalTrustRegistry:
             raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_DIGEST_MISMATCH")
         if (
             grant["tenant_id"] != tenant_id
+            or grant["grant_id"] != authorization["grant_id"]
+            or grant["version"] != authorization["grant_version"]
             or grant["status"] != "ACTIVE"
             or grant["actor_ref"] != authorization["actor_ref"]
             or grant["institution_id"] != authorization["institution_id"]

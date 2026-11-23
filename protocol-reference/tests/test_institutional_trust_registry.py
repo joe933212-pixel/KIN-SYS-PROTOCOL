@@ -168,6 +168,8 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
             assertion, tenant_id="tenant-a",
             resource_type="institution", resource_id="BANK-UG-01")
         self.assertEqual(resolved["grant_ref"], "GRANT-01@1")
+        self.assertEqual(resolved["grant_id"], "GRANT-01")
+        self.assertEqual(resolved["grant_version"], "1")
         self.registry.revoke_grant(
             tenant_id="tenant-a", grant_id="GRANT-01", expected_version="1",
             new_version="2", event_id="grant-revoked-1",
