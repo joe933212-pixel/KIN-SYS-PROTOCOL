@@ -179,15 +179,25 @@ class PostgreSQLInstitutionalRegistryIntegrationTests(unittest.TestCase):
         self.create()
         with self.assertRaisesRegex(self.psycopg.Error, "KIN_SYS_INSTITUTIONAL_RECORD_APPEND_ONLY"):
             with self.connect() as connection:
-                connection.execute(
-                    """UPDATE institutional_records SET status='ALTERED'
-                       WHERE tenant_id='tenant-a' AND resource_id='BANK-UG-01'"""
-                )
+                with connection.transaction():
+                    connection.execute(
+                        "SELECT set_config('kin_sys.tenant_id', %s, true)",
+                        ("tenant-a",),
+                    )
+                    connection.execute(
+                        """UPDATE institutional_records SET status='ALTERED'
+                           WHERE tenant_id='tenant-a' AND resource_id='BANK-UG-01'"""
+                    )
         with self.assertRaisesRegex(self.psycopg.Error, "KIN_SYS_INSTITUTIONAL_EVENT_APPEND_ONLY"):
             with self.connect() as connection:
-                connection.execute(
-                    "DELETE FROM institutional_events WHERE tenant_id='tenant-a'"
-                )
+                with connection.transaction():
+                    connection.execute(
+                        "SELECT set_config('kin_sys.tenant_id', %s, true)",
+                        ("tenant-a",),
+                    )
+                    connection.execute(
+                        "DELETE FROM institutional_events WHERE tenant_id='tenant-a'"
+                    )
 
     def test_onboarding_administration_accepts_postgresql_registry(self):
         class Authority:
