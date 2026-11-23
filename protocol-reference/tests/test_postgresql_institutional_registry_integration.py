@@ -243,6 +243,20 @@ class PostgreSQLInstitutionalRegistryIntegrationTests(unittest.TestCase):
                 "SELECT tenant_id FROM institutional_records WHERE tenant_id='tenant-a'"
             ).fetchall()
             self.assertEqual(rows, [])
+            # The same missing context must also reject writes.
+            with connection.transaction():
+                with self.assertRaises(self.psycopg.Error):
+                    connection.execute(
+                        """
+                        INSERT INTO institutional_records
+                            (tenant_id,resource_type,resource_id,version,status,
+                             payload_json,payload_digest,created_at)
+                        VALUES
+                            ('tenant-a','institution','BANK-UG-03','1.0',
+                             'PENDING_VERIFICATION','{}'::jsonb,%s,now())
+                        """,
+                        ("sha256:" + "b" * 64,),
+                    )
 
             # A different tenant cannot read or write the target tenant's rows.
             with connection.transaction():
