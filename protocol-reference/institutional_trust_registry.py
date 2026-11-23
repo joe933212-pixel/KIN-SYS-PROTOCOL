@@ -752,7 +752,7 @@ class InstitutionalTrustRegistry:
                  ON i.tenant_id=k.tenant_id
                 AND i.issuer_institution_id=k.issuer_institution_id
                WHERE k.tenant_id=? AND k.key_id=?
-                 AND k.status='ACTIVE' AND i.status='ACTIVE'""",
+                 AND i.status='ACTIVE'""",
             (tenant_id, key_id)).fetchone()
         return dict(row) if row else None
 
