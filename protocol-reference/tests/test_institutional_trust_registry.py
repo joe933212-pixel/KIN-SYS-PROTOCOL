@@ -316,6 +316,10 @@ class InstitutionalTrustRegistryTests(unittest.TestCase):
             tenant_id="tenant-a", key_id="ed25519-issuer-key-1",
             actor_ref="actor:trust-admin", evidence_ref="evidence:key-revocation",
             event_id="ed25519-key-revoked")
+        revoked_key = self.registry.load_trust_key(
+            "tenant-a", "ed25519-issuer-key-1")
+        self.assertIsNotNone(revoked_key)
+        self.assertEqual(revoked_key["status"], "REVOKED")
         claims["nonce"] = "federated-nonce-000002"
         assertion = {"claims": claims,
                      "signature": sign_federated_actor_claims(claims, private_key)}
