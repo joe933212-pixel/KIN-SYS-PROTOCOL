@@ -350,3 +350,14 @@ roles, operational controls and independent security review. The data schema
 is unchanged because this increment adds no persisted domain fields; the
 existing grant, issuer, key, receipt and audit records remain the storage
 contract.
+
+
+## Transaction-bound revalidation of administrative authority
+
+Every mutation through `InstitutionalTrustAdministration` now carries the exact local administrative grant ID and version resolved from the signed actor assertion, together with tenant, actor, institution, authority, action-specific role, resource type/ID and the service clock at the mutation boundary. The SQLite and PostgreSQL persistence adapters re-read the current grant head and independently verify that the same version is still ACTIVE, belongs to the same local actor/institution/authority, carries the required role and resource scope, and remains within its validity window.
+
+The check is performed in the same transaction as the target mutation. SQLite uses `BEGIN IMMEDIATE` so a concurrent writer cannot revoke or revise the authority grant between the check and commit. PostgreSQL takes transaction-scoped advisory locks for the authority and target grant IDs in deterministic sorted order, then locks and verifies the authority-grant head row with `FOR UPDATE`. If a revocation or revision commits first, the administrative mutation fails closed; if the administrative mutation obtains the lock first, it linearizes before the later revocation.
+
+The service and its `InstitutionalAuthorityResolver` must use the same trusted clock source. The checked timestamp is captured after evidence verification and immediately before persistence. This closes the registry-level stale-grant/revocation race for these reference adapters; it does not make a caller-controlled clock trustworthy.
+
+The low-level persistence methods retain optional authorization context for separately controlled bootstrap and migration ceremonies. They are internal persistence APIs, not tenant-facing administrative endpoints. Calling them directly without the application service bypasses the delegated-authority gate and must be prohibited by production application architecture and database permissions. PostgreSQL RLS and the authenticated tenant context remain required; this change does not replace database least privilege or independent security review.

@@ -13,8 +13,9 @@ from institutional_grant_provenance import sign_authority_grant
 from institutional_trust_administration import (
     InstitutionalTrustAdministration,
     InstitutionalTrustAdministrationError,
+    ROLE_BY_ACTION,
 )
-from institutional_trust_registry import InstitutionalTrustRegistry
+from institutional_trust_registry import InstitutionalTrustRegistry, TrustRegistryError
 
 
 class StubAuthorityResolver:
@@ -26,6 +27,8 @@ class StubAuthorityResolver:
             "institution_id": "BANK-UG-01",
             "authority_ref": "authority:local-trust",
             "grant_ref": "LOCAL-ADMIN@1",
+            "grant_id": "LOCAL-ADMIN",
+            "grant_version": "1",
             "roles": [],
             "assertion_algorithm": "HMAC-SHA256",
             "assertion_issuer_institution_id": None,
@@ -44,11 +47,14 @@ class StubEvidenceVerifier:
     def __init__(self):
         self.calls = []
         self.reject = False
+        self.on_verify = None
 
     def verify(self, evidence_ref, *, context):
         self.calls.append((evidence_ref, dict(context)))
         if self.reject:
             return {"verified": False, "evidence_ref": evidence_ref}
+        if self.on_verify is not None:
+            self.on_verify(evidence_ref, context)
         suffix = str(len(self.calls))
         return {
             "verified": True,
@@ -88,6 +94,21 @@ class InstitutionalTrustAdministrationTests(unittest.TestCase):
         }
         self.public_keys = {"vault://issuer/public": self.issuer_public}
         self.signer_calls = []
+        self.registry.create_grant_version(
+            tenant_id="tenant-a",
+            grant={
+                "grant_id": "LOCAL-ADMIN", "tenant_id": "tenant-a",
+                "status": "ACTIVE", "actor_ref": "actor:local-admin",
+                "institution_id": "BANK-UG-01", "authority_ref": "authority:local-trust",
+                "roles": list(ROLE_BY_ACTION.values()),
+                "resource_types": ["authority_grant", "trusted_issuer", "trust_key"],
+                "resource_ids": ["*"], "valid_from": 100, "valid_until": 300,
+                "version": "1", "issuer_institution_id": "BANK-UG-01",
+                "approval_ref": "approval:local-admin",
+            },
+            event_id="bootstrap-local-admin", actor_ref="actor:bootstrap-ceremony",
+            evidence_ref="evidence:bootstrap-ceremony",
+        )
         self.admin = self.make_admin()
 
     def make_admin(self, registry=None):
@@ -570,6 +591,99 @@ class InstitutionalTrustAdministrationTests(unittest.TestCase):
                 event_id="unsupported-revision", evidence_ref="evidence:unused",
             )
 
+
+
+    def test_authority_grant_is_rechecked_after_evidence_verification(self):
+        self.authority.principal["roles"] = ["authority_grant_issuer"]
+
+        def revoke_admin_grant(_evidence_ref, _context):
+            current = self.registry.load_grant("tenant-a", "LOCAL-ADMIN")
+            revoked = dict(
+                current, status="REVOKED", version="2",
+                approval_ref="approval:admin-revocation",
+            )
+            self.registry.create_grant_revision(
+                tenant_id="tenant-a", grant_id="LOCAL-ADMIN",
+                expected_version="1", grant=revoked,
+                event_id="admin-revocation-race", actor_ref="actor:separate-revoker",
+                evidence_ref="evidence:admin-revocation",
+            )
+
+        self.evidence.on_verify = revoke_admin_grant
+        with self.assertRaisesRegex(
+            TrustRegistryError, "ADMIN_AUTHORITY_GRANT_NOT_CURRENT",
+        ):
+            self.admin.create_grant_version(
+                tenant_id="tenant-a", grant=self.local_grant(),
+                actor_assertion={"signed": "local"}, event_id="race-target-create",
+                evidence_ref="evidence:race-target-create",
+            )
+        self.assertIsNone(self.registry.load_grant("tenant-a", "LOCAL-01"))
+
+    def test_authority_grant_scope_is_rechecked_by_persistent_store(self):
+        current = self.registry.load_grant("tenant-a", "LOCAL-ADMIN")
+        narrowed = dict(
+            current, version="2", roles=["payment_reviewer"],
+            resource_ids=["PAY-OTHER"],
+            approval_ref="approval:narrowed-admin",
+        )
+        self.registry.create_grant_revision(
+            tenant_id="tenant-a", grant_id="LOCAL-ADMIN",
+            expected_version="1", grant=narrowed,
+            event_id="admin-scope-narrowed", actor_ref="actor:separate-amender",
+            evidence_ref="evidence:admin-scope-narrowed",
+        )
+        self.authority.principal.update(
+            grant_ref="LOCAL-ADMIN@2", grant_version="2",
+            roles=["authority_grant_issuer"],
+        )
+        with self.assertRaisesRegex(
+            TrustRegistryError, "ADMIN_AUTHORITY_SCOPE_MISMATCH",
+        ):
+            self.admin.create_grant_version(
+                tenant_id="tenant-a", grant=self.local_grant(),
+                actor_assertion={"signed": "local"}, event_id="scope-target-create",
+                evidence_ref="evidence:scope-target-create",
+            )
+        self.assertIsNone(self.registry.load_grant("tenant-a", "LOCAL-01"))
+
+    def test_authority_grant_expiry_is_checked_at_mutation_boundary(self):
+        self.authority.principal["roles"] = ["authority_grant_issuer"]
+        self.admin._clock = lambda: 300
+        with self.assertRaisesRegex(
+            TrustRegistryError, "ADMIN_AUTHORITY_GRANT_OUTSIDE_VALIDITY",
+        ):
+            self.admin.create_grant_version(
+                tenant_id="tenant-a", grant=self.local_grant(),
+                actor_assertion={"signed": "local"}, event_id="expired-admin-create",
+                evidence_ref="evidence:expired-admin-create",
+            )
+        self.assertIsNone(self.registry.load_grant("tenant-a", "LOCAL-01"))
+
+    def test_authority_grant_tenant_isolation_is_rechecked_by_store(self):
+        self.authority.principal["roles"] = ["authority_grant_issuer"]
+        foreign = dict(self.local_grant(), tenant_id="tenant-b")
+        with self.assertRaisesRegex(
+            TrustRegistryError, "ADMIN_AUTHORITY_GRANT_NOT_CURRENT",
+        ):
+            self.admin.create_grant_version(
+                tenant_id="tenant-b", grant=foreign,
+                actor_assertion={"signed": "local"}, event_id="foreign-tenant-create",
+                evidence_ref="evidence:foreign-tenant-create",
+            )
+        self.assertIsNone(self.registry.load_grant("tenant-b", "LOCAL-01"))
+
+    def test_bootstrapped_admin_grant_can_only_self_revoke_with_revoker_role(self):
+        self.authority.principal["roles"] = ["authority_grant_revoker"]
+        result = self.admin.revoke_grant(
+            tenant_id="tenant-a", grant_id="LOCAL-ADMIN", expected_version="1",
+            new_version="2", actor_assertion={"signed": "local"},
+            event_id="admin-self-revocation", evidence_ref="evidence:admin-self-revocation",
+        )
+        self.assertTrue(result["revoked"])
+        current = self.registry.load_grant("tenant-a", "LOCAL-ADMIN")
+        self.assertEqual(current["status"], "REVOKED")
+        self.assertEqual(current["version"], "2")
 
 if __name__ == "__main__":
     unittest.main()

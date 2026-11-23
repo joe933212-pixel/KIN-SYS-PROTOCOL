@@ -113,3 +113,6 @@ self-authorising bootstrap path, and its evidence, session and key-custody
 interfaces remain deployment adapters rather than production services. See
 docs/INSTITUTIONAL_DEPLOYMENT_DOMAIN_MODEL.md for the role model, bootstrap
 boundary and remaining limitations.
+
+
+The trust-administration service now pins the exact local authority-grant version and passes an action/resource-scoped authorization context into the persistence mutation. SQLite and PostgreSQL recheck the current ACTIVE grant, actor, institution, role, resource scope and validity inside the same transaction that changes trust state. This prevents a grant revoked or revised after initial resolution from authorising a later write. The low-level registry APIs remain internal bootstrap/persistence interfaces; production callers must expose only the governed administration service and enforce database least privilege.
