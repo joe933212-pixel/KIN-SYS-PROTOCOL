@@ -127,7 +127,6 @@ class PostgreSQLInstitutionalTrustRegistry:
             ):
                 raise TrustRegistryError("INVALID_GRANT_SCOPE")
 
-    @staticmethod
     def _assert_admin_authorization(
         self, cursor: Any, tenant_id: str,
         authorization: dict[str, Any] | None, *,
@@ -205,6 +204,7 @@ class PostgreSQLInstitutionalTrustRegistry:
         if not grant["valid_from"] <= checked_at < grant["valid_until"]:
             raise TrustRegistryError("ADMIN_AUTHORITY_GRANT_OUTSIDE_VALIDITY")
 
+    @staticmethod
     def _event(
         cursor: Any, *, tenant_id: str, event_id: str, grant_id: str,
         version: str, event_type: str, actor_ref: str, evidence_ref: str,
