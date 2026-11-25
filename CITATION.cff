@@ -4,8 +4,8 @@ title: "KIN-SYS Protocol: Provider-Neutral Governed Execution Prototype"
 authors:
   - family-names: Kagoro
     given-names: Joel
-version: 0.1.0
-date-released: 2026-11-05
+version: 0.2.0
+date-released: 2026-11-25
 license: Apache-2.0
 repository-code: "https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL"
 abstract: >-
