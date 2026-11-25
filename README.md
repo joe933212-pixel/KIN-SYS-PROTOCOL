@@ -34,7 +34,8 @@ The v0.2.0 engineering increment adds reference contracts and implementations fo
 ## Status
 
 **Stage:** Protocol foundation / runnable local reference prototype  
-**Release candidate:** v0.2.0 (pre-publication preparation; not yet tagged or published)  
+**Published release:** [v0.2.0 on GitHub](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/releases/tag/v0.2.0) · tag `v0.2.0` · commit `7c937bd1b6f29bb2d30068d30de16183469882a4  
+**Zenodo status:** GitHub release published; Zenodo v0.2.0 version deposit pending. The existing concept record is [10.5281/zenodo.23976294](https://doi.org/10.5281/zenodo.23976294).  
 **Production status:** Not production-ready. The repository contains a runnable synthetic governed execution path, not a complete live KIN-SYS deployment.
 
 This is the new protocol specification baseline. Earlier KIN-SYS repositories are source material to assess, not automatically authoritative implementations. Proposed capabilities must not be described as implemented until supported by reproducible tests and evidence.
