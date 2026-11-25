@@ -18,10 +18,23 @@ The objective is to specify a system in which independently operated components 
 
 MINAH is an institution-owned gatekeeper deployment, not a single global service. The reference pipeline supports a versioned deployment profile and pins it to each operation's durable request fingerprint and MINAH disposition trace. This remains a research reference implementation, not production deployment or legal assurance.
 
+## Institutional deployment and federation (v0.2.0 reference increments)
+
+The v0.2.0 engineering increment adds reference contracts and implementations for institution-owned deployment, identity-provider onboarding, delegated authority and cross-installation federation. These remain research/reference components with the limits stated in each document.
+
+- [Institutional deployment domain model](docs/INSTITUTIONAL_DEPLOYMENT_DOMAIN_MODEL.md)
+- [Institutional MINAH deployment onboarding](docs/INSTITUTIONAL_MINAH_DEPLOYMENT_ONBOARDING.md)
+- [Institutional identity-provider onboarding](docs/INSTITUTIONAL_IDENTITY_PROVIDER_ONBOARDING.md)
+- [Cross-installation federation message contract](docs/CROSS_INSTALLATION_FEDERATION_MESSAGE_CONTRACT.md)
+- [OIDC HTTPS transport and discovery controls](docs/OIDC_HTTPS_TRANSPORT.md)
+- [Live OIDC integration test profile](docs/OIDC_LIVE_INTEGRATION.md) — profile/configuration requirements; live provider tests are not part of the recorded CI pass
+- [PostgreSQL migrations and persistence boundaries](protocol-reference/migrations/postgresql/README.md)
+- [Portable test sandbox and USB build](sandbox/README.md) — synthetic, loopback-only demonstration, not the full federated runtime
+
 ## Status
 
 **Stage:** Protocol foundation / runnable local reference prototype  
-**Release candidate:** v0.1.0  
+**Release candidate:** v0.2.0 (pre-publication preparation; not yet tagged or published)  
 **Production status:** Not production-ready. The repository contains a runnable synthetic governed execution path, not a complete live KIN-SYS deployment.
 
 This is the new protocol specification baseline. Earlier KIN-SYS repositories are source material to assess, not automatically authoritative implementations. Proposed capabilities must not be described as implemented until supported by reproducible tests and evidence.
