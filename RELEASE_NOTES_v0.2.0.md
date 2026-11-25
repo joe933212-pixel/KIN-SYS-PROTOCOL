@@ -49,7 +49,9 @@ GitHub Actions on the exact implementation baseline commit `b9385003509541cc5e01
 - Test suite: **789 tests run; 4 skipped; 0 failures**
 - The four skips are live OIDC provider tests because a live OIDC test profile was not configured.
 
-This is CI evidence for the implementation baseline, not yet CI evidence for the final release-preparation branch or the eventual tagged release commit. PR #9 must obtain fresh successful checks on its final head before release approval.
+Fresh GitHub Actions on the exact release-preparation PR head `7f933111076b7351d3864daca7ef98a41f16ec1f` also completed successfully on 2026-11-25: [run 45565505034](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/45565505034). The `Protocol conformance slice` workflow's `local-transition-contract` job passed. Transition contract tests, local HTTP smoke test, paired comparison report, integrated demonstrator report and paired integrated workflow report all completed successfully; report verification and artifact upload also succeeded. All workflow steps completed successfully.
+
+This is CI evidence for the current PR head and implementation baseline, not yet the eventual tagged release commit. The final release commit must still be checked after merge/tagging.
 
 ## Known limitations and claims boundary
 
@@ -81,7 +83,7 @@ This is CI evidence for the implementation baseline, not yet CI evidence for the
 - [x] Inspect the new institutional, identity, federation, PostgreSQL and sandbox documentation.
 - [x] Identify the 29 production API routes as not yet routed.
 - [ ] Independently download and inspect the original v0.1.0 ZIP archive (download unavailable during this audit).
-- [ ] Complete fresh CI on the final PR #9 head.
+- [x] Complete fresh CI on the current PR #9 head `7f933111076b7351d3864daca7ef98a41f16ec1f`.
 - [ ] Complete final documentation and security-boundary review on the final release snapshot.
 - [ ] Merge PR #9 after approval.
 - [ ] Create and verify tag `v0.2.0` and GitHub release from the exact approved commit.
