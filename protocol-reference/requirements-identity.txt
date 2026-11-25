@@ -1,0 +1,3 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+# Concrete OIDC ID-token validation adapter (cryptographic backend).
+PyJWT[crypto]>=2.10,<3

@@ -122,6 +122,12 @@ class ConventionalSQLiteBaselineTests(unittest.TestCase):
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=5)
+            # The child is intentionally terminated at the crash marker.
+            # Close captured streams after it exits to avoid ResourceWarnings.
+            if child.stdout is not None:
+                child.stdout.close()
+            if child.stderr is not None:
+                child.stderr.close()
 
     def test_process_termination_before_commit_leaves_no_partial_effect(self):
         marker = os.path.join(self.temp.name, "baseline-before-commit.marker")

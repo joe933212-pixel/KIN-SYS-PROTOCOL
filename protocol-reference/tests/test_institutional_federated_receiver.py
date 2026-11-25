@@ -1,0 +1,500 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+import unittest
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+from governed_contracts import CONTRACT_VERSION, compute_payload_digest
+from institutional_federation import sign_cross_installation_instruction
+from institutional_federation_acknowledgement import verify_receiver_acknowledgement
+from institutional_federated_receiver import (
+    FederatedInstructionReceiverError,
+    InstitutionalFederatedInstructionReceiver,
+)
+
+
+def instruction():
+    value = {
+        "contract_version": CONTRACT_VERSION,
+        "request_id": "REQ-RECEIVE-001",
+        "operation_id": "OP-RECEIVE-001",
+        "idempotency_key": "IDEM-RECEIVE-001",
+        "principal_ref": "principal:origin-user",
+        "authority_ref": "authority:origin-bank",
+        "action": "REQUEST_DESTINATION_REVIEW",
+        "target_ref": "transaction:RECEIVE-001",
+        "purpose": "Independent receiving institution review",
+        "jurisdiction": "RW",
+        "submitted_at": "2026-11-09T10:00:00+00:00",
+        "rule_pack_version": "RW-RULES:3.2",
+        "evidence_refs": ["evidence:RECEIVE-001"],
+        "evidence": {"document_ref": "evidence:RECEIVE-001"},
+    }
+    value["payload_digest"] = compute_payload_digest(value)
+    return value
+
+
+class LocalExecution:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        item = kwargs["instruction"]
+        return {
+            "decision": {
+                "request_id": item["request_id"],
+                "operation_id": item["operation_id"],
+                "protocol_decision": "DEFERRED",
+                "cee_execution_ref": "cee-operation:" + item["operation_id"],
+            },
+            "result": {"status": "DEFERRED"},
+            "runtime_pins": {
+                "tenant_id": kwargs["tenant_id"],
+                "institution_id": kwargs["institution_id"],
+                "binding_id": kwargs["binding_id"],
+                "jurisdiction_ref": "RW",
+                "minah_deployment_id": "MINAH-RW-01",
+                "minah_runtime_version": "1",
+                "identity_provider_id": "IDP-RW-01",
+                "identity_provider_version": "1",
+                "policy_pack_version": "RW-RULES:3.2",
+                "source_pack_version": "RW-SOURCES:1",
+                "authority_profile_version": "RW-AUTHORITY:1",
+            },
+        }
+
+
+class FederatedReceiverTests(unittest.TestCase):
+    def setUp(self):
+        self.private = Ed25519PrivateKey.generate()
+        self.public = self.private.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw)
+        self.now = 1_800_000_030
+        self.replay = set()
+        self.key_record = {
+            "tenant_id": "tenant-rw",
+            "key_id": "KEY-UG-01",
+            "issuer_institution_id": "BANK-UG-01",
+            "algorithm": "Ed25519",
+            "status": "ACTIVE",
+            "public_key_ref": "keyref:ug",
+            "valid_from": 1_700_000_000,
+            "valid_until": 1_900_000_000,
+            "issuer_valid_from": 1_700_000_000,
+            "issuer_valid_until": 1_900_000_000,
+        }
+        self.envelope = sign_cross_installation_instruction(
+            instruction=instruction(), message_id="MSG-RECEIVE-001",
+            key_id="KEY-UG-01", issuer_installation_id="INSTALL-UG-01",
+            issuer_institution_id="BANK-UG-01",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01", nonce="NONCE-RECEIVE-001",
+            issued_at=self.now - 30, expires_at=self.now + 90,
+            private_key=self.private,
+        )
+        self.executor = LocalExecution()
+        self.receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=self.executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            consume_nonce=self.consume,
+            clock=lambda: self.now,
+        )
+
+    def consume(self, tenant, issuer, nonce, expires):
+        key = (tenant, issuer, nonce)
+        if key in self.replay:
+            return False
+        self.replay.add(key)
+        return True
+
+    def test_verified_message_enters_receiver_selected_local_execution(self):
+        result = self.receiver.receive(self.envelope)
+        self.assertTrue(result["message_verified"])
+        self.assertFalse(result["origin_authority_inherited"])
+        self.assertFalse(result["receiver_execution_authorised_by_origin"])
+        self.assertEqual(len(self.executor.calls), 1)
+        call = self.executor.calls[0]
+        self.assertEqual(call["tenant_id"], "tenant-rw")
+        self.assertEqual(call["institution_id"], "BANK-RW-01")
+        self.assertEqual(call["binding_id"], "BIND-RW-01")
+        self.assertEqual(call["instruction"]["principal_ref"], "principal:origin-user")
+        self.assertEqual(result["receiver_runtime_pins"]["tenant_id"], "tenant-rw")
+        self.assertEqual(result["receiver_runtime_pins"]["institution_id"], "BANK-RW-01")
+        self.assertEqual(result["receiver_runtime_pins"]["binding_id"], "BIND-RW-01")
+
+
+    def test_durable_duplicate_returns_stored_ack_without_reexecution(self):
+        class MemoryInbox:
+            def __init__(self):
+                self.rows = {}
+            def accept_authenticated(self, **kwargs):
+                key = (kwargs["receiver_tenant_id"], kwargs["issuer_installation_id"],
+                       kwargs["message_id"])
+                existing = self.rows.get(key)
+                if existing is not None:
+                    return {"inserted": False, "status": existing["status"]}
+                self.rows[key] = {"status": "RECEIVED", "response": None}
+                return {"inserted": True, "status": "RECEIVED"}
+            def claim(self, **kwargs):
+                row = self.rows[(kwargs["receiver_tenant_id"],
+                                 kwargs["issuer_installation_id"], kwargs["message_id"])]
+                if row["status"] != "RECEIVED":
+                    return None
+                row["status"] = "PROCESSING"
+                return {"lease_owner": kwargs["worker_id"]}
+            def complete(self, **kwargs):
+                row = self.rows[(kwargs["receiver_tenant_id"],
+                                 kwargs["issuer_installation_id"], kwargs["message_id"])]
+                if row["status"] != "PROCESSING":
+                    return False
+                row["status"] = "COMPLETED"
+                row["response"] = kwargs["response"]
+                row["decision_ref"] = kwargs["decision_ref"]
+                return True
+            def fail(self, **kwargs):
+                row = self.rows[(kwargs["receiver_tenant_id"],
+                                 kwargs["issuer_installation_id"], kwargs["message_id"])]
+                row["status"] = "RETRYABLE_FAILURE" if kwargs["retryable"] else "REJECTED"
+                return True
+            def get(self, **kwargs):
+                return self.rows.get((kwargs["receiver_tenant_id"],
+                                      kwargs["issuer_installation_id"], kwargs["message_id"]))
+
+        inbox = MemoryInbox()
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=self.executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            inbox=inbox,
+            inbox_worker_id="receiver-worker-01",
+            clock=lambda: self.now,
+        )
+        first = receiver.receive(self.envelope)
+        second = receiver.receive(self.envelope)
+        self.assertEqual(first["delivery_status"], "COMPLETED")
+        self.assertTrue(second["duplicate_delivery"])
+        self.assertEqual(second["delivery_status"], "COMPLETED")
+        self.assertEqual(second["receiver_decision"], first["receiver_decision"])
+        self.assertEqual(len(self.executor.calls), 1)
+
+
+    def test_retryable_execution_failure_reclaims_inbox_and_reuses_operation(self):
+        class MemoryInbox:
+            def __init__(self):
+                self.row = None
+            def accept_authenticated(self, **kwargs):
+                if self.row is not None:
+                    return {"inserted": False, "status": self.row["status"]}
+                self.row = {"status": "RECEIVED", "response": None}
+                return {"inserted": True, "status": "RECEIVED"}
+            def claim(self, **kwargs):
+                if self.row["status"] not in {"RECEIVED", "RETRYABLE_FAILURE"}:
+                    return None
+                self.row["status"] = "PROCESSING"
+                return {"lease_owner": kwargs["worker_id"]}
+            def complete(self, **kwargs):
+                self.row["status"] = "COMPLETED"
+                self.row["response"] = kwargs["response"]
+                return True
+            def fail(self, **kwargs):
+                self.row["status"] = "RETRYABLE_FAILURE" if kwargs["retryable"] else "REJECTED"
+                return True
+            def get(self, **kwargs):
+                return self.row
+
+        class FailsOnce:
+            def __init__(self):
+                self.calls = 0
+            def execute(self, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("temporary executor interruption")
+                item = kwargs["instruction"]
+                return {
+                    "decision": {
+                        "request_id": item["request_id"],
+                        "operation_id": item["operation_id"],
+                        "protocol_decision": "PASSED",
+                        "cee_execution_ref": "cee-operation:" + item["operation_id"],
+                    },
+                    "result": {"status": "COMMITTED"},
+                    "runtime_pins": {
+                        "tenant_id": kwargs["tenant_id"],
+                        "institution_id": kwargs["institution_id"],
+                        "binding_id": kwargs["binding_id"],
+                        "jurisdiction_ref": "RW",
+                        "minah_deployment_id": "MINAH-RW-01",
+                        "minah_runtime_version": "1",
+                        "identity_provider_id": "IDP-RW-01",
+                        "identity_provider_version": "1",
+                        "policy_pack_version": "RW-RULES:3.2",
+                        "source_pack_version": "RW-SOURCES:1",
+                        "authority_profile_version": "RW-AUTHORITY:1",
+                    },
+                }
+
+        inbox, executor = MemoryInbox(), FailsOnce()
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            inbox=inbox,
+            inbox_worker_id="receiver-worker-recovery",
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(
+            FederatedInstructionReceiverError, "RECEIVER_LOCAL_EXECUTION_FAILED"
+        ):
+            receiver.receive(self.envelope)
+        self.assertEqual(inbox.row["status"], "RETRYABLE_FAILURE")
+        recovered = receiver.receive(self.envelope)
+        self.assertEqual(recovered["delivery_status"], "COMPLETED")
+        self.assertEqual(executor.calls, 2)
+
+    def test_retry_recovers_committed_operation_without_reexecution(self):
+        class MemoryInbox:
+            def __init__(self):
+                self.row = None
+            def accept_authenticated(self, **kwargs):
+                if self.row is not None:
+                    return {"inserted": False, "status": self.row["status"]}
+                self.row = {"status": "RECEIVED", "response": None}
+                return {"inserted": True, "status": "RECEIVED"}
+            def claim(self, **kwargs):
+                if self.row["status"] not in {"RECEIVED", "RETRYABLE_FAILURE"}:
+                    return None
+                self.row["status"] = "PROCESSING"
+                return {"lease_owner": kwargs["worker_id"]}
+            def complete(self, **kwargs):
+                self.row["status"] = "COMPLETED"
+                self.row["response"] = kwargs["response"]
+                return True
+            def fail(self, **kwargs):
+                self.row["status"] = (
+                    "RETRYABLE_FAILURE" if kwargs["retryable"] else "REJECTED"
+                )
+                return True
+            def get(self, **kwargs):
+                return self.row
+
+        class CommitThenLoseResponse:
+            def __init__(self):
+                self.execute_calls = 0
+                self.recovery_calls = 0
+                self.committed = False
+            def execute(self, **kwargs):
+                self.execute_calls += 1
+                self.committed = True
+                raise RuntimeError("simulated crash after durable local commit")
+            def recover(self, **kwargs):
+                self.recovery_calls += 1
+                self.asserted_instruction = kwargs["instruction"]
+                if not self.committed:
+                    return {"operation_id": kwargs["operation_id"], "status": "UNKNOWN"}
+                item = kwargs["instruction"]
+                return {
+                    "decision": {
+                        "request_id": item["request_id"],
+                        "operation_id": item["operation_id"],
+                        "protocol_decision": "PASSED",
+                        "cee_execution_ref": "cee-operation:" + item["operation_id"],
+                    },
+                    "result": {"status": "COMMITTED", "duplicate": True},
+                    "runtime_pins": {
+                        "tenant_id": kwargs["tenant_id"],
+                        "institution_id": kwargs["institution_id"],
+                        "binding_id": "BIND-RW-01",
+                        "jurisdiction_ref": "RW",
+                        "minah_deployment_id": "MINAH-RW-01",
+                        "minah_runtime_version": "1",
+                        "identity_provider_id": "IDP-RW-01",
+                        "identity_provider_version": "1",
+                        "policy_pack_version": "RW-RULES:3.2",
+                        "source_pack_version": "RW-SOURCES:1",
+                        "authority_profile_version": "RW-AUTHORITY:1",
+                    },
+                }
+
+        inbox, executor = MemoryInbox(), CommitThenLoseResponse()
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            inbox=inbox,
+            inbox_worker_id="receiver-worker-crash-recovery",
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(
+            FederatedInstructionReceiverError, "RECEIVER_LOCAL_EXECUTION_FAILED"
+        ):
+            receiver.receive(self.envelope)
+        self.assertEqual(inbox.row["status"], "RETRYABLE_FAILURE")
+
+        recovered = receiver.receive(self.envelope)
+
+        self.assertEqual(executor.execute_calls, 1)
+        self.assertEqual(executor.recovery_calls, 1)
+        self.assertEqual(executor.asserted_instruction, instruction())
+        self.assertEqual(recovered["delivery_status"], "COMPLETED")
+        self.assertTrue(recovered["receiver_result"]["duplicate"])
+        self.assertEqual(inbox.row["status"], "COMPLETED")
+
+    def test_receiver_signs_and_replays_stable_completed_acknowledgement(self):
+        class MemoryInbox:
+            def __init__(self):
+                self.row = None
+            def accept_authenticated(self, **kwargs):
+                if self.row is not None:
+                    return {"inserted": False, "status": self.row["status"]}
+                self.row = {"status": "RECEIVED", "response": None}
+                return {"inserted": True, "status": "RECEIVED"}
+            def claim(self, **kwargs):
+                if self.row["status"] not in {"RECEIVED", "RETRYABLE_FAILURE"}:
+                    return None
+                self.row["status"] = "PROCESSING"
+                return {"lease_owner": kwargs["worker_id"]}
+            def complete(self, **kwargs):
+                self.row["status"] = "COMPLETED"
+                self.row["response"] = kwargs["response"]
+                return True
+            def fail(self, **kwargs):
+                self.row["status"] = "RETRYABLE_FAILURE" if kwargs["retryable"] else "REJECTED"
+                return True
+            def get(self, **kwargs):
+                return self.row
+
+        receiver_private = Ed25519PrivateKey.generate()
+        receiver_public = receiver_private.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        )
+        inbox = MemoryInbox()
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=self.executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            inbox=inbox, inbox_worker_id="receiver-signer",
+            receiver_signing_key_id="RECEIVER-KEY-RW-01",
+            receiver_signing_key_loader=lambda tenant, institution, key: receiver_private,
+            clock=lambda: self.now,
+        )
+        first = receiver.receive(self.envelope)
+        receipt = first["receiver_acknowledgement"]
+        verified = verify_receiver_acknowledgement(
+            receipt, original_envelope=self.envelope,
+            sender_tenant_id="tenant-ug",
+            sender_installation_id="INSTALL-UG-01",
+            sender_institution_id="BANK-UG-01",
+            receiver_trust_key_loader=lambda tenant, installation, key: {
+                "tenant_id": "tenant-ug", "installation_id": "INSTALL-RW-01",
+                "institution_id": "BANK-RW-01", "key_id": "RECEIVER-KEY-RW-01",
+                "algorithm": "Ed25519", "status": "ACTIVE",
+                "valid_from": self.now - 100, "valid_until": self.now + 100,
+                "public_key_ref": "receiver-key",
+            },
+            receiver_public_key_loader=lambda ref: receiver_public,
+            clock=lambda: self.now,
+        )
+        self.assertTrue(verified["verified"])
+        second = receiver.receive(self.envelope)
+        self.assertTrue(second["duplicate_delivery"])
+        self.assertEqual(
+            second["receiver_acknowledgement"], first["receiver_acknowledgement"]
+        )
+        self.assertEqual(len(self.executor.calls), 1)
+
+    def test_invalid_signature_never_reaches_local_execution(self):
+        bad = {"claims": dict(self.envelope["claims"]),
+               "signature": self.envelope["signature"]}
+        bad["claims"]["issuer_installation_id"] = "INSTALL-ATTACKER"
+        with self.assertRaises(FederatedInstructionReceiverError):
+            self.receiver.receive(bad)
+        self.assertEqual(self.executor.calls, [])
+
+    def test_destination_mismatch_never_reaches_local_execution(self):
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-OTHER",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=self.executor,
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            consume_nonce=self.consume,
+            clock=lambda: self.now,
+        )
+        with self.assertRaises(FederatedInstructionReceiverError):
+            receiver.receive(self.envelope)
+        self.assertEqual(self.executor.calls, [])
+
+    def test_local_rejection_is_not_relabelled_as_federation_acceptance(self):
+        class Rejecting:
+            def execute(self, **kwargs):
+                raise ValueError("INSTRUCTION_JURISDICTION_DOES_NOT_MATCH_ACTIVE_BINDING")
+        receiver = InstitutionalFederatedInstructionReceiver(
+            receiver_tenant_id="tenant-rw",
+            receiver_installation_id="INSTALL-RW-01",
+            receiver_institution_id="BANK-RW-01",
+            receiver_binding_id="BIND-RW-01",
+            execution_service=Rejecting(),
+            trust_key_loader=lambda tenant, key: self.key_record,
+            public_key_loader=lambda ref: self.public,
+            consume_nonce=self.consume,
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(
+            FederatedInstructionReceiverError, "RECEIVER_LOCAL_EXECUTION"
+        ):
+            receiver.receive(self.envelope)
+
+    def test_receiver_configuration_is_mandatory(self):
+        with self.assertRaises(FederatedInstructionReceiverError):
+            InstitutionalFederatedInstructionReceiver(
+                receiver_tenant_id="", receiver_installation_id="INSTALL-RW-01",
+                receiver_institution_id="BANK-RW-01", receiver_binding_id="BIND-RW-01",
+                execution_service=self.executor,
+                trust_key_loader=lambda tenant, key: self.key_record,
+                public_key_loader=lambda ref: self.public,
+                consume_nonce=self.consume, clock=lambda: self.now,
+            )
+
+
+    def test_revoked_sender_trust_rejects_previously_signed_instruction_before_acceptance(self):
+        # The envelope remains cryptographically valid, but receiver policy is
+        # evaluated at delivery time. A previously trusted sender cannot rely
+        # on an old signature after the receiving institution revokes its key.
+        self.key_record["status"] = "REVOKED"
+
+        with self.assertRaisesRegex(
+            FederatedInstructionReceiverError,
+            "FEDERATION_TRUST_KEY_MISMATCH_OR_INACTIVE",
+        ):
+            self.receiver.receive(self.envelope)
+
+        self.assertEqual(self.executor.calls, [])
+        self.assertEqual(self.replay, set())
+
+
+if __name__ == "__main__":
+    unittest.main()

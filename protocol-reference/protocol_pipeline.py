@@ -1,8 +1,9 @@
 # Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
-"""End-to-end MINAH -> IVM -> CEE execution slice, using synthetic adapters only.
+"""End-to-end MINAH -> IVM -> CEE execution slice with injectable persistence.
 
-The CEE lifecycle journal and IVM transition store are separate SQLite stores.
-This prototype explicitly does NOT claim a distributed atomic commit across them.
+SQLite remains the offline default. Institutional deployments may inject
+independent PostgreSQL CEE and IVM adapters. The persistence boundaries remain
+separate: this pipeline does NOT claim distributed atomic commit across them.
 A retry after an IVM commit replays the same idempotency key and reconciles CEE
 from the durable IVM outcome. Production deployment requires an independently
 reviewed recovery protocol and real identity/legal/model/runtime adapters.
@@ -79,6 +80,20 @@ def _canonical(value: Any) -> str:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+def _safe_minah_profile_snapshot(profile: Any) -> dict[str, Any]:
+    """Return only non-secret deployment identity and policy metadata for durable pinning."""
+    if not isinstance(profile, dict):
+        raise ValueError("MINAH_DEPLOYMENT_PROFILE_REQUIRED")
+    allowed = (
+        "profile_version", "deployment_id", "owner_scope", "owner_ref",
+        "use_case", "jurisdictions", "policy_pack_version",
+        "source_pack_version", "model_ref", "deployment_mode",
+        "may_authorise", "mandate_ref", "mandate_version",
+        "interface_version", "authority_profile_version",
+    )
+    return {key: profile[key] for key in allowed if key in profile}
 
 
 def _safe_verification_metadata(result: dict[str, Any], allowed_fields: tuple[str, ...]) -> dict[str, str]:
@@ -340,7 +355,10 @@ class CEEJournal:
 
 
 class KinSysProtocolPipeline:
-    """Synthetic full-path harness that makes MINAH, IVM and CEE boundaries observable."""
+    """Full-path reference harness with independently injectable CEE and IVM stores."""
+
+    EXECUTION_ORDER = ("MINAH", "IDENTITY", "AUTHORITY", "CEE", "FINAL_DECISION")
+    SUPPORTS_INSTITUTIONAL_RUNTIME_PINS = True
 
     def __init__(
         self,
@@ -356,9 +374,30 @@ class KinSysProtocolPipeline:
         profile_signature_verifier: Any | None = None,
         profile_revocation_checker: Any | None = None,
         require_profile_approval: bool = False,
+        identity_provider_id: str | None = None,
+        identity_provider_version: str | None = None,
+        jurisdiction_package_id: str | None = None,
+        jurisdiction_package_version: str | None = None,
+        authority_profile_version: str | None = None,
+        cee_journal: Any | None = None,
+        ivm_store: Any | None = None,
     ):
-        self.cee = CEEJournal(cee_database)
-        self.ivm = ProtocolStore(ivm_database)
+        self.identity_provider_id = identity_provider_id
+        self.identity_provider_version = identity_provider_version
+        self.jurisdiction_package_id = jurisdiction_package_id
+        self.jurisdiction_package_version = jurisdiction_package_version
+        self.authority_profile_version = authority_profile_version
+        # Inject a shared durable journal when an institutional deployment
+        # supplies one (for example PostgreSQLCEEJournal). The default remains
+        # the local SQLite reference journal for offline demonstrations.
+        self.cee = cee_journal if cee_journal is not None else CEEJournal(cee_database)
+        for method in ("start", "advance", "get", "events", "record_observation", "observations"):
+            if not callable(getattr(self.cee, method, None)):
+                raise TypeError("CEE_JOURNAL_INTERFACE_INVALID:" + method)
+        self.ivm = ivm_store if ivm_store is not None else ProtocolStore(ivm_database)
+        for method in ("create_process", "set_authority_active", "set_rule", "process", "history", "event", "execute"):
+            if not callable(getattr(self.ivm, method, None)):
+                raise TypeError("IVM_STORE_INTERFACE_INVALID:" + method)
         self.minah = minah_adapter or DeterministicMinahAdapter()
         self.identity_adapter = identity_adapter or SyntheticIdentityAdapter()
         self.authority_adapter = authority_adapter or SyntheticAuthorityAdapter(authority_active=authority_active)
@@ -421,8 +460,22 @@ class KinSysProtocolPipeline:
             raise ExecutionConflict("REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY")
 
     def _assert_store_integrity(self) -> None:
-        """Fail closed on SQLite structural errors; this is not a tamper-evidence check."""
-        for label, connection in (("CEE", self.cee.db), ("IVM", self.ivm.db)):
+        """Fail closed when a configured journal/store cannot verify its integrity."""
+        for label, store in (("CEE", self.cee), ("IVM", self.ivm)):
+            verifier = getattr(store, "verify_integrity", None)
+            if callable(verifier):
+                try:
+                    verifier()
+                except Exception as exc:
+                    raise ExecutionConflict(
+                        f"{label}_STORE_INTEGRITY_CHECK_FAILED_REQUIRES_MANUAL_RECONCILIATION"
+                    ) from exc
+                continue
+            connection = getattr(store, "db", None)
+            if connection is None:
+                raise ExecutionConflict(
+                    f"{label}_STORE_INTEGRITY_CHECK_UNSUPPORTED_REQUIRES_MANUAL_RECONCILIATION"
+                )
             try:
                 rows = connection.execute("PRAGMA integrity_check").fetchall()
             except sqlite3.DatabaseError as exc:
@@ -523,7 +576,8 @@ class KinSysProtocolPipeline:
                     "REJECTED_IVM_EVENT_HAS_TRANSITION_HISTORY"
                 )
 
-    def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False) -> dict[str, Any]:
+    def execute(self, request: dict[str, Any], *, fail_after_ivm_commit: bool = False,
+                execution_guard: Any | None = None) -> dict[str, Any]:
         self._validate(request)
         operation_id = request["operation_id"]
         # Existing operations may need recovery after the approval expires. For a
@@ -545,7 +599,7 @@ class KinSysProtocolPipeline:
                 )
             else:
                 pinned_request = prior_operation["request_json"]
-                if _canonical(pinned_request.get("_minah_deployment_profile")) != _canonical(self.minah_profile):
+                if _canonical(pinned_request.get("_minah_deployment_profile")) != _canonical(_safe_minah_profile_snapshot(self.minah_profile)):
                     raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
                 if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
                     raise ExecutionConflict("RECOVERY_APPROVAL_DIFFERS_FROM_PINNED_APPROVAL")
@@ -596,7 +650,7 @@ class KinSysProtocolPipeline:
         # Pin the deployment profile into the durable operation fingerprint before
         # MINAH is invoked. Replays cannot silently switch to another profile.
         journal_request = dict(request)
-        journal_request["_minah_deployment_profile"] = self.minah_profile
+        journal_request["_minah_deployment_profile"] = _safe_minah_profile_snapshot(self.minah_profile)
         if self.require_profile_approval:
             journal_request["_minah_profile_approval"] = self.minah_profile_approval
             journal_request["_minah_profile_approval_verification"] = approval_metadata
@@ -1035,14 +1089,36 @@ class KinSysProtocolPipeline:
                         "reason": "IVM_EVENT_ALREADY_DURABLE; RECONCILE_EXISTING_OUTCOME",
                     },
                 )
-            decision = self.ivm.execute({
-                "event_id": request["event_id"],
-                "process_id": request["process_id"],
-                "actor_id": request["actor_id"],
-                "event_type": request["event_type"],
-                "rule_set": request["rule_set"],
-                "rule_version": request["rule_version"],
-            })
+            # Institutional execution leases are revalidated at the last
+            # application-level boundary before the irreversible local IVM write.
+            # A lifecycle transition increments the deployment epoch and fences
+            # this callback even if the original lease has not expired.
+            def commit_action() -> Any:
+                ivm_event = {
+                    "event_id": request["event_id"],
+                    "process_id": request["process_id"],
+                    "actor_id": request["actor_id"],
+                    "event_type": request["event_type"],
+                    "rule_set": request["rule_set"],
+                    "rule_version": request["rule_version"],
+                }
+                # The downstream IVM store persists the highest observed
+                # per-deployment fencing token and rejects older writers.
+                # This is a durable downstream guard, complementary to the
+                # coordinator's authoritative lease validation.
+                execution_fence = getattr(
+                    commit_action, "_kin_sys_execution_fence", None)
+                if execution_fence is not None:
+                    ivm_event["execution_fence"] = dict(execution_fence)
+                return self.ivm.execute(ivm_event)
+            if execution_guard is not None:
+                if not callable(execution_guard):
+                    raise ExecutionConflict("MINAH_EXECUTION_GUARD_INVALID")
+                # The lease coordinator holds the deployment registry's
+                # lifecycle-write reservation while this local commit runs.
+                decision = execution_guard(commit_action)
+            else:
+                decision = commit_action()
             ivm_result = {
                 "status": decision.status,
                 "event_id": decision.event_id,
@@ -1104,6 +1180,7 @@ class KinSysProtocolPipeline:
 
     def recover(
         self, operation_id: str, expected_request: dict[str, Any] | None = None,
+        *, execution_guard: Any | None = None,
     ) -> dict[str, Any]:
         """Resume an existing operation only from durable, recoverable lifecycle state.
 
@@ -1148,7 +1225,7 @@ class KinSysProtocolPipeline:
             }
 
         pinned_profile = pinned_request.get("_minah_deployment_profile")
-        if _canonical(pinned_profile) != _canonical(self.minah_profile):
+        if _canonical(pinned_profile) != _canonical(_safe_minah_profile_snapshot(self.minah_profile)):
             raise ExecutionConflict("RECOVERY_PROFILE_DIFFERS_FROM_PINNED_PROFILE")
         if self.require_profile_approval:
             if pinned_request.get("_minah_profile_approval") != self.minah_profile_approval:
@@ -1182,7 +1259,7 @@ class KinSysProtocolPipeline:
 
         # execute() reconstructs the pinned request and revalidates the current
         # profile approval before any protected transition that is not already durable.
-        return self.execute(request_without_pins)
+        return self.execute(request_without_pins, execution_guard=execution_guard)
 
     def inspect(self, operation_id: str) -> dict[str, Any] | None:
         """Read a lifecycle snapshot without mutating or resuming the operation."""
@@ -1318,10 +1395,60 @@ class KinSysProtocolPipeline:
         if not isinstance(request, dict) or required - set(request):
             missing = sorted(required - set(request)) if isinstance(request, dict) else sorted(required)
             raise ValueError("MISSING_REQUIRED_FIELDS:" + ",".join(missing))
-        allowed_extensions = {"_contract_envelope"}
+        allowed_extensions = {
+            "_contract_envelope", "_institutional_runtime_binding",
+            "_minah_deployment_profile",
+        }
         unknown = sorted(set(request) - required - allowed_extensions)
         if unknown:
             raise ValueError("UNKNOWN_FIELDS:" + ",".join(unknown))
+        if "_minah_deployment_profile" in request:
+            profile = request["_minah_deployment_profile"]
+            profile_fields = {
+                "profile_version", "deployment_id", "owner_scope", "owner_ref",
+                "use_case", "jurisdictions", "policy_pack_version",
+                "source_pack_version", "model_ref", "deployment_mode",
+                "may_authorise", "mandate_ref", "mandate_version",
+                "interface_version", "authority_profile_version",
+            }
+            if (not isinstance(profile, dict) or not profile
+                    or set(profile) - profile_fields
+                    or any(not isinstance(key, str) for key in profile)):
+                raise ValueError("INVALID_MINAH_DEPLOYMENT_PROFILE_SNAPSHOT")
+            for field in (
+                "profile_version", "deployment_id", "owner_ref",
+                "policy_pack_version", "source_pack_version", "model_ref",
+            ):
+                if not isinstance(profile.get(field), str) or not profile[field].strip():
+                    raise ValueError("INVALID_MINAH_DEPLOYMENT_PROFILE_SNAPSHOT:" + field)
+            jurisdictions = profile.get("jurisdictions")
+            if (not isinstance(jurisdictions, list) or not jurisdictions
+                    or any(not isinstance(item, str) or not item.strip()
+                           for item in jurisdictions)
+                    or len(set(jurisdictions)) != len(jurisdictions)
+                    or request["jurisdiction"] not in jurisdictions
+                    or profile.get("may_authorise") is not False):
+                raise ValueError("INVALID_MINAH_DEPLOYMENT_PROFILE_SNAPSHOT:scope")
+        if "_institutional_runtime_binding" in request:
+            pins = request["_institutional_runtime_binding"]
+            pin_fields = {
+                "tenant_id", "institution_id", "institution_version", "binding_id",
+                "binding_version", "jurisdiction_ref", "jurisdiction_package_id",
+                "jurisdiction_package_version", "minah_deployment_id",
+                "identity_provider_id", "identity_provider_version",
+                "minah_domain_version", "minah_runtime_version",
+                "policy_pack_version", "source_pack_version",
+                "authority_profile_version",
+            }
+            if (not isinstance(pins, dict) or set(pins) != pin_fields
+                    or any(not isinstance(value, str) or not value.strip()
+                           for value in pins.values())):
+                raise ValueError("INVALID_INSTITUTIONAL_RUNTIME_BINDING_PINS")
+            if pins["jurisdiction_ref"] != request["jurisdiction"]:
+                raise ValueError("INSTITUTIONAL_RUNTIME_JURISDICTION_MISMATCH")
+            if (pins["policy_pack_version"]
+                    != request["rule_set"] + ":" + request["rule_version"]):
+                raise ValueError("INSTITUTIONAL_RUNTIME_POLICY_VERSION_MISMATCH")
         if "_contract_envelope" in request:
             # Preserve the complete validated client envelope inside the durable
             # operation fingerprint so retries cannot alter omitted contract fields.

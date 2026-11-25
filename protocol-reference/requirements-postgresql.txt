@@ -1,0 +1,3 @@
+# Copyright © 2026 Joel Kagoro. Licensed under Apache-2.0; see LICENSE and NOTICE.
+# Optional PostgreSQL 3.x driver for the institutional coordination backend.
+psycopg[binary]>=3.2,<4

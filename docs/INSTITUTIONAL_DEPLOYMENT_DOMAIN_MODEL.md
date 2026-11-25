@@ -80,7 +80,9 @@ The first persistence slice is implemented in `protocol-reference/institutional_
 
 The registry deliberately accepts a `tenant_id` from its caller; it does not authenticate or authorise that caller. The production API must derive tenant context from a verified principal and never trust a tenant ID supplied in an untrusted request body. The SQLite reference store is a single-process/local persistence increment, not a distributed registry, production isolation boundary, approval engine, or legal verification service. It records versioned state snapshots and append-only events.
 
-The lifecycle policy is implemented in `protocol-reference/institutional_lifecycle_service.py`; the application boundary is implemented in `protocol-reference/institutional_lifecycle_coordinator.py`. The coordinator now requires an `InstitutionalAuthorityResolver`; it no longer accepts a caller-supplied actor dictionary as proof of authority. The resolver verifies a short-lived HMAC-SHA256 signed assertion, checks the exact authority-grant ID and version, tenant, actor, active status, validity window, role and resource scope, and consumes a one-time nonce through an injected replay guard. Only then does it construct the actor assertion passed to lifecycle policy. The lifecycle policy defines allowed state transitions and distinct authority roles for verification, review, approval, activation, suspension and revocation. The coordinator loads the exact tenant-scoped record version, evaluates the policy, validates the proposed snapshot, and asks the registry to persist the new immutable snapshot and audit event atomically with an expected-version check. Binding activation additionally requires the cross-record activation eligibility gate. The grant loader must be backed by a trusted authority-grant store; signing keys must come from a secret manager; and the nonce consumer must be a shared atomic replay store in a multi-process deployment. The included `SQLiteNonceGuard` provides atomic single-use nonce consumption across processes sharing one SQLite file and prunes expired nonce records using the assertion expiry. It remains a local/single-host reference adapter, not a distributed multi-host replay service; the in-memory guard is retained for unit tests. HMAC is a symmetric reference trust mechanism, not a public-key institutional identity standard. This layer verifies signed assertions against configured trust and a supplied grant record; it does not authenticate the human, independently establish the legal validity of a grant, or cryptographically verify the grant's underlying approval evidence.
+The authenticated onboarding facade now requires an injected trusted evidence verifier before it creates an institution, jurisdiction package, MINAH deployment or binding record. The verifier receives tenant, resource type/ID, purpose and expected version context. A successful response must bind to the requested evidence reference and return a stable verification reference plus a SHA-256 digest; the receipt is persisted in the registration audit event in the same transaction as the initial snapshot. Missing, rejected, mismatched or malformed verification receipts fail before persistence. The verifier remains an injected trust boundary: no production evidence repository, legal-source adjudication, document authenticity service or key custody is supplied by this reference implementation.
+
+The lifecycle policy is implemented in `protocol-reference/institutional_lifecycle_service.py`; the application boundary is implemented in `protocol-reference/institutional_lifecycle_coordinator.py`. The coordinator now requires an `InstitutionalAuthorityResolver`; it no longer accepts a caller-supplied actor dictionary as proof of authority. The resolver verifies a short-lived local HMAC-SHA256 or federated Ed25519 assertion, checks the exact authority-grant ID and version, tenant, actor, active status, validity window, role and resource scope, and consumes a one-time nonce through an injected replay guard. Only then does it construct the actor assertion passed to lifecycle policy. The lifecycle policy defines allowed state transitions and distinct authority roles for verification, review, approval, activation, suspension and revocation. The coordinator loads the exact tenant-scoped record version, evaluates the policy, validates the proposed snapshot, and asks the registry to persist the new immutable snapshot and audit event atomically with an expected-version check. Binding activation additionally requires the cross-record activation eligibility gate. The resolver no longer accepts a bare `grant_loader` callback. It requires a `VerifiedAuthorityGrantStore` contract; `InstitutionalTrustRegistry.load_verified_grant(...)` supplies the SQLite reference implementation. The store returns only the current tenant-scoped head and, for federated grants, re-verifies the issuer envelope, exact signed grant digest, receiver-signed acceptance receipt, accepted snapshot and acceptance audit event against the receiver's current trust root; issuer and receiver signing keys must remain in separately governed key custody; and the nonce consumer must be a shared atomic replay store in a multi-process deployment. The included `SQLiteNonceGuard` provides atomic single-use nonce consumption across processes sharing one SQLite file and prunes expired nonce records using the assertion expiry. It remains a local/single-host reference adapter, not a distributed multi-host replay service; the in-memory guard is retained for unit tests. HMAC is a symmetric reference trust mechanism, not a public-key institutional identity standard. The local HMAC profile may use an unsigned local grant snapshot only inside its explicitly trusted administrative boundary. The federated Ed25519 profile requires a receiver-accepted issuer-signed grant envelope and rejects active grant revisions without fresh signed provenance. This layer does not authenticate the human, independently establish the legal validity of a grant, or cryptographically verify the underlying legal approval evidence.
 
 The reference tests cover tenant-scoped visibility, immutable version conflicts, event idempotency and conflict detection, cross-tenant event attachment rejection, missing tenant context, unsupported resource types, non-canonical payloads, atomic lifecycle snapshot/event persistence, stale-version rejection and idempotent transition retries. Coordinator tests verify policy-to-registry integration, signed assertion verification, tamper rejection, expiry, replay rejection, exact grant-version pinning, grant status and resource-scope checks, failed-authority non-persistence, cross-tenant read rejection, stale-version handling and the binding activation-context gate.
 
@@ -100,7 +102,7 @@ The public-key reference is resolved by an injected `public_key_loader`; the SQL
 
 ### Federation limitations
 
-This increment verifies a signed assertion against an explicitly trusted issuer key and a current authority grant. It does not yet implement a complete signed authority-grant issuance/acceptance protocol, certificate or institutional identity discovery, legal trust-agreement adjudication, key custody/HSM integration, automated rotation distribution, identity-provider authentication, or a distributed atomic replay store. The SQLite trust catalogue and in-memory nonce guard remain local reference components. Cross-tenant and cross-border trust must be established independently by each receiving institution; there is no universal KIN-SYS root that overrides institutional sovereignty.
+This increment includes a reference signed authority-grant issuance/acceptance protocol and verifies its retained provenance on each federated grant resolution. It does not implement certificate or institutional identity discovery, legal trust-agreement adjudication, key custody/HSM integration, automated rotation distribution, identity-provider authentication, or a distributed atomic replay store. The SQLite trust catalogue and in-memory nonce guard remain local reference components. Cross-tenant and cross-border trust must be established independently by each receiving institution; there is no universal KIN-SYS root that overrides institutional sovereignty.
 
 
 ## Implementation sequence
@@ -108,7 +110,7 @@ This increment verifies a signed assertion against an explicitly trusted issuer 
 1. Implement and test domain validators and activation eligibility.
 2. Add the SQLite reference registry with immutable versions and tenant-scoped access.
 3. Implement local signed authority assertions and Ed25519 federated assertion verification against receiver-controlled issuer trust roots (reference verifier and SQLite trust metadata implemented; production key custody, issuer governance, identity and distributed replay adapters remain outstanding).
-4. Add authenticated institution registration and authority verification.
+4. Add authenticated institutional registration, authority verification and mandatory trusted evidence verification (reference verifier interface and atomic audit receipts implemented; production evidence service remains outstanding).
 5. Add jurisdiction source ingestion, provenance and approval workflow.
 6. Add MINAH adapter registration, secret references, connectivity and conformance checks.
 7. Add binding approval and activation.
@@ -124,26 +126,27 @@ This increment verifies a signed assertion against an explicitly trusted issuer 
 - A binding cannot point to another tenant's MINAH or jurisdiction package.
 - A binding pins an exact jurisdiction package version.
 - Activation eligibility fails unless every required lifecycle gate and evidence reference is present.
+- Registration rejects evidence that the injected trusted verifier cannot resolve and verify for the exact tenant/resource/purpose/version context; successful verification receipts are retained in the atomic registration audit event.
 - Lifecycle transitions reject illegal skips, missing authority roles, unverified actors, missing evidence, and self-approval for approval transitions.
 - The coordinator rejects unsigned, expired, replayed, wrong-tenant, wrong-grant-version and out-of-scope actor assertions.
 - Existing MINAH profile approval and operation-pinning behaviour remains intact.
 
 ## Explicit non-claims
 
-This increment is not an onboarding UI, live identity verification, production-grade registry, legal-source authenticity service, model upload/runtime service, cryptographic approval implementation or production tenant isolation. The SQLite reference registry is implemented, but must not be represented as a production registry. Those require separate implementations and tests.
+This increment is not an onboarding UI, live identity verification, production-grade registry, legal-source authenticity service, production evidence repository, model upload/runtime service, cryptographic approval implementation or production tenant isolation. The SQLite reference registry is implemented, but must not be represented as a production registry. Those require separate implementations and tests.
 
 
 ## Institutional trust and delegated authority registry
 
 The next persistence increment is implemented in `protocol-reference/institutional_trust_registry.py`. It introduces a separate SQLite reference store for authority grants and institutional trust-key metadata rather than mixing these records into institution/deployment aggregates.
 
-Authority grants are tenant-scoped and immutable by (grant ID, version). A current-version head is advanced with an expected-version check; every creation, revision and revocation writes an audit event in the same transaction. The resolver-compatible `load_grant(tenant_id, grant_id)` returns only the current head. Consequently, when a grant is revised or revoked, an assertion pinned to an older grant version no longer resolves as current. The grant snapshot carries actor binding, institution, issuer institution, authority reference, role/resource scope, validity window, status, version and approval reference.
+Authority grants are tenant-scoped and immutable by (grant ID, version). A current-version head is advanced with an expected-version check; every creation, revision and revocation writes an audit event in the same transaction. The lower-level `load_grant(tenant_id, grant_id)` method is retained for administrative inspection. The resolver uses `load_verified_grant(...)`, which returns only the current tenant-scoped head and enforces the assertion's exact version pin. For federated grants it also re-verifies the issuer envelope, issuer trust relationship and key validity, signed payload digest, receiver-signed acceptance receipt, accepted snapshot and acceptance audit-event consistency. Consequently, an unsigned active revision or an assertion pinned to an older grant version cannot authorise a new action. The grant snapshot carries actor binding, institution, issuer institution, authority reference, role/resource scope, validity window, status, version and approval reference.
 
-The trust-key catalogue records tenant, issuer institution, key ID, algorithm, public-key reference, validity window and status. It supports overlapping key registration for rotation and audited revocation. The registry stores a public-key reference (or public material supplied through an appropriately designed adapter), never private signing keys. The current HMAC assertion resolver has not yet been replaced or wired to this trust-key catalogue: key metadata persistence is not equivalent to signature verification or issuer trust federation. The Ed25519 label is an algorithm identifier only; this increment does not implement Ed25519 cryptographic verification.
+The trust-key catalogue records tenant, issuer institution, key ID, algorithm, public-key reference, validity window and status. It supports overlapping key registration for rotation and audited revocation. The registry stores a public-key reference (or public material supplied through an appropriately designed adapter), never private signing keys. The Ed25519 resolver and issuer-signed grant verifier consume this trust-key catalogue through `load_trust_key`; the actual public-key bytes are still resolved through an injected key-custody adapter. The trust-key catalogue accepts only Ed25519 public-key references. HMAC verification keys remain local/internal configuration and are not imported from federated trust-key metadata or stored as trust keys.
 
-This remains a local SQLite reference implementation. Tenant IDs are caller-supplied and must be derived from authenticated principals at the API boundary. Grant creation/revision and trust-key registration/revocation accept actor and evidence references but do not independently authenticate those actors, validate legal authority, or verify the underlying approval evidence. The registry does not yet implement issuer-signed grant envelopes, a federation trust policy, public-key verification, identity-provider integration, key lifecycle policy beyond recorded validity/status and revocation, or distributed concurrency/replay guarantees. Production deployment requires an independently governed trust-root process, vetted cryptographic libraries, secure key custody, authenticated issuer/actor adapters, authoritative evidence verification and a hardened shared persistence/replay service.
+The original implementation remains a local SQLite reference store; the PostgreSQL reference backend is described below. Neither backend is a production certification. Tenant IDs are caller-supplied and must be derived from authenticated principals at the API boundary. Grant creation/revision and trust-key registration/revocation accept actor and evidence references but do not independently authenticate those actors, validate legal authority, or verify the underlying approval evidence. The registry implements issuer-signed grant provenance and a receiver-signed acceptance receipt, and the resolver re-verifies both against current issuer and receiver trust configuration. The receiver acceptance key resolver and key-custody adapter are injected trust boundaries, not production key-management services. It does not provide legal trust-agreement adjudication, production key custody, automated key distribution, identity-provider authentication, distributed persistence/concurrency or a multi-host replay service. Production deployment requires an independently governed trust-root process, vetted cryptographic libraries, secure key custody, authenticated issuer/actor adapters, authoritative evidence verification and a hardened shared persistence/replay service.
 
-The new tests cover resolver-compatible grant loading, tenant isolation, immutable grant versions, expected-version revisions, revocation invalidating stale version pins, trust-key rotation metadata, key revocation audit events, duplicate key IDs and unsupported algorithms. These are reference-store tests, not a certification of the trust model.
+The new tests cover verified-store integration, rejection of bare grant callbacks, tenant isolation, immutable grant versions, expected-version revisions, revocation invalidating stale version pins, trust-key rotation metadata, key revocation audit events, duplicate key IDs, unsupported algorithms and fail-closed verification of retained federated grant provenance. These are reference-store tests, not a certification of the trust model.
 
 
 ## Issuer-signed authority-grant provenance and receiver acceptance
@@ -152,11 +155,15 @@ The reference implementation now includes `protocol-reference/institutional_gran
 
 **Issuance and acceptance are separate decisions.** The issuer may sign only a `PENDING` grant. A valid issuer signature establishes integrity and provenance under a receiver-configured key; it does not activate the grant. The receiving institution must independently authenticate its approver and enforce its own local policy through the injected `verify_receiver_approval` adapter. Acceptance is bound to the exact grant ID/version and canonical SHA-256 digest and returns an `ACTIVE` snapshot plus the original issuer envelope and receiver-approval evidence reference/payload. A receiver mismatch, missing/failed approval, expired grant, untrusted/revoked key, wrong issuer or altered claim fails closed.
 
-The receiver-approval callback is a security boundary, not a convenience hook. Production wiring must resolve the approver from an authenticated receiver-side principal, validate the actor's current authority and role/scope, enforce separation of duties where required, and produce durable evidence. `InstitutionalTrustRegistry.accept_signed_grant(...)` now composes issuer-signature verification, receiver approval and atomic SQLite persistence: the accepted immutable ACTIVE grant snapshot, original issuer envelope, receiver-approval bundle and audit event are committed in one transaction. A duplicate grant or audit-event conflict rolls the transaction back. `load_grant_provenance(...)` retrieves the retained envelope and acceptance evidence for a specific tenant/grant/version. The method still depends on an injected receiver-approval verifier and public-key loader; callers must derive tenant and actor context from authenticated principals. The SQLite transaction is a local reference implementation, not a distributed production transaction. A subsequent grant amendment or revocation must be a new issuer-signed version and a fresh receiver acceptance; current-version pinning must invalidate assertions against earlier versions.
+The receiver-approval callback remains a security boundary: production wiring must resolve the approver from an authenticated receiver-side principal, validate the actor's current authority and role/scope, enforce separation of duties where required, and produce durable evidence. The registry now additionally requires a receiver-signed Ed25519 acceptance receipt before persisting an accepted federated grant. The receipt is domain-separated and binds the receiver tenant and institution, exact grant ID/version/digest, digest of the complete receiver-approval bundle, approver actor, approval reference, acceptance time and receiver signing key ID.
+
+`InstitutionalTrustRegistry.accept_signed_grant(...)` obtains the private signing key through `receiver_signing_key_loader(tenant_id, receiver_institution_id, key_id)`. The key remains outside SQLite, in the receiving institution's key-custody adapter. At resolution time, `load_verified_grant(...)` verifies the receipt through a separate `receiver_acceptance_key_loader(tenant_id, receiver_institution_id, key_id)` and `receiver_acceptance_public_key_loader(public_key_ref)`, in addition to re-verifying the issuer envelope, grant digest, accepted snapshot and audit event. The receiver key resolver must be independently governed and must not derive its trust decision solely from the same mutable grant/provenance tables. Overlapping active keys support rotation; suspension or revocation of a receiver key invalidates receipts verified under that key. A receipt detects alteration of the acceptance bundle and audit record together, provided the receiver key trust anchor remains outside the database writer's control.
+
+The SQLite transaction still provides only local reference atomicity. Federated acceptance rows created before the receipt requirement are rejected by the current resolver and must be reissued and reaccepted rather than silently upgraded. A receiver signature proves that the holder of a receiver-trusted private key attested to the exact acceptance record; it does not prove that the approver had lawful authority, that the referenced evidence is genuine or legally sufficient, or that the institution is legally obliged to accept the grant. The callback, signing-key loader and public-key resolver remain trusted deployment adapters, not production key-management services. The SQLite transaction is a local reference implementation, not a distributed production transaction. A subsequent federated grant amendment must be a new issuer-signed version and a fresh receiver acceptance; an active unsigned revision is rejected by `load_verified_grant(...)`. Local revocation advances the current head to a REVOKED version, so assertions pinned to the earlier version or a now-revoked grant cannot authorise new actions.
 
 The signature proves that the signed bytes were produced by the holder of the private key corresponding to a key the receiver has explicitly trusted. It does not prove that the issuer is legally competent, that the referenced approval document is genuine, that the approver had lawful authority, or that the receiving institution is legally obliged to accept the grant. Those remain separate institutional governance and evidence-verification obligations. Private signing keys are never stored by this module; signing and public-key resolution are injected at the boundary.
 
-Tests cover canonical signature verification, claim tampering, issuer/key mismatch, unknown and revoked keys, key expiry, grant expiry, cross-tenant rejection, receiver identity mismatch, receiver approval refusal and the separation between issuer signature and receiver activation. This is a reference protocol slice, not a production federation service. The trust registry integration additionally verifies atomic persistence of the ACTIVE grant, original issuer envelope, receiver acceptance and audit event; receiver refusal and audit-context mismatch leave no accepted grant, and transaction failure leaves no partial provenance.
+Tests cover canonical issuer and receiver signature verification, claim and acceptance-bundle tampering, issuer/key mismatch, unknown and revoked issuer/receiver keys, key validity and rotation, grant expiry, cross-tenant rejection, receiver identity mismatch, receiver approval refusal, separation between issuer signature and receiver activation, and resolver-time re-verification of both signatures, the accepted snapshot, digest and audit event. This is a reference protocol slice, not a production federation service. The trust registry integration additionally verifies atomic persistence of the ACTIVE grant, original issuer envelope, receiver acceptance and audit event; receiver refusal and audit-context mismatch leave no accepted grant, and transaction failure leaves no partial provenance.
 
 
 ## Institutional identity-provider integration boundary
@@ -172,14 +179,185 @@ The identity resolver consumes a request-bound nonce using the expiry-aware repl
 The identity-policy and subject-binding record shapes are included in `schemas/institutional-deployment-domain-0.1.schema.json`. These schema definitions describe data shape only; tenant ownership, approval evidence, binding lifecycle and adapter cryptographic validation remain application-level controls.
 
 
-## Concrete OpenID Connect adapter
+## Receiver-pinned OIDC discovery and JWKS loading
 
-The provider-neutral identity contract now has a concrete OIDC ID-token implementation in `protocol-reference/oidc_identity_adapter.py`. It uses PyJWT with its cryptographic backend and accepts only institution-configured issuer and client identifiers. The adapter validates the JWT signature against a receiver-provided JWKS document, restricts signing algorithms to an explicit asymmetric allowlist (RS256/RS384/RS512, ES256/ES384 or EdDSA), rejects duplicate key IDs and key/algorithm mismatches, and performs a single forced JWKS refresh when a `kid` is not found to support controlled key rotation.
+The OIDC adapter now has a companion loader in `protocol-reference/oidc_discovery.py`. It starts from the receiving institution's configured issuer, constructs that issuer's OIDC discovery endpoint, and requires the returned metadata issuer to match the configured issuer exactly. The metadata's `jwks_uri` must use HTTPS and its hostname must be in the receiver's explicit host allowlist. The provider's advertised ID-token signing algorithms must intersect the receiver's asymmetric algorithm allowlist. The loader rejects duplicate/malformed key IDs, private key material and oversized JWKS key sets.
 
-The adapter requires and validates issuer, subject, audience, expiry, issued-at, nonce, authentication time, ACR and AMR claims. It checks the OIDC authorised-party (`azp`) rule for multi-audience tokens, bounds token lifetime, and returns the existing typed `VerifiedIdentityAssertion`. The resolver then applies the receiving institution's separate issuer/audience/assurance/freshness policy and tenant-local subject binding. Authentication still creates no authority roles. The opaque external subject is preserved as an opaque value rather than constrained to KIN-SYS's internal identifier alphabet. Credential references are SHA-256 digests; raw ID tokens are not returned or logged by this adapter.
+Discovery and JWKS documents are cached for a bounded configurable interval. An unknown `kid` can trigger one forced refresh through the existing adapter contract, but forced refreshes are rate-limited to avoid turning attacker-controlled unknown key IDs into an outbound-request denial-of-service primitive. Returned JWKS objects are deep-copied so a caller cannot mutate the loader's internal cache. An administrator can explicitly invalidate the cache after a trust-policy change. The loader preserves the configured issuer string exactly; issuer URL normalisation must not silently change the identity being trusted.
 
-**JWKS retrieval is deliberately injected.** The adapter does not follow URLs from a token, discover arbitrary issuers, or perform network access itself. The institution-controlled loader must be configured from pinned/allowlisted OIDC discovery metadata, enforce HTTPS and safe redirect policy, bind metadata's issuer exactly to the configured issuer, apply bounded timeouts and response sizes, and maintain a bounded cache with the forced-refresh behavior above. The loader is security-critical and must not accept issuer or JWKS URLs supplied by an untrusted credential. Production deployments must also define key revocation and stale-cache behavior, provider outage policy, token transport protection, and credential redaction.
+**The network transport remains an explicit security boundary.** The loader receives an injected `fetch_json` function and does not itself make network requests. A production transport must validate TLS certificates, refuse redirects, apply bounded connect/read timeouts and response sizes, validate JSON content type, and enforce DNS/IP egress controls to prevent private-network or metadata-service access. The institution must pin/allowlist both the issuer host and any separate JWKS host. The loader's hostname allowlist is not a substitute for transport-level DNS/IP controls or a network egress policy. Provider metadata and URLs must never be accepted from an ID token or an untrusted request.
 
-The conformance workflow installs the separate `protocol-reference/requirements-identity.txt` dependency set and runs cryptographic adapter tests using ephemeral test keys. Tests cover signature rejection, issuer/audience/nonce checks, required and time claims, lifetime limits, multi-audience `azp`, algorithm restrictions, duplicate/mismatched JWKS keys, unknown-key refresh and fail-closed behavior. These are implementation tests, not a live connection to a national or enterprise identity provider.
+The loader and adapter are separately configurable; deployment wiring must give both the same issuer and compatible algorithm policy. JWT temporal claims are evaluated against the adapter's injected clock (including exp, iat, nbf and auth_time) so clock policy is deterministic and testable rather than split between application and library clocks. Tests use an injected deterministic fake transport and cover exact issuer matching, host allowlisting, HTTPS-only URLs, code-flow discovery metadata, cache expiry/invalidation, forced-refresh throttling, cache isolation, algorithm intersection, malformed/duplicate/private JWKS keys, response bounds and provider transport failure, plus end-to-end adapter/loader integration and simulated signing-key rotation using ephemeral RSA keys. These tests do not represent a live identity-provider connection or validate a production HTTP transport.
 
-This increment does not yet implement OIDC discovery/JWKS HTTP transport, provider onboarding, SAML, OAuth access-token authorisation, logout/session management, back-channel revocation, account recovery, hardware-backed key custody, or a production identity service. The adapter is ready to be wired to a separately governed provider configuration and JWKS loader; it is not evidence that any real institution has been connected.
+
+## Institutional runtime binding resolution
+
+`protocol-reference/institutional_runtime_binding.py` adds a fail-closed resolver for the runtime admission boundary. Given a tenant, institution and binding ID from trusted session context, it loads the current institution, binding, jurisdiction package and MINAH domain record from the tenant-scoped registry. It requires a verified institution, an active binding, an active jurisdiction package at the exact version pinned by the binding, and an active MINAH domain record owned by the same institution.
+
+The resolver then asks the institutional MINAH deployment administration service for the active deployment. That service independently checks the deployment lifecycle and its pinned identity-provider status/version. The resolver compares the returned runtime configuration against the binding's exact jurisdiction, model/interface, policy, source and authority-profile pins, and rejects tenant or deployment mismatches. A successful resolution returns a detached runtime context and the required order: MINAH → Identity → Authority → CEE → Final Decision.
+
+The resolver is exposed through an authenticated inspection endpoint, `GET /institutional/runtime/{institution_id}/bindings/{binding_id}`. The tenant is derived from the verified institutional session, never from the URL or request body. The HTTP response deliberately omits endpoint and secret-manager references. The resolver returns the institution's exact active binding, jurisdiction reference/package version, MINAH deployment/runtime versions, the active OIDC identity-provider ID/version, and policy/source/authority-profile pins. The binding now explicitly pins `identity_provider_id` and `identity_provider_version`; runtime admission fails closed if that provider is suspended, expired, missing, tenant-mismatched, or no longer at the pinned version. Provider configuration is supplied only to the trusted server-side pipeline factory and is redacted from the runtime inspection response. Its fail-closed tests cover tenant isolation, owner mismatch, inactive MINAH or identity provider, stale jurisdiction/provider versions and configuration-pin mismatches.
+
+The first instruction-execution integration is exposed through authenticated `POST /institutional/instructions`. The request supplies an institution ID, binding ID, a digest-bound governed instruction envelope, and matching evidence content. The tenant is taken exclusively from the verified institutional session. Before execution, the service resolves the active runtime binding, checks that the instruction jurisdiction and rule-pack version match that binding, and constructs a safe version-pin record. It then selects a server-configured pipeline through an injected institution-specific pipeline factory. The factory receives the full trusted runtime context (including private MINAH and identity-provider configuration) and must return a durable pipeline configured with that institution's approved MINAH, identity-provider and authority adapters. The returned executor must explicitly declare support for institutional runtime pins and the gate order `MINAH → IDENTITY → AUTHORITY → CEE → FINAL_DECISION`. Private endpoint and secret references are not copied into the instruction pin record or HTTP response.
+
+The reference CEE pipeline accepts the institutional pin record only as a validated internal extension and persists it inside the CEE operation request fingerprint before MINAH review. This binds retries and later audit inspection to the institution, binding, jurisdiction package, MINAH deployment/runtime, policy, source and authority-profile versions used for the operation. The factory is deliberately provider-neutral: KIN-SYS does not prescribe a particular AI model, identity provider, or institution's internal adapter implementation. The current reference pipeline still supports only its synthetic rule context and ACTIVATE transition; this route is an integration seam and tested execution path, not proof of a live institution's AI, identity provider, legal authority or external effect.
+
+Authenticated institution-bound operation lifecycle endpoints now accompany submission: `GET /institutional/instructions/{operation_id}` provides tenant-scoped, redacted inspection, and `POST /institutional/instructions/{operation_id}/recover` requests explicit recovery without accepting replacement request content. Both routes derive tenant identity from the verified institutional session and use separate authorization scopes: `institutional-instruction:inspect` for GET and `institutional-instruction:recover` for POST. When the verified session also carries an institution ID, submission, runtime inspection, operation inspection and recovery are additionally restricted to that institution; a caller cannot substitute another institution ID in the request. Inspection returns only the operation phase, request fingerprint, safe runtime version pins, lifecycle event metadata and redacted recovery observations; it does not expose the original evidence payload, MINAH configuration, identity-provider configuration, or adapter secrets.
+
+Recovery locates the CEE journal containing the original operation, verifies the persisted tenant and complete institutional pin set, checks the original pipeline's declared gate order and identity-provider, jurisdiction and authority-profile bindings, and resumes only through that original pipeline. It never calls the current runtime binding resolver and never creates a replacement operation. Recovery requests and outcomes are appended to the CEE journal's durable observation stream, including the authenticated actor reference when supplied and the HTTP request correlation ID. A mismatched tenant is not allowed to inspect or recover the operation.
+
+The execution service retains pipeline instances in a process-local cache. Deployments that need recovery after process restart must inject an `operation_pipeline_resolver` backed by a durable operation catalog; that resolver must return the executor configured for the exact original persisted pins. If the original pinned runtime cannot be recovered, the service returns an explicit `UNKNOWN / ORIGINAL_PINNED_RUNTIME_UNAVAILABLE` result and does not switch to the institution's newer active binding. The reference repository provides this resolver interface but does not yet implement a shared durable multi-tenant operation catalog or production pipeline reconstruction service.
+
+The factory must provide stable, durable pipeline instances/stores for the lifetime and recovery of operations; constructing a fresh in-memory pipeline for each request is not sufficient. The reference integration resolves and pins the active OIDC provider configuration, but it does not by itself validate a live ID token or contact that provider. The institution-specific factory must connect the selected provider configuration to an appropriate credential-verification adapter; the existing live OIDC integration tests remain opt-in. The synthetic reference pipeline tests demonstrate the binding, audit-pin, inspection and recovery contracts, not live identity authentication. Production use still requires shared durable registries and journals, production session authentication, live institution-controlled MINAH and identity-provider adapters, independently verified authority grants, trusted evidence services, a durable original-runtime catalog, and a reviewed recovery/consistency design.
+
+
+## PostgreSQL trust and delegated-authority persistence
+
+The PostgreSQL reference backend is implemented in
+\`protocol-reference/postgresql_institutional_trust_registry.py\`, with schema
+migration \`005_institutional_trust_registry.sql\`. It mirrors the authority
+grant and issuer-trust contract used by the SQLite reference registry:
+
+- tenant-scoped immutable grant versions and a current-version pointer;
+- expected-version revision and auditable revocation in one transaction;
+- actor, institution, authority, role, resource-type, resource-ID and validity
+  scope retained in the canonical grant snapshot;
+- issuer trust relationships and Ed25519 public-key references with validity,
+  overlapping rotation windows and one-way revocation;
+- retained issuer-signed grant envelopes and receiver-signed acceptance
+  receipts, reverified by \`load_verified_grant\` against current trust metadata;
+- append-only event/provenance records and database triggers preventing
+  ordinary update/delete of immutable snapshots and audit evidence.
+
+The PostgreSQL adapter implements the same
+\`VerifiedAuthorityGrantStore\` contract consumed by
+\`InstitutionalAuthorityResolver\`. It locks the current grant head while
+resolving the snapshot and locks issuer/key trust rows during signature
+verification, so a concurrent revision or revocation cannot silently change
+the verified snapshot midway through the read. Receiver approval is rechecked
+against the issuer signature under the acceptance transaction before
+persistence. A deferred database constraint requires a new head version to
+carry an audit event linked to the immediately previous version, preventing
+ordinary pointer rollback.
+
+The PostgreSQL backend is a reference persistence implementation, not a
+production-ready authority service. The caller must derive tenant context from
+an authenticated principal. The receiver approval verifier, receiver
+acceptance-key metadata resolver, public-key vault, and private-key signer
+remain external adapters. PostgreSQL triggers are not a defence against a
+database owner or superuser; production still needs least-privilege roles,
+row-level tenant isolation, connection/pool/TLS controls, backup and restore,
+failover and migration governance, key custody/HSM integration, and an
+independent security review. Legal competence and the sufficiency of the
+underlying trust/approval evidence remain separate adjudication requirements.
+
+
+**Federated revision acceptance:** the PostgreSQL reference backend now
+supports \`accept_signed_grant_revision(...)\` for an existing federated grant.
+Every amendment is a new issuer-signed PENDING version and requires fresh,
+independent receiver approval and a receiver-signed Ed25519 receipt. The
+adapter checks the expected current version before resolving receiver signing
+material, then rechecks the locked head, grant lineage and issuer trust inside
+the persistence transaction. It atomically inserts the immutable ACTIVE
+snapshot, advances the head, stores the new issuer envelope and receiver
+receipt, and appends a \`FEDERATED_GRANT_REVISION_ACCEPTED\` event linked to the
+exact previous version. Stale heads, revoked grants, issuer/key revocation
+races and audit-event conflicts fail closed and roll back the whole transaction.
+
+\`load_verified_grant\` verifies both initial acceptance and revision
+acceptance events, including the exact \`from_version\` predecessor reference.
+A locally created unsigned revision still cannot inherit the previous
+version's issuer signature or receiver approval: when the current federated
+head has no fresh provenance, federated resolution rejects it. The reference
+backend does not yet provide a governed public administration endpoint for
+this method; callers must supply the authenticated tenant, independently
+authorised receiver-approval verifier, and receiver key-custody adapters.
+
+
+## Authority-gated trust administration service
+
+The application-layer service in
+protocol-reference/institutional_trust_administration.py now provides a
+governed write path over the SQLite and PostgreSQL trust-registry interfaces.
+The persistence adapters remain callable by trusted internal code, but they
+must not be exposed directly as an HTTP or tenant-facing administration API.
+
+Every service mutation resolves an assertion through
+InstitutionalAuthorityResolver for the exact resource type and resource ID,
+then checks a distinct role. The service accepts only the receiver's local
+HMAC-SHA256 administration profile; it rejects Ed25519/federated actor
+assertions at this local administrative boundary. Cross-institution issuer
+grants still use Ed25519 envelopes, and the receiver's acceptance receipt is
+signed by a separately injected receiver key-custody adapter.
+
+The action roles are authority_grant_issuer,
+authority_grant_amender, authority_grant_revoker,
+institution_trust_establisher, institution_trust_revoker,
+institution_trust_key_registrar, institution_trust_key_revoker, and
+federated_grant_acceptor. The resolver independently enforces the actor,
+tenant, grant-version, resource-type and resource-ID scope before the service
+checks the action role. Trust-key operations use an unambiguous length-prefixed
+issuer/key pair as the resource ID, so a grant scoped to one issuer's key cannot
+be reused to register or revoke a key under another issuer.
+
+Local grant issuance is restricted to the tenant's own institution and issuer.
+The service rejects self-delegation during issuance and amendment; a
+beneficiary change requires a new grant, not an amendment. A separately
+authorised revoker may still revoke a bootstrapped or self-held grant, so the
+self-delegation safeguard cannot prevent emergency removal of authority. Amendments pin the expected current version and preserve the
+grant ID, local issuer, institution, beneficiary and authority reference.
+Revocation advances the grant head to a new immutable REVOKED version.
+Federation trust roots and Ed25519 public-key references are separately
+established, rotated with overlapping validity windows, and revoked through
+distinct roles. Revoking an issuer root makes its associated keys unusable.
+
+The evidence-verifier interface receives a purpose, tenant, institution,
+resource, action, expected version and canonical subject digest. It must return
+a durable verification receipt reference and a SHA-256 evidence digest. For
+local registry mutations, the receipt reference—not an unchecked caller
+reference—is stored as the event's evidence reference. Federated acceptance
+retains the original approval reference and embeds the verification receipt
+inside the receiver-approval bundle covered by the receiver's Ed25519 receipt.
+
+The service also wraps initial federated-grant acceptance and, where the
+backend supports it, federated revision acceptance. It first verifies the
+issuer's Ed25519 envelope against the receiver's current trust root/key, then
+constructs the receiver-approval verifier internally from the receiver-local
+authority principal and exact pending grant; callers cannot inject an arbitrary
+approval callback. The persistence adapter repeats issuer/trust verification
+inside its transaction, so a concurrent trust or head change cannot be hidden
+by the application-layer precheck. It also verifies the grant digest, expected
+head, receiver receipt and audit lineage. PostgreSQL supports the atomic federated revision operation;
+the SQLite reference backend explicitly reports that it does not implement
+that revision operation.
+
+There is deliberately no self-authorising bootstrap method. The first local
+administrative authority grant and the first trust-administration role must be
+seeded through a separately controlled institutional ceremony, with an
+independent operator identity and durable evidence. Tenant IDs must still be
+derived from an authenticated institutional session by the API boundary.
+The evidence verifier, local HMAC key provisioning, receiver private-key
+provider and issuer public-key resolver are interfaces/trust boundaries, not
+production identity, legal-authority or key-management services. No HTTP
+administration endpoint is added in this increment.
+
+This is application-layer reference behavior, not production certification.
+Production still requires independently governed bootstrap and trust-root
+procedures, authenticated session-to-tenant binding, live identity-provider
+integration, legal-authority and evidence adjudication, HSM/KMS custody,
+distributed persistence and replay protection, least-privilege database
+roles, operational controls and independent security review. The data schema
+is unchanged because this increment adds no persisted domain fields; the
+existing grant, issuer, key, receipt and audit records remain the storage
+contract.
+
+
+## Transaction-bound revalidation of administrative authority
+
+Every mutation through `InstitutionalTrustAdministration` now carries the exact local administrative grant ID and version resolved from the signed actor assertion, together with tenant, actor, institution, authority, action-specific role, resource type/ID and the service clock at the mutation boundary. The SQLite and PostgreSQL persistence adapters re-read the current grant head and independently verify that the same version is still ACTIVE, belongs to the same local actor/institution/authority, carries the required role and resource scope, and remains within its validity window.
+
+The check is performed in the same transaction as the target mutation. SQLite uses `BEGIN IMMEDIATE` so a concurrent writer cannot revoke or revise the authority grant between the check and commit. PostgreSQL takes transaction-scoped advisory locks for the authority and target grant IDs in deterministic sorted order, then locks and verifies the authority-grant head row with `FOR UPDATE`. If a revocation or revision commits first, the administrative mutation fails closed; if the administrative mutation obtains the lock first, it linearizes before the later revocation.
+
+The service and its `InstitutionalAuthorityResolver` must use the same trusted clock source. The checked timestamp is captured after evidence verification and immediately before persistence. This closes the registry-level stale-grant/revocation race for these reference adapters; it does not make a caller-controlled clock trustworthy.
+
+The low-level persistence methods retain optional authorization context for separately controlled bootstrap and migration ceremonies. They are internal persistence APIs, not tenant-facing administrative endpoints. Calling them directly without the application service bypasses the delegated-authority gate and must be prohibited by production application architecture and database permissions. PostgreSQL RLS and the authenticated tenant context remain required; this change does not replace database least privilege or independent security review.

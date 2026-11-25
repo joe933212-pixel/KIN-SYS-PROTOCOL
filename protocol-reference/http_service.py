@@ -32,7 +32,30 @@ from governed_contracts import (
     validate_instruction_envelope,
 )
 from transition import EventIdConflict
+from institutional_identity_provider_administration import (
+    IdentityProviderAdministrationError,
+    InstitutionalIdentityProviderAdministration,
+)
+from institutional_identity_provider_registry import (
+    IdentityProviderRegistryConflict,
+    IdentityProviderRegistryError,
+)
 
+from institutional_onboarding_administration import InstitutionalOnboardingAdministration, InstitutionalOnboardingError
+from institutional_lifecycle_administration import (InstitutionalLifecycleAdministration, InstitutionalLifecycleAdministrationError)
+from institutional_registry import RegistryConflict, RegistryError
+
+from institutional_minah_deployment import (
+    InstitutionalMinahDeploymentAdministration,
+    MinahDeploymentConflict,
+    MinahDeploymentError,
+)
+from institutional_runtime_binding import (
+    InstitutionalRuntimeBindingResolver, InstitutionalRuntimeBindingError,
+)
+from institutional_instruction_execution import (
+    InstitutionalInstructionExecutionService, InstitutionalInstructionExecutionError,
+)
 
 MAX_BODY_BYTES = 64 * 1024
 _ALLOWED_FIELDS = {
@@ -118,7 +141,14 @@ class KinSysPrototypeApplication:
         ingress_database: str = ":memory:",
         authorizer: Any | None = None,
         allow_unauthenticated_loopback: bool = True,
-    ):
+        provider_administration: InstitutionalIdentityProviderAdministration | None = None,
+        institutional_session_resolver: Any | None = None,
+        minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
+        onboarding_administration: InstitutionalOnboardingAdministration | None = None,
+        lifecycle_administration: InstitutionalLifecycleAdministration | None = None,
+        runtime_binding_resolver: InstitutionalRuntimeBindingResolver | None = None,
+        institutional_instruction_execution: InstitutionalInstructionExecutionService | None = None,
+    ): 
         if pipeline is not None and any(
             adapter is not None
             for adapter in (minah_adapter, identity_adapter, authority_adapter, minah_profile, minah_profile_approval, profile_signature_verifier, profile_revocation_checker)
@@ -142,12 +172,33 @@ class KinSysPrototypeApplication:
         self.enable_legacy_demo_routes = enable_legacy_demo_routes
         self.authorizer = authorizer
         self.allow_unauthenticated_loopback = bool(allow_unauthenticated_loopback)
+        any_institutional_admin = (
+            provider_administration is not None or minah_deployment_administration is not None
+            or onboarding_administration is not None or lifecycle_administration is not None
+            or runtime_binding_resolver is not None
+            or institutional_instruction_execution is not None
+        )
+        if any_institutional_admin and not callable(
+            getattr(institutional_session_resolver, "resolve", None)
+        ):
+            raise ValueError("A verified institutional session resolver is required.")
+        if not any_institutional_admin and institutional_session_resolver is not None:
+            raise ValueError("An institutional session resolver requires an institutional administration service.")
+        self.provider_administration = provider_administration
+        self.minah_deployment_administration = minah_deployment_administration
+        self.onboarding_administration = onboarding_administration
+        self.lifecycle_administration = lifecycle_administration
+        self.runtime_binding_resolver = runtime_binding_resolver
+        self.institutional_instruction_execution = institutional_instruction_execution
+        self.institutional_session_resolver = institutional_session_resolver
 
     def close(self) -> None:
         self.demonstrator.close()
         self.pipeline.close()
         self.ingress.close()
         self.case_coordinator.close()
+        if self.institutional_instruction_execution is not None:
+            self.institutional_instruction_execution.close()
 
     @staticmethod
     def _required_scope(path: str, method: str) -> tuple[str | None, str | None]:
@@ -162,6 +213,65 @@ class KinSysPrototypeApplication:
             return "protocol:operation:read", operation_id
         if path.startswith("/cee/operations/"):
             return "cee:operation:read", path[len("/cee/operations/"):]
+        if path == "/institutional/instructions" and method == "POST":
+            return "institutional-instruction:submit", None
+        if path.startswith("/institutional/instructions/"):
+            parts = path[len("/institutional/instructions/"):].split("/")
+            if len(parts) == 1 and _ID_RE.fullmatch(parts[0]) and method == "GET":
+                return "institutional-instruction:inspect", parts[0]
+            if (len(parts) == 2 and _ID_RE.fullmatch(parts[0])
+                    and parts[1] == "recover" and method == "POST"):
+                return "institutional-instruction:recover", parts[0]
+        if path.startswith("/institutional/runtime/") and method == "GET":
+            parts = path.strip("/").split("/")
+            if (len(parts) == 5 and parts[1] == "runtime" and parts[3] == "bindings"
+                    and _ID_RE.fullmatch(parts[2]) and _ID_RE.fullmatch(parts[4])):
+                return "institutional-runtime:binding:resolve", parts[4]
+        domain_routes = {"/institutional/domain/institutions":"institution",
+                         "/institutional/domain/jurisdictions":"jurisdiction",
+                         "/institutional/domain/minah-deployments":"minah",
+                         "/institutional/domain/bindings":"binding"}
+        if path in domain_routes and method == "POST":
+            return "institutional-domain:" + domain_routes[path] + ":register", None
+        if path in domain_routes and method == "GET":
+            return "institutional-domain:" + domain_routes[path] + ":list", None
+        if path.startswith("/institutional/domain/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 5 and parts[4] == "lifecycle" and method == "POST":
+                lifecycle_kinds = {"institutions":"institution", "jurisdictions":"jurisdiction", "minah-deployments":"minah", "bindings":"binding"}
+                if parts[2] in lifecycle_kinds and _ID_RE.fullmatch(parts[3]):
+                    return "institutional-domain:" + lifecycle_kinds[parts[2]] + ":lifecycle", parts[3]
+            if len(parts) == 5 and parts[4] == "events":
+                return "institutional-domain:" + parts[2] + ":audit", parts[3]
+            if len(parts) == 4:
+                return "institutional-domain:" + parts[2] + ":read", parts[3]
+        if path == "/institutional/minah-deployments" and method == "POST":
+            return "minah-deployment:register", None
+        if path.startswith("/institutional/minah-deployments/"):
+            parts = path.strip("/").split("/")
+            deployment_id = parts[2] if len(parts) >= 3 else None
+            if method == "GET" and len(parts) == 3:
+                return "minah-deployment:read", deployment_id
+            if method == "GET" and len(parts) == 4 and parts[3] == "events":
+                return "minah-deployment:audit", deployment_id
+            if method == "PUT" and len(parts) == 4 and parts[3] == "configuration":
+                return "minah-deployment:configure", deployment_id
+            if method == "POST" and len(parts) == 4 and parts[3] == "lifecycle":
+                return "minah-deployment:lifecycle", deployment_id
+        if path == "/institutional/identity-providers":
+            if method == "POST":
+                return "identity-provider:register", None
+        if path.startswith("/institutional/identity-providers/"):
+            parts = path.strip("/").split("/")
+            provider_id = parts[2] if len(parts) >= 3 else None
+            if method == "GET" and len(parts) == 3:
+                return "identity-provider:read", provider_id
+            if method == "GET" and len(parts) == 4 and parts[3] == "events":
+                return "identity-provider:audit", provider_id
+            if method == "PUT" and len(parts) == 4 and parts[3] == "configuration":
+                return "identity-provider:configure", provider_id
+            if method == "POST" and len(parts) == 4 and parts[3] == "lifecycle":
+                return "identity-provider:lifecycle", provider_id
         scopes = {
             "/protocol/instructions": "protocol:instruction:submit",
             "/demo/instructions": "demo:execute",
@@ -201,6 +311,28 @@ class KinSysPrototypeApplication:
                         "GET /system/health",
                         "GET /system/readiness",
                         "GET /system/capabilities",
+                        "POST /institutional/domain/institutions",
+                        "POST /institutional/domain/jurisdictions",
+                        "POST /institutional/domain/minah-deployments",
+                        "POST /institutional/domain/bindings",
+                        "POST /institutional/domain/{resource_type}/{resource_id}/lifecycle",
+                        "GET /institutional/domain/{resource_type}",
+                        "GET /institutional/domain/{resource_type}/{resource_id}",
+                        "GET /institutional/domain/{resource_type}/{resource_id}/events",
+                        "GET /institutional/runtime/{institution_id}/bindings/{binding_id}",
+                        "POST /institutional/instructions",
+                        "GET /institutional/instructions/{operation_id}",
+                        "POST /institutional/instructions/{operation_id}/recover",
+                        "POST /institutional/identity-providers",
+                        "POST /institutional/minah-deployments",
+                        "GET /institutional/minah-deployments/{deployment_id}",
+                        "GET /institutional/minah-deployments/{deployment_id}/events",
+                        "PUT /institutional/minah-deployments/{deployment_id}/configuration",
+                        "POST /institutional/minah-deployments/{deployment_id}/lifecycle",
+                        "GET /institutional/identity-providers/{provider_id}",
+                        "GET /institutional/identity-providers/{provider_id}/events",
+                        "PUT /institutional/identity-providers/{provider_id}/configuration",
+                        "POST /institutional/identity-providers/{provider_id}/lifecycle",
                         "POST /demo/instructions",
                         "POST /protocol/instructions",
                         "GET /protocol/operations/{operation_id}",
@@ -320,6 +452,451 @@ class KinSysPrototypeApplication:
                         {"error": {"code": "AUTHENTICATION_REQUIRED", "message": "An institutional authorizer is required for non-loopback access."}},
                         request_id,
                     )
+
+        runtime_prefix = "/institutional/runtime/"
+        if path.startswith(runtime_prefix):
+            if self.runtime_binding_resolver is None:
+                return _response(start_response,503,{"error":{"code":"INSTITUTIONAL_RUNTIME_RESOLVER_NOT_CONFIGURED","message":"Institutional runtime binding resolution is not configured."}},request_id)
+            parts = path.strip("/").split("/")
+            if method != "GET" or len(parts) != 5 or parts[1] != "runtime" or parts[3] != "bindings":
+                return _response(start_response,404,{"error":{"code":"ROUTE_NOT_FOUND","message":"No institutional runtime route matches this path."}},request_id)
+            institution_id, binding_id = parts[2], parts[4]
+            if not _ID_RE.fullmatch(institution_id) or not _ID_RE.fullmatch(binding_id):
+                return _response(start_response,404,{"error":{"code":"ROUTE_NOT_FOUND","message":"No institutional runtime route matches this path."}},request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if (not isinstance(session,dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"),str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])
+                        or ("institution_id" in session
+                            and (not isinstance(session["institution_id"],str)
+                                 or not _ID_RE.fullmatch(session["institution_id"])))):
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if ("institution_id" in session
+                        and session["institution_id"] != institution_id):
+                    raise HttpServiceError(403,"INSTITUTIONAL_SESSION_INSTITUTION_MISMATCH",
+                                           "The authenticated session is not bound to the requested institution.")
+                resolved = self.runtime_binding_resolver.resolve(
+                    tenant_id=session["tenant_id"], institution_id=institution_id,
+                    binding_id=binding_id)
+                # Never disclose endpoint or secret-manager references through this inspection API.
+                safe_context = {
+                    key: value for key, value in resolved.items()
+                    if key not in {"minah_config", "identity_provider_config"}
+                }
+                return _response(start_response,200,{"runtime_context":safe_context},request_id)
+            except HttpServiceError as exc:
+                return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
+            except InstitutionalRuntimeBindingError as exc:
+                return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_RUNTIME_NOT_ADMISSIBLE","message":str(exc)[:240]}},request_id)
+            except Exception:
+                return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"Institutional runtime context could not be resolved."}},request_id)
+
+        if path == "/institutional/instructions":
+            if method != "POST":
+                return _response(start_response,405,{"error":{"code":"METHOD_NOT_ALLOWED","message":"Use POST for institutional instruction execution."}},request_id)
+            if self.institutional_instruction_execution is None:
+                return _response(start_response,503,{"error":{"code":"INSTITUTIONAL_INSTRUCTION_EXECUTOR_NOT_CONFIGURED","message":"Institutional governed instruction execution is not configured."}},request_id)
+            try:
+                payload = self._read_json(
+                    environ,
+                    allowed_fields={"institution_id", "binding_id", "instruction", "evidence"},
+                )
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if (not isinstance(session,dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"),str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])):
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                for field in ("institution_id", "binding_id"):
+                    if not isinstance(payload.get(field),str) or not _ID_RE.fullmatch(payload[field]):
+                        raise HttpServiceError(422,"INVALID_"+field.upper(),field+" must be a valid identifier.")
+                if ("institution_id" in session
+                        and session["institution_id"] != payload["institution_id"]):
+                    raise HttpServiceError(403,"INSTITUTIONAL_SESSION_INSTITUTION_MISMATCH",
+                                           "The authenticated session is not bound to the requested institution.")
+                if not isinstance(payload.get("instruction"),dict):
+                    raise HttpServiceError(422,"INSTRUCTION_ENVELOPE_REQUIRED","instruction must be a governed v0.1 envelope.")
+                if not isinstance(payload.get("evidence"),dict):
+                    raise HttpServiceError(422,"CONTRACT_EXECUTION_EVIDENCE_REQUIRED","An evidence object is required by this reference execution route.")
+                execution = self.institutional_instruction_execution.execute(
+                    tenant_id=session["tenant_id"],
+                    institution_id=payload["institution_id"],
+                    binding_id=payload["binding_id"],
+                    instruction=payload["instruction"],
+                    evidence=payload["evidence"],
+                )
+                return _response(start_response,200,{
+                    "status":execution["decision"]["protocol_decision"],
+                    "decision":execution["decision"],
+                    "result":execution["result"],
+                    "runtime_pins":execution["runtime_pins"],
+                    "production_ready":False,
+                },request_id)
+            except HttpServiceError as exc:
+                return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
+            except InstitutionalInstructionExecutionError as exc:
+                return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_EXECUTION_NOT_ADMISSIBLE","message":str(exc)[:240]}},request_id)
+            except (ValueError,TypeError) as exc:
+                return _response(start_response,422,{"error":{"code":"INVALID_INSTITUTIONAL_INSTRUCTION","message":str(exc)[:240]}},request_id)
+            except Exception:
+                return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"The institutional instruction could not be completed."}},request_id)
+
+        instruction_operation_prefix = "/institutional/instructions/"
+        if path.startswith(instruction_operation_prefix):
+            parts = path[len(instruction_operation_prefix):].split("/")
+            if (len(parts) not in {1, 2} or not _ID_RE.fullmatch(parts[0])
+                    or (len(parts) == 2 and parts[1] != "recover")):
+                return _response(start_response,404,{"error":{"code":"ROUTE_NOT_FOUND","message":"No institutional instruction operation route matches this path."}},request_id)
+            is_recovery = len(parts) == 2
+            if (is_recovery and method != "POST") or (not is_recovery and method != "GET"):
+                expected = "POST" if is_recovery else "GET"
+                return _response(start_response,405,{"error":{"code":"METHOD_NOT_ALLOWED","message":"Use "+expected+" for this institutional instruction operation route."}},request_id)
+            if self.institutional_instruction_execution is None:
+                return _response(start_response,503,{"error":{"code":"INSTITUTIONAL_INSTRUCTION_EXECUTOR_NOT_CONFIGURED","message":"Institutional instruction operation services are not configured."}},request_id)
+            if is_recovery and environ.get("CONTENT_LENGTH","0") not in {"","0"}:
+                return _response(start_response,400,{"error":{"code":"RECOVERY_BODY_NOT_ALLOWED","message":"Recovery uses the original pinned operation and does not accept replacement content."}},request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if (not isinstance(session,dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"),str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])
+                        or ("institution_id" in session
+                            and (not isinstance(session["institution_id"],str)
+                                 or not _ID_RE.fullmatch(session["institution_id"])))):
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                operation_id = parts[0]
+                if is_recovery:
+                    actor_ref = session.get("actor_ref", session.get("subject"))
+                    recovered = self.institutional_instruction_execution.recover(
+                        tenant_id=session["tenant_id"], operation_id=operation_id,
+                        institution_id=session.get("institution_id"),
+                        actor_ref=actor_ref, request_id=request_id)
+                    if (recovered.get("status") == "UNKNOWN"
+                            and recovered.get("reason") == "ORIGINAL_PINNED_RUNTIME_UNAVAILABLE"):
+                        return _response(start_response,409,{
+                            "status":"UNKNOWN","result":recovered,
+                            "recovery_required":True,"production_ready":False,
+                        },request_id)
+                    return _response(start_response,200,{
+                        "status":recovered["decision"]["protocol_decision"],
+                        "decision":recovered["decision"],"result":recovered["result"],
+                        "runtime_pins":recovered["runtime_pins"],
+                        "recovery_required":recovered["decision"]["protocol_decision"] == "UNKNOWN",
+                        "production_ready":False,
+                    },request_id)
+                inspected = self.institutional_instruction_execution.inspect(
+                    tenant_id=session["tenant_id"], operation_id=operation_id,
+                    institution_id=session.get("institution_id"))
+                if inspected is None:
+                    return _response(start_response,404,{"error":{"code":"INSTITUTIONAL_OPERATION_NOT_FOUND","message":"No institutional operation is visible in this tenant."}},request_id)
+                return _response(start_response,200,{
+                    "status":inspected["status"],"operation":inspected,
+                    "recovery_required":inspected["recovery_required"],
+                    "production_ready":False,
+                },request_id)
+            except HttpServiceError as exc:
+                return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
+            except InstitutionalInstructionExecutionError as exc:
+                return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_OPERATION_NOT_ADMISSIBLE","message":str(exc)[:240]}},request_id)
+            except (ValueError,TypeError) as exc:
+                return _response(start_response,422,{"error":{"code":"INVALID_INSTITUTIONAL_OPERATION_REQUEST","message":str(exc)[:240]}},request_id)
+            except Exception:
+                return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"The institutional operation could not be inspected or recovered safely."}},request_id)
+
+        domain_prefix = "/institutional/domain/"
+        if path.startswith(domain_prefix):
+            if self.onboarding_administration is None:
+                return _response(start_response, 503, {"error":{"code":"INSTITUTIONAL_ONBOARDING_NOT_CONFIGURED","message":"Institutional domain onboarding is not configured."}}, request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session is required.")
+                if (not isinstance(session,dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"),str) or not _ID_RE.fullmatch(session["tenant_id"])
+                        or not isinstance(session.get("actor_assertion"),dict)):
+                    raise HttpServiceError(401,"INSTITUTIONAL_SESSION_INVALID","A verified institutional session with a signed authority assertion is required.")
+                tenant_id, assertion = session["tenant_id"], session["actor_assertion"]
+                parts = path.strip("/").split("/")
+                kinds = {"institutions":"institution","jurisdictions":"jurisdiction","minah-deployments":"minah","bindings":"binding"}
+                if len(parts) not in (3,4,5) or parts[:2] != ["institutional","domain"] or parts[2] not in kinds:
+                    raise HttpServiceError(404,"ROUTE_NOT_FOUND","No institutional domain route matches this path.")
+                resource_type = kinds[parts[2]]
+                if len(parts)==3 and method=="GET":
+                    resources=self.onboarding_administration.list(
+                        tenant_id=tenant_id, resource_type=resource_type)
+                    return _response(start_response,200,{"resources":resources,"count":len(resources)},request_id)
+                if len(parts)==3 and method=="POST":
+                    body=self._read_json(environ,allowed_fields={"version","event_id","evidence_ref","record"})
+                    record=body.get("record")
+                    if not isinstance(record,dict) or "tenant_id" in record:
+                        raise HttpServiceError(422,"DOMAIN_RECORD_INVALID","record must be an object without tenant_id; tenant context comes from the verified session.")
+                    result=self.onboarding_administration.register(tenant_id=tenant_id,resource_type=resource_type,
+                        version=body.get("version"),event_id=body.get("event_id"),evidence_ref=body.get("evidence_ref"),
+                        record=record,actor_assertion=assertion)
+                    return _response(start_response,201,{"registration":result},request_id)
+                if len(parts) == 5 and parts[4] == "lifecycle" and method == "POST":
+                    if self.lifecycle_administration is None:
+                        raise HttpServiceError(503,"INSTITUTIONAL_LIFECYCLE_NOT_CONFIGURED","Institutional lifecycle administration is not configured.")
+                    resource_id=parts[3]
+                    if not _ID_RE.fullmatch(resource_id):
+                        raise HttpServiceError(404,"INSTITUTIONAL_RESOURCE_NOT_FOUND","No resource exists in this institutional tenant.")
+                    body=self._read_json(environ,allowed_fields={"expected_version","new_version","event_id","target_status","evidence_ref","approval_ref","activation_context"})
+                    result=self.lifecycle_administration.transition(
+                        tenant_id=tenant_id,resource_type=resource_type,resource_id=resource_id,
+                        expected_version=body.get("expected_version"),new_version=body.get("new_version"),
+                        event_id=body.get("event_id"),target_status=body.get("target_status"),
+                        actor_assertion=assertion,evidence_ref=body.get("evidence_ref"),
+                        approval_ref=body.get("approval_ref"),activation_context=body.get("activation_context"))
+                    return _response(start_response,200,{"transition":result},request_id)
+                if len(parts) in (4,5) and parts[3] and _ID_RE.fullmatch(parts[3]):
+                    resource_id=parts[3]
+                    item=self.onboarding_administration.get(tenant_id=tenant_id,resource_type=resource_type,resource_id=resource_id)
+                    if item is None:
+                        raise HttpServiceError(404,"INSTITUTIONAL_RESOURCE_NOT_FOUND","No resource exists in this institutional tenant.")
+                    if len(parts)==4 and method=="GET":
+                        return _response(start_response,200,{"resource":item},request_id)
+                    if len(parts)==5 and parts[4]=="events" and method=="GET":
+                        events=self.onboarding_administration.events(tenant_id=tenant_id,resource_type=resource_type,resource_id=resource_id)
+                        return _response(start_response,200,{"events":events},request_id)
+                raise HttpServiceError(405,"METHOD_NOT_ALLOWED","Method or institutional domain route is not supported.")
+            except HttpServiceError as exc:
+                return _response(start_response,exc.status,{"error":{"code":exc.code,"message":exc.message}},request_id)
+            except RegistryConflict as exc:
+                return _response(start_response,409,{"error":{"code":"INSTITUTIONAL_REGISTRY_CONFLICT","message":str(exc)}},request_id)
+            except (InstitutionalOnboardingError,InstitutionalLifecycleAdministrationError,RegistryError,ValueError,TypeError) as exc:
+                return _response(start_response,422,{"error":{"code":"INSTITUTIONAL_ONBOARDING_REJECTED","message":str(exc)[:240]}},request_id)
+            except Exception:
+                return _response(start_response,500,{"error":{"code":"INTERNAL_ERROR","message":"Institutional onboarding could not be completed."}},request_id)
+
+        if path == "/institutional/minah-deployments" or path.startswith("/institutional/minah-deployments/"):
+            if self.minah_deployment_administration is None:
+                return _response(start_response, 503, {
+                    "error": {"code": "MINAH_DEPLOYMENT_ADMINISTRATION_NOT_CONFIGURED",
+                              "message": "Institutional MINAH deployment administration is not configured."}
+                }, request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(401, "INSTITUTIONAL_SESSION_INVALID",
+                        "A verified institutional session is required.")
+                if (not isinstance(session, dict) or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"), str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])
+                        or not isinstance(session.get("actor_assertion"), dict)):
+                    raise HttpServiceError(401, "INSTITUTIONAL_SESSION_INVALID",
+                        "A verified institutional session with a signed authority assertion is required.")
+                tenant_id, assertion = session["tenant_id"], session["actor_assertion"]
+                if path == "/institutional/minah-deployments":
+                    if method != "POST":
+                        raise HttpServiceError(405, "METHOD_NOT_ALLOWED", "Use POST to register a MINAH deployment.")
+                    body = self._read_json(environ, allowed_fields={"config", "event_id", "evidence_ref"})
+                    config = body.get("config")
+                    if not isinstance(config, dict) or "tenant_id" in config or "owner_ref" in config:
+                        raise HttpServiceError(422, "MINAH_DEPLOYMENT_CONFIG_INVALID",
+                            "config must omit tenant_id and owner_ref; ownership is derived from the verified session.")
+                    result = self.minah_deployment_administration.register(
+                        tenant_id=tenant_id, config={**config, "owner_ref": tenant_id},
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"))
+                    return _response(start_response, 201, {"status": "PENDING",
+                        "deployment": result, "audit": {"event_id": body.get("event_id"),
+                        "evidence_ref": body.get("evidence_ref")}}, request_id)
+                parts = path.strip("/").split("/")
+                if len(parts) not in (3, 4) or parts[:2] != ["institutional", "minah-deployments"]:
+                    raise HttpServiceError(404, "ROUTE_NOT_FOUND", "No institutional MINAH deployment route matches this path.")
+                deployment_id = parts[2]
+                if not _ID_RE.fullmatch(deployment_id):
+                    raise HttpServiceError(400, "INVALID_DEPLOYMENT_ID", "Deployment ID has an invalid format.")
+                if method == "GET" and len(parts) == 3:
+                    deployment = self.minah_deployment_administration.get(
+                        tenant_id=tenant_id, deployment_id=deployment_id)
+                    if deployment is None:
+                        raise HttpServiceError(404, "MINAH_DEPLOYMENT_NOT_FOUND", "No MINAH deployment exists in this tenant.")
+                    return _response(start_response, 200, {"deployment": deployment}, request_id)
+                if method == "GET" and len(parts) == 4 and parts[3] == "events":
+                    events = self.minah_deployment_administration.list_events(
+                        tenant_id=tenant_id, deployment_id=deployment_id)
+                    if not events and self.minah_deployment_administration.get(
+                            tenant_id=tenant_id, deployment_id=deployment_id) is None:
+                        raise HttpServiceError(404, "MINAH_DEPLOYMENT_NOT_FOUND", "No MINAH deployment exists in this tenant.")
+                    return _response(start_response, 200, {"events": events}, request_id)
+                if method == "PUT" and len(parts) == 4 and parts[3] == "configuration":
+                    body = self._read_json(environ, allowed_fields={
+                        "expected_version", "config", "event_id", "evidence_ref"})
+                    config = body.get("config")
+                    if not isinstance(config, dict) or "tenant_id" in config or "owner_ref" in config:
+                        raise HttpServiceError(422, "MINAH_DEPLOYMENT_CONFIG_INVALID",
+                            "config must omit tenant_id and owner_ref; ownership is derived from the verified session.")
+                    result = self.minah_deployment_administration.revise(
+                        tenant_id=tenant_id, deployment_id=deployment_id,
+                        expected_version=body.get("expected_version"),
+                        config={**config, "owner_ref": tenant_id},
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"))
+                    return _response(start_response, 202, {"status": "PENDING",
+                        "deployment": result, "audit": {"event_id": body.get("event_id"),
+                        "evidence_ref": body.get("evidence_ref")}}, request_id)
+                if method == "POST" and len(parts) == 4 and parts[3] == "lifecycle":
+                    body = self._read_json(environ, allowed_fields={
+                        "expected_version", "new_version", "new_status", "event_id", "evidence_ref"})
+                    result = self.minah_deployment_administration.transition(
+                        tenant_id=tenant_id, deployment_id=deployment_id,
+                        expected_version=body.get("expected_version"),
+                        new_version=body.get("new_version"), new_status=body.get("new_status"),
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"))
+                    return _response(start_response, 200, {"status": result.get("status"),
+                        "deployment": result, "audit": {"event_id": body.get("event_id"),
+                        "evidence_ref": body.get("evidence_ref")}}, request_id)
+                raise HttpServiceError(405, "METHOD_NOT_ALLOWED", "The method is not supported for this MINAH deployment route.")
+            except HttpServiceError as exc:
+                return _response(start_response, exc.status, {"error": {"code": exc.code, "message": exc.message}}, request_id)
+            except MinahDeploymentConflict as exc:
+                return _response(start_response, 409, {"error": {"code": str(exc),
+                    "message": "The MINAH deployment version conflicts with the current registry state."}}, request_id)
+            except MinahDeploymentError as exc:
+                code = str(exc)
+                status = 404 if code == "MINAH_DEPLOYMENT_NOT_FOUND" else 403 if "AUTHORITY" in code or "INSUFFICIENT" in code else 422
+                return _response(start_response, status, {"error": {"code": code,
+                    "message": "The MINAH deployment request failed validation or institutional authority checks."}}, request_id)
+            except Exception:
+                return _response(start_response, 500, {"error": {"code": "INTERNAL_ERROR",
+                    "message": "The institutional MINAH deployment operation could not be completed."}}, request_id)
+
+        if path == "/institutional/identity-providers" or path.startswith("/institutional/identity-providers/"):
+            if self.provider_administration is None:
+                return _response(start_response, 503, {
+                    "error": {"code": "PROVIDER_ADMINISTRATION_NOT_CONFIGURED",
+                              "message": "Institutional provider administration is not configured."}
+                }, request_id)
+            try:
+                try:
+                    session = self.institutional_session_resolver.resolve(environ)
+                except Exception:
+                    raise HttpServiceError(
+                        401, "INSTITUTIONAL_SESSION_INVALID",
+                        "A verified institutional session is required."
+                    )
+                if (not isinstance(session, dict)
+                        or session.get("authenticated") is not True
+                        or not isinstance(session.get("tenant_id"), str)
+                        or not _ID_RE.fullmatch(session["tenant_id"])
+                        or not isinstance(session.get("actor_assertion"), dict)):
+                    raise HttpServiceError(
+                        401, "INSTITUTIONAL_SESSION_INVALID",
+                        "A verified institutional session with a signed authority assertion is required."
+                    )
+                tenant_id = session["tenant_id"]
+                assertion = session["actor_assertion"]
+                if path == "/institutional/identity-providers":
+                    if method != "POST":
+                        raise HttpServiceError(405, "METHOD_NOT_ALLOWED", "Use POST to register an identity provider.")
+                    body = self._read_json(environ, allowed_fields={"config", "event_id", "evidence_ref"})
+                    config = body.get("config")
+                    if not isinstance(config, dict) or "tenant_id" in config:
+                        raise HttpServiceError(
+                            422, "PROVIDER_CONFIG_INVALID",
+                            "config must be an object and must not contain tenant_id; tenant context comes from the verified session."
+                        )
+                    result = self.provider_administration.register_provider(
+                        tenant_id=tenant_id, config={**config, "tenant_id": tenant_id},
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"),
+                    )
+                    return _response(start_response, 201, {
+                        "status": "PENDING", "provider": result,
+                        "audit": {"event_id": body.get("event_id"), "evidence_ref": body.get("evidence_ref")},
+                    }, request_id)
+
+                parts = path.strip("/").split("/")
+                if len(parts) not in (3, 4) or parts[0:2] != ["institutional", "identity-providers"]:
+                    raise HttpServiceError(404, "ROUTE_NOT_FOUND", "No institutional provider route matches this path.")
+                provider_id = parts[2]
+                if not _ID_RE.fullmatch(provider_id):
+                    raise HttpServiceError(400, "INVALID_PROVIDER_ID", "Provider ID has an invalid format.")
+                if method == "GET" and len(parts) == 3:
+                    provider = self.provider_administration.get_provider(
+                        tenant_id=tenant_id, provider_id=provider_id)
+                    if provider is None:
+                        raise HttpServiceError(404, "PROVIDER_NOT_FOUND", "No provider exists in this institutional tenant.")
+                    return _response(start_response, 200, {"provider": provider}, request_id)
+                if method == "GET" and len(parts) == 4 and parts[3] == "events":
+                    events = self.provider_administration.list_events(
+                        tenant_id=tenant_id, provider_id=provider_id)
+                    if not events:
+                        provider = self.provider_administration.get_provider(
+                            tenant_id=tenant_id, provider_id=provider_id)
+                        if provider is None:
+                            raise HttpServiceError(404, "PROVIDER_NOT_FOUND", "No provider exists in this institutional tenant.")
+                    return _response(start_response, 200, {"events": events}, request_id)
+                if method == "PUT" and len(parts) == 4 and parts[3] == "configuration":
+                    body = self._read_json(environ, allowed_fields={
+                        "expected_version", "config", "event_id", "evidence_ref"})
+                    config = body.get("config")
+                    if not isinstance(config, dict) or "tenant_id" in config:
+                        raise HttpServiceError(
+                            422, "PROVIDER_CONFIG_INVALID",
+                            "config must be an object and must not contain tenant_id; tenant context comes from the verified session."
+                        )
+                    result = self.provider_administration.revise_provider_config(
+                        tenant_id=tenant_id, provider_id=provider_id,
+                        expected_version=body.get("expected_version"),
+                        config={**config, "tenant_id": tenant_id},
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"),
+                    )
+                    return _response(start_response, 202, {
+                        "status": "PENDING", "provider": result,
+                        "audit": {"event_id": body.get("event_id"), "evidence_ref": body.get("evidence_ref")},
+                    }, request_id)
+                if method == "POST" and len(parts) == 4 and parts[3] == "lifecycle":
+                    body = self._read_json(environ, allowed_fields={
+                        "expected_version", "new_version", "new_status", "event_id", "evidence_ref"})
+                    result = self.provider_administration.transition_provider(
+                        tenant_id=tenant_id, provider_id=provider_id,
+                        expected_version=body.get("expected_version"),
+                        new_version=body.get("new_version"),
+                        new_status=body.get("new_status"),
+                        actor_assertion=assertion, event_id=body.get("event_id"),
+                        evidence_ref=body.get("evidence_ref"),
+                    )
+                    return _response(start_response, 200, {
+                        "status": result.get("status"), "provider": result,
+                        "audit": {"event_id": body.get("event_id"), "evidence_ref": body.get("evidence_ref")},
+                    }, request_id)
+                raise HttpServiceError(405, "METHOD_NOT_ALLOWED", "The method is not supported for this provider route.")
+            except HttpServiceError as exc:
+                return _response(start_response, exc.status, {
+                    "error": {"code": exc.code, "message": exc.message}}, request_id)
+            except IdentityProviderAdministrationError as exc:
+                return _response(start_response, 403, {
+                    "error": {"code": str(exc), "message": "The institutional authority assertion does not permit this operation."}
+                }, request_id)
+            except IdentityProviderRegistryConflict as exc:
+                return _response(start_response, 409, {
+                    "error": {"code": str(exc), "message": "The provider version or lifecycle state conflicts with the current registry state."}
+                }, request_id)
+            except IdentityProviderRegistryError as exc:
+                code = str(exc)
+                status = 404 if code == "PROVIDER_NOT_FOUND" else 422
+                return _response(start_response, status, {
+                    "error": {"code": code, "message": "The provider configuration or lifecycle request was rejected."}
+                }, request_id)
+            except Exception:
+                return _response(start_response, 500, {
+                    "error": {"code": "INTERNAL_ERROR", "message": "The institutional provider operation could not be completed."}
+                }, request_id)
 
         cee_operation_prefix = "/cee/operations/"
         if path.startswith(cee_operation_prefix):
@@ -910,6 +1487,13 @@ def create_app(
     ingress_database: str = ":memory:",
     authorizer: Any | None = None,
     allow_unauthenticated_loopback: bool = True,
+    provider_administration: InstitutionalIdentityProviderAdministration | None = None,
+    institutional_session_resolver: Any | None = None,
+    minah_deployment_administration: InstitutionalMinahDeploymentAdministration | None = None,
+    onboarding_administration: InstitutionalOnboardingAdministration | None = None,
+    lifecycle_administration: InstitutionalLifecycleAdministration | None = None,
+    runtime_binding_resolver: InstitutionalRuntimeBindingResolver | None = None,
+    institutional_instruction_execution: InstitutionalInstructionExecutionService | None = None,
 ) -> KinSysPrototypeApplication:
     return KinSysPrototypeApplication(
         demonstrator, pipeline, case_coordinator,
@@ -925,6 +1509,13 @@ def create_app(
         ingress_database=ingress_database,
         authorizer=authorizer,
         allow_unauthenticated_loopback=allow_unauthenticated_loopback,
+        provider_administration=provider_administration,
+        institutional_session_resolver=institutional_session_resolver,
+        minah_deployment_administration=minah_deployment_administration,
+        onboarding_administration=onboarding_administration,
+        lifecycle_administration=lifecycle_administration,
+        runtime_binding_resolver=runtime_binding_resolver,
+        institutional_instruction_execution=institutional_instruction_execution,
     )
 
 

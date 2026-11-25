@@ -38,7 +38,19 @@ PYTHONPATH=protocol-reference python -m integrated_demo
 
 It composes the existing two-institution SQLite model with test-only identity/authority checks, a deterministic MINAH stand-in, a fictional versioned statutory-obligation calculator, a simulated payment provider, and a disconnected-edge profile. Test cases are in `protocol-reference/tests/test_integrated_demo.py`.
 
-The adapters are deliberately simulated. The tax rule is fictional, no money moves, no real national identity or institutional systems are contacted, MINAH is not a real AI model or legal authority, and the edge profile is not physical Nexus Pod hardware. In particular, this research demonstrator does not implement the required MINAH-first ingress, national/enterprise registry API identity verification, or pre-handoff scoped authority checks. In particular, this research demonstrator does not implement the required MINAH-first ingress, national/enterprise registry API identity verification, or pre-handoff scoped authority checks. The report states these limits. This is an initial integrated software slice, not the full KIN-SYS system.
+The adapters are deliberately simulated. The tax rule is fictional, no money moves, no real national identity or institutional systems are contacted, MINAH is not a real AI model or legal authority, and the edge profile is not physical Nexus Pod hardware. In particular, this research demonstrator does not implement the required MINAH-first ingress, national/enterprise registry API identity verification, or pre-handoff scoped authority checks. The report states these limits. This is an initial integrated software slice, not the full KIN-SYS system.
+
+## Shared institutional execution-coordinator contract
+
+`protocol-reference/institutional_execution_coordination.py` now defines the provider-neutral Python contract for the lease authority used by institutional execution workers. It fixes the isolation key as `(tenant_id, deployment_id)` and specifies atomic lease issuance/fencing-sequence advancement, durable monotonic tokens, lifecycle epoch invalidation, authoritative lease validation, idempotent release, and guarded-action serialization. The SQLite registry is checked against this interface through the same contract-facing calls used by a future backend.
+
+This increment deliberately introduces no PostgreSQL adapter and makes no distributed-coordination claim. A backend is conformant only when independent workers share one durable authoritative lease/fencing service and its concurrency, restart, lifecycle-race and failure semantics are demonstrated. Structural Python protocol conformance alone is not evidence of those properties. The guarded callback serializes coordinator-owned state; it does not make a separate IVM or CEE database transaction atomic. Cross-store recovery remains a distinct protocol requirement.
+
+## Institutional MINAH deployment and execution fencing
+
+`protocol-reference/institutional_minah_deployment.py` provides tenant-scoped, versioned MINAH deployment records, lifecycle epochs, and short-lived execution leases. Each lease receives a monotonically increasing per-deployment fencing token. The institutional execution service carries the token and lifecycle epoch to the IVM commit boundary; `protocol-reference/transition.py` persists the highest values observed for each tenant/deployment scope and requires a strictly increasing token for each new business event. Reusing an already-consumed token for a distinct event is rejected, as is an older lifecycle epoch (including a fabricated higher token paired with an obsolete epoch). An identical event retry is resolved first through its durable event identity, so it can return the prior result without consuming the fence again; a recovery that must re-enter the commit path obtains a fresh lease. The business-instruction digest deliberately excludes this volatile lease metadata so a recovery retry can retain the same idempotency identity while obtaining a fresh lease. Tests cover stale-token rejection, one-use token enforcement, token integrity, retry identity, tenant/deployment isolation, concurrent lease acquisition across independent registry connections and separate OS processes with unique monotonic fencing tokens, fencing continuity across suspension/reactivation epoch changes, atomic rollback of an uncommitted fence watermark with its business transition (including process termination before commit and safe retry with the unconsumed token), independent SQLite connections, lifecycle/commit serialization, and one split-store crash window in which the IVM commit survives process death before the lease coordinator acknowledges it; recovery obtains a fresh lease and resolves the same durable event identity without applying a second transition.
+
+This is a local reference implementation, not distributed coordination. The lease registry and IVM store are separate SQLite stores, so their transactions are not atomic with each other. Downstream fencing is effective across workers only when they share the same authoritative durable IVM fence store; separate per-node databases do not provide that guarantee. The downstream fence key is the composite `(tenant_id, deployment_id)`: token and epoch monotonicity are independent for each institutional deployment, while separate tenants and deployments do not consume one another's token sequences. A regression test covers both isolation dimensions. The split-store process-death test is deliberately narrow: it demonstrates idempotent recovery after an IVM commit but does not make the registry and IVM transactions atomic or cover every crash window. A networked coordinator, shared transactional persistence, complete crash-safe cross-store recovery, and operational key/identity integration remain future work.
 
 ## CEE-controlled institutional/payment coordinator
 
@@ -73,3 +85,34 @@ The model currently covers two independent decision stages, stage-specific actor
 ## Scope warning
 
 These are research prototypes, not production runtimes. They use local SQLite databases and caller-supplied actor/rule context. They do not implement cryptographic authentication, networking, distributed consensus, or full CISA/IVM/CEE conformance. The target architecture has one execution path: IVM runs within CEE and executes CISA-defined machine semantics; CEE is not a parallel executor. Process termination tests exercise local process failure, not power-loss durability. A passing test suite is evidence only for the cases actually run; unsupported workflow cases are not passes.
+
+
+## Cross-installation federation message boundary
+
+`protocol-reference/institutional_federation.py` introduces the first signed cross-installation instruction handoff primitive. The origin signs a canonical Ed25519 envelope bound to the exact destination installation and institution, message/operation identity, expiry, nonce and digest-verified instruction. The receiver independently checks its local issuer trust key, issuer/key binding, validity windows, signature, destination and freshness, then consumes a receiver-local replay nonce. The existing `SQLiteNonceGuard` can be adapted with `sqlite_nonce_consumer` for a shared local SQLite file; separate per-host files are not distributed replay protection.
+
+Successful verification is not authorisation or execution. The returned result explicitly says `authority_inherited=false` and `execution_authorised=false`. The receiving institution must still apply its own identity, authority, jurisdiction and deployment policies and pass the instruction through its own MINAH → CEE → Final Decision path. See `docs/CROSS_INSTALLATION_FEDERATION_MESSAGE_CONTRACT.md` and `protocol-reference/tests/test_institutional_federation.py`.
+
+This is the message-security boundary only. Network delivery, authenticated installation discovery, inbox/outbox durability, acknowledgements, receiver-side execution orchestration, cross-installation status tracking and end-to-end tests using two independently configured installations remain outstanding. It is not yet a live federation implementation or production certification.
+
+
+The receiver-side adapter `institutional_federated_receiver.py` now verifies an incoming envelope before forwarding the digest-bound instruction to a receiver-configured local governed execution service. Receiver tenant, institution and binding are fixed by receiver-local configuration; origin claims cannot select them. The intended production executor is `InstitutionalInstructionExecutionService`, preserving local MINAH, identity, authority, CEE and final-decision controls. Tests currently prove routing and rejection behavior with a recording executor, not yet two complete independent runtime stacks. See `tests/test_institutional_federated_receiver.py` and the cross-installation federation contract.
+
+
+## Institutional trust and delegated-authority administration
+
+The trust-registry persistence adapters are not tenant-facing administration
+APIs. The application service in institutional_trust_administration.py gates
+grant creation, revision and revocation, issuer trust establishment/revocation,
+Ed25519 trust-key registration/revocation, and receiver acceptance of
+federated grants. It requires an exact resource-scoped local HMAC assertion,
+an action-specific delegated role, and a verified evidence receipt. HMAC is
+used only for the receiver-local administrative boundary; cross-institution
+issuer grants and acceptance receipts use Ed25519. The service has no
+self-authorising bootstrap path, and its evidence, session and key-custody
+interfaces remain deployment adapters rather than production services. See
+docs/INSTITUTIONAL_DEPLOYMENT_DOMAIN_MODEL.md for the role model, bootstrap
+boundary and remaining limitations.
+
+
+The trust-administration service now pins the exact local authority-grant version and passes an action/resource-scoped authorization context into the persistence mutation. SQLite and PostgreSQL recheck the current ACTIVE grant, actor, institution, role, resource scope and validity inside the same transaction that changes trust state. This prevents a grant revoked or revised after initial resolution from authorising a later write. The low-level registry APIs remain internal bootstrap/persistence interfaces; production callers must expose only the governed administration service and enforce database least privilege.
