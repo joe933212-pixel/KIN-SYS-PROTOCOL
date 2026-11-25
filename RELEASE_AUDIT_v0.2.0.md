@@ -48,15 +48,22 @@ The exact implementation baseline commit `b9385003509541cc5e014ca4a5a271323eaf38
 - 789 tests run; 4 skipped; 0 failures.
 - The four skipped tests require a live OIDC provider test profile.
 
-This does not verify the release-preparation PR head or the final tagged release commit. Fresh CI must pass on the final PR head after all documentation changes.
+The release-preparation PR head `7f933111076b7351d3864daca7ef98a41f16ec1f` also passed fresh GitHub Actions run [45565505034](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/45565505034) on 2026-11-25:
+- Workflow: `Protocol conformance slice`
+- Job: `local-transition-contract` — success
+- Transition contract tests and local HTTP smoke test — success
+- Paired comparison, integrated demonstrator and paired integrated workflow reports — generated and verified
+- Reproducible research report artifacts — uploaded successfully
+- All workflow steps completed successfully.
+
+This verifies the current release-preparation PR head, not the eventual post-merge tagged release commit. The final release commit must still be checked after merge/tagging.
 
 The v0.1.0 ZIP could not be downloaded for archive-level inspection. The final v0.2.0 archive must be built from the exact tagged commit and independently checked for filename, commit identity, file inventory and SHA-256 checksum before Zenodo publication.
 
 ## 6. Release gate
 
 Do not publish until:
-- PR #9's final head has fresh green CI.
-- The final diff and documentation changes are reviewed.
+- The final diff and documentation changes are reviewed and approved.
 - The release tag points to the approved main commit.
 - The GitHub release archive corresponds to that exact tag.
 - A new version is created under concept DOI `10.5281/zenodo.23976294`.
