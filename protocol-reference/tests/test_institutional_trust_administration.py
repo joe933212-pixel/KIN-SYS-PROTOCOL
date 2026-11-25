@@ -395,7 +395,9 @@ class InstitutionalTrustAdministrationTests(unittest.TestCase):
             actor_assertion={"signed": "local"}, event_id="key-one-revoked",
             evidence_ref="evidence:key-one-revocation",
         )
-        self.assertIsNone(self.registry.load_trust_key("tenant-a", "issuer-key-1"))
+        revoked_key = self.registry.load_trust_key("tenant-a", "issuer-key-1")
+        self.assertIsNotNone(revoked_key)
+        self.assertEqual(revoked_key["status"], "REVOKED")
         self.assertIsNotNone(self.registry.load_trust_key("tenant-a", "issuer-key-2"))
         self.authority.principal["roles"] = ["institution_trust_revoker"]
         self.admin.revoke_issuer_trust(
