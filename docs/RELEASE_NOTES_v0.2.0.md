@@ -2,7 +2,7 @@
 
 **Project:** KIN-SYS Protocol  
 **Version:** 0.2.0  
-**Release snapshot:** `b9385003509541cc5e014ca4a5a271323eaf3872`  
+**Engineering baseline:** `b9385003509541cc5e014ca4a5a271323eaf3872` (merged `main` snapshot; release candidate metadata is being prepared separately).  
 **Author and copyright:** Joel Kagoro © 2026  
 **License:** Apache-2.0
 
