@@ -1,4 +1,4 @@
-# KIN-SYS Protocol v0.2.0 — Release preparation notes
+# KIN-SYS Protocol v0.2.0 — Release notes
 
 **Author:** Joel Kagoro  
 **Copyright:** © 2026 Joel Kagoro  
@@ -6,12 +6,13 @@
 **Zenodo concept record:** https://doi.org/10.5281/zenodo.23976294  
 **Previous version record:** https://doi.org/10.5281/zenodo.23976295 (v0.1.0)  
 **Implementation baseline:** `main` merge commit `b9385003509541cc5e014ca4a5a271323eaf3872`  
-**Release source snapshot:** To be pinned to the exact commit created by merging this release-preparation PR; the v0.2.0 tag and archive must identify that same snapshot.  
-**Status:** Preparation only. No v0.2.0 tag, GitHub release, or Zenodo publication has been created.
+**Release source snapshot:** tag `v0.2.0` → commit `7c937bd1b6f29bb2d30068d30de16183469882a4` (GitHub release published 2026-11-25).  
+**GitHub release:** https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/releases/tag/v0.2.0  
+**Status:** GitHub release published and tag/commit/CI verified. Zenodo v0.2.0 version publication remains pending.
 
 ## Release summary
 
-This release candidate records the institutional deployment, identity-provider integration, delegated-authority, durable federation, PostgreSQL persistence and portable-sandbox engineering increments merged into the repository after v0.1.0. It remains a research/reference implementation, not a production-ready institutional network.
+This release records the institutional deployment, identity-provider integration, delegated-authority, durable federation, PostgreSQL persistence and portable-sandbox engineering increments merged into the repository after v0.1.0. The published GitHub release is pinned to the exact tag and commit identified above. It remains a research/reference implementation, not a production-ready institutional network.
 
 ## Comparison with v0.1.0
 
@@ -51,7 +52,7 @@ GitHub Actions on the exact implementation baseline commit `b9385003509541cc5e01
 
 Fresh GitHub Actions on the exact release-preparation PR head `7f933111076b7351d3864daca7ef98a41f16ec1f` also completed successfully on 2026-11-25: [run 45565505034](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/45565505034). The `Protocol conformance slice` workflow's `local-transition-contract` job passed. Transition contract tests, local HTTP smoke test, paired comparison report, integrated demonstrator report and paired integrated workflow report all completed successfully; report verification and artifact upload also succeeded. All workflow steps completed successfully.
 
-This is CI evidence for the current PR head and implementation baseline, not yet the eventual tagged release commit. The final release commit must still be checked after merge/tagging.
+The published release commit `7c937bd1b6f29bb2d30068d30de16183469882a4` was subsequently checked directly. Two GitHub Actions workflows completed successfully on that exact SHA: `Protocol conformance slice` run [45567377079](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/45567377079) and `Build portable Windows sandbox` run [45567377009](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/45567377009). The conformance workflow passed its transition tests, local HTTP smoke test, report generation and verification, and artifact upload. The Windows packaging workflow built the x64 bundle, smoke-tested its local server, verified the archive and checksum, and uploaded the bundle as a workflow artifact.
 
 ## Known limitations and claims boundary
 
@@ -67,14 +68,14 @@ This is CI evidence for the current PR head and implementation baseline, not yet
 - No real funds move. No production MINAH service, authoritative legal-source service, production key-custody environment, or complete external institutional deployment is claimed.
 - Production adoption requires deployment-specific integration, operational hardening, independent security review and institutional acceptance testing.
 
-## Zenodo publication procedure
+## Zenodo publication — remaining step
 
-1. Keep the existing concept record `10.5281/zenodo.23976294`; create a **new version** from that record. Do not create a new unrelated record.
-2. Preserve v0.1.0 as the prior version record `10.5281/zenodo.23976295`.
-3. Merge this reviewed release-preparation PR only after fresh CI on its final head is green and the release diff is approved.
-4. Create tag `v0.2.0` on the resulting approved main commit and create the GitHub release from that exact tag.
-5. Upload or ingest the archive corresponding to that exact tagged commit into the new Zenodo version. Verify the archived filename, source commit, checksum, metadata, version number and DOI before publication.
-6. After publication, verify that the new version DOI resolves and that the concept DOI remains `10.5281/zenodo.23976294`.
+The GitHub release is already published. Do not recreate the tag or GitHub release. The remaining publication work is to create a **new version** under the existing concept record `10.5281/zenodo.23976294`, preserving v0.1.0 as version record `10.5281/zenodo.23976295`.
+
+1. Prepare the archive from exact tag `v0.2.0` / commit `7c937bd1b6f29bb2d30068d30de16183469882a4`.
+2. Verify the archive filename, source commit, file inventory and SHA-256 checksum against the tagged source snapshot.
+3. Upload the archive and corrected metadata as a new Zenodo version; do not create an unrelated concept record.
+4. Verify the published version DOI, archive, checksum, version number and lineage before announcing Zenodo publication.
 
 ## Publication checklist
 
@@ -84,10 +85,12 @@ This is CI evidence for the current PR head and implementation baseline, not yet
 - [x] Identify the 29 production API routes as not yet routed.
 - [ ] Independently download and inspect the original v0.1.0 ZIP archive (download unavailable during this audit).
 - [x] Complete fresh CI on the current PR #9 head `7f933111076b7351d3864daca7ef98a41f16ec1f`.
-- [ ] Complete final documentation and security-boundary review on the final release snapshot.
-- [ ] Merge PR #9 after approval.
-- [ ] Create and verify tag `v0.2.0` and GitHub release from the exact approved commit.
+- [x] Complete release documentation and security-boundary review for the published GitHub snapshot (follow-up documentation corrections are proposed separately).
+- [x] Merge release-preparation PR #9.
+- [x] Create and verify tag `v0.2.0` and GitHub release on commit `7c937bd1b6f29bb2d30068d30de16183469882a4`.
+- [x] Verify both GitHub Actions workflows on the exact tagged commit; both passed.
+- [ ] Build and independently verify the final Zenodo archive and checksum.
 - [ ] Create a new version under concept DOI `10.5281/zenodo.23976294`.
 - [ ] Verify the uploaded archive, checksum, metadata and resulting version DOI.
 
-**Do not cite v0.2.0 as published until the Zenodo version is published and its DOI is verified.**
+**Publication distinction:** v0.2.0 is published on GitHub. Do not claim that the Zenodo version is published until its new version DOI and deposited archive are verified.
