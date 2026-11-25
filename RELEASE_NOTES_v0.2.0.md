@@ -38,7 +38,7 @@ The new domain model, identity-provider onboarding, MINAH onboarding, federation
 
 The API implementation matrix contains 29 routes, and all 29 are explicitly marked `NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE`. The OpenAPI contract and matrix must not be described as a deployed production API.
 
-A stale-status inconsistency was found in `protocol-reference/README.md`: an earlier federation paragraph still said network delivery, inbox/outbox, acknowledgements and receiver orchestration were outstanding, although later commits implement reference versions of those components. That paragraph and its receiver-integration description are being corrected in this preparation branch. Some historical prototype sections still describe their own narrower SQLite-only experiments; those statements must be read as scoped to those experiments, not as a status summary of the entire repository.
+A stale-status inconsistency was found in `protocol-reference/README.md`: an earlier federation paragraph still said network delivery, inbox/outbox, acknowledgements and receiver orchestration were outstanding, although later commits implement reference versions of those components. That paragraph and its receiver-integration description have been corrected in this preparation branch. Some historical prototype sections still describe their own narrower SQLite-only experiments; those statements must be read as scoped to those experiments, not as a status summary of the entire repository.
 
 ## Verification evidence
 
