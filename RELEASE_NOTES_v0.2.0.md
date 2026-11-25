@@ -3,58 +3,89 @@
 **Author:** Joel Kagoro  
 **Copyright:** © 2026 Joel Kagoro  
 **License:** Apache-2.0  
-**Release target:** Zenodo record supplied by the author: https://zenodo.org/records/23976295  
-**Source snapshot:** `main` at `b9385003509541cc5e014ca4a5a271323eaf3872`  
-**Status:** Preparation only. No Git tag, GitHub release, or Zenodo publication has been created.
+**Zenodo concept record:** https://doi.org/10.5281/zenodo.23976294  
+**Previous version record:** https://doi.org/10.5281/zenodo.23976295 (v0.1.0)  
+**Implementation baseline:** `main` merge commit `b9385003509541cc5e014ca4a5a271323eaf3872`  
+**Release source snapshot:** To be pinned to the exact commit created by merging this release-preparation PR; the v0.2.0 tag and archive must identify that same snapshot.  
+**Status:** Preparation only. No v0.2.0 tag, GitHub release, or Zenodo publication has been created.
 
 ## Release summary
 
-This milestone brings the institutional deployment and cross-installation federation engineering work onto `main`. It documents a provider-neutral, software-first protocol architecture and a growing set of runnable reference implementations. It is not a claim that KIN-SYS is production-ready.
+This release candidate records the institutional deployment, identity-provider integration, delegated-authority, durable federation, PostgreSQL persistence and portable-sandbox engineering increments merged into the repository after v0.1.0. It remains a research/reference implementation, not a production-ready institutional network.
+
+## Comparison with v0.1.0
+
+The prior Zenodo metadata identifies the v0.1.0 source archive as `KIN-SYS-PROTOCOL-998662f19e0989d05c325a6b846331db997e4668.zip`, corresponding to source commit `998662f19e0989d05c325a6b846331db997e4668`.
+
+A Git tree comparison of that source commit with implementation baseline `b9385003509541cc5e014ca4a5a271323eaf3872` found 101 entries in the v0.1.0 tree and 228 entries in the later tree (entries include directories). The later tree adds 127 entries: six institutional/federation/OIDC documentation files; 42 protocol-reference implementation files; 50 test files; 14 PostgreSQL migration/documentation entries; eight portable-sandbox entries; three JSON schemas; one workflow; and three other entries. The comparison is a source-tree comparison; the v0.1.0 ZIP itself could not be downloaded for independent binary/archive integrity inspection in this audit session.
 
 ## Included engineering work
 
-- **Institutional deployment domain model:** institution, jurisdiction package/source, MINAH deployment and deployment-binding records; immutable versions, lifecycle events, ownership constraints and operation pinning.
-- **MINAH onboarding boundary:** institution-owned agent/deployment registration and lifecycle contracts, with explicit distinction between registration, connectivity, conformance and authority.
-- **Institutional identity:** tenant-scoped OIDC provider registration, versioned configuration lifecycle, provider-neutral adapter selection, HTTPS discovery/JWKS transport controls, ID-token validation and subject binding.
-- **Delegated authority:** versioned grants, signed actor assertions, scope and validity checks, revocation and revalidation at protected transitions.
-- **Trust and federation:** issuer/receiver trust relationships, Ed25519-signed grants and receipts, destination-bound signed instruction envelopes, receiver-local verification and independent receiver decision rights.
-- **Durable federation components:** PostgreSQL-backed replay protection, inbox/outbox, leases, retry/dead-letter handling, signed acknowledgements and recovery-oriented integration tests.
-- **Tenant isolation:** PostgreSQL RLS migrations for institutional trust, federation delivery and institutional domain records, with transaction-scoped tenant context.
-- **Evidence and demonstrators:** runnable local HTTP prototype, paired comparison harnesses, integrated demonstrator report workflows, migration documentation and security/architecture contracts.
+- **Institutional deployment domain model:** tenant-scoped institution, jurisdiction package/source, MINAH deployment and binding records; immutable versions, lifecycle events, ownership constraints and operation pinning.
+- **Institution-owned MINAH onboarding:** registration and lifecycle boundaries for institution-selected agents and deployment bindings. Registration, connectivity, conformance and authority remain distinct states.
+- **Institutional identity:** tenant-scoped OIDC provider registration and lifecycle, adapter selection, discovery/JWKS transport, ID-token validation and subject binding.
+- **Delegated authority and trust:** versioned grants, signed actor assertions, issuer/receiver trust relationships, signed grant provenance, receiver acceptance and revocation/revalidation controls.
+- **Cross-installation federation:** destination-bound signed instruction envelopes, receiver-local verification and decision rights, HTTPS/mTLS transport components, durable PostgreSQL inbox/outbox, replay protection, acknowledgements, retries and recovery paths.
+- **Persistence and tenant controls:** PostgreSQL reference adapters for institutional registries, trust, CEE journal, IVM transition state and federation delivery; migrations include row-level security policies and transaction-scoped tenant context.
+- **Portable demonstration:** a loopback-only local dashboard and packaging workflow for a synthetic MINAH-first governed instruction path.
+- **Evidence:** additional unit, integration, PostgreSQL, transport, federation and portable-sandbox tests, plus architecture, migration, onboarding and security-boundary documentation.
+
+## Documentation and implementation cross-check
+
+The audit inspected the v0.1.0 source-tree identity, the v0.2.0 implementation tree, the new domain/onboarding/federation/OIDC documents, the PostgreSQL migration guide, the protocol-reference README, the portable build guide, the production engineering handoff, the prototype status record and the API implementation matrix.
+
+The new domain model, identity-provider onboarding, MINAH onboarding, federation message contract and OIDC transport documents describe their corresponding reference modules and identify injected or synthetic trust boundaries. The PostgreSQL migration guide describes migrations 001–012 and their tenant-context/RLS assumptions. The portable sandbox documentation correctly limits the USB demonstration to a local synthetic path; it does not claim that the sandbox UI runs the complete federation runtime.
+
+The API implementation matrix contains 29 routes, and all 29 are explicitly marked `NOT_IMPLEMENTED_AS_PRODUCTION_HTTP_ROUTE`. The OpenAPI contract and matrix must not be described as a deployed production API.
+
+A stale-status inconsistency was found in `protocol-reference/README.md`: an earlier federation paragraph still said network delivery, inbox/outbox, acknowledgements and receiver orchestration were outstanding, although later commits implement reference versions of those components. That paragraph and its receiver-integration description are being corrected in this preparation branch. Some historical prototype sections still describe their own narrower SQLite-only experiments; those statements must be read as scoped to those experiments, not as a status summary of the entire repository.
 
 ## Verification evidence
 
-GitHub Actions ran on the exact merge commit `b9385003509541cc5e014ca4a5a271323eaf3872` on 2026-11-25.
+GitHub Actions on the exact implementation baseline commit `b9385003509541cc5e014ca4a5a271323eaf3872` completed successfully on 2026-11-25:
 
 - `local-transition-contract`: success
 - `package`: success
 - Test suite: **789 tests run; 4 skipped; 0 failures**
-- Skips: live OIDC provider tests, because a live OIDC test profile was not configured.
+- The four skips are live OIDC provider tests because a live OIDC test profile was not configured.
 
-The test evidence is reproducible within the recorded CI environment. It is not independent validation, penetration testing, operational acceptance or proof of production readiness.
+This is CI evidence for the implementation baseline, not yet CI evidence for the final release-preparation branch or the eventual tagged release commit. PR #9 must obtain fresh successful checks on its final head before release approval.
 
 ## Known limitations and claims boundary
 
-- The 29 proposed production API routes remain draft contracts and are not routed production endpoints.
-- The local HTTP prototype remains a synthetic reference vertical slice. MINAH, identity, authority, jurisdictional sources and some institutional trust material remain synthetic, injected or locally configured.
-- The full sender and receiver institutional runtimes have not yet been demonstrated on independent hosts and independent database services. The two-database PostgreSQL federation integration uses two databases on one CI PostgreSQL service, with installation adapters in one process.
-- The separate-process mTLS test uses a minimal receiver stub to isolate transport and peer-certificate identity; it is not a complete process-separated institutional deployment.
-- Live OIDC integration tests were skipped in this CI run.
-- CEE and IVM persistence are not one cross-store atomic transaction. Exactly-once execution across the network and CEE/IVM boundaries is not claimed; delivery and recovery remain based on durable state, idempotency and reconciliation.
-- PostgreSQL RLS must be deployed with a least-privilege, non-superuser database role without `BYPASSRLS`. Transaction-scoped custom tenant context is not protection against arbitrary SQL executed under the same database principal.
+- The 29 production API routes remain planned contracts and are not routed production endpoints.
+- The local HTTP and portable sandbox prototypes use synthetic reference adapters. MINAH, identity, authority, jurisdictional sources and some institutional trust material remain synthetic, injected or locally configured.
+- The PostgreSQL two-installation integration uses separate databases on one CI PostgreSQL service while both installation adapters execute in one process. Independent hosts and independent database services have not been demonstrated together.
+- The separate-process mTLS test uses a minimal receiver stub to isolate transport and peer-certificate identity; it is not the complete institutional runtime in two independent processes.
+- Authenticated installation discovery and cross-installation operation-status tracking remain integration work.
+- Live OIDC provider tests were skipped in the recorded CI run; deterministic fixture tests are not live-provider validation.
+- CEE and IVM persistence are separate boundaries. A cross-store distributed transaction and exactly-once network execution are not claimed.
+- PostgreSQL row-level security must run under least-privilege non-superuser roles without `BYPASSRLS`. Transaction-scoped custom tenant context is defense in depth, not protection against arbitrary SQL under the same database principal.
+- Federated receiver trust, signing-key custody, external legal/evidence verification, production identity-provider administration and operational revocation still require institution-specific integration and governance.
 - No real funds move. No production MINAH service, authoritative legal-source service, production key-custody environment, or complete external institutional deployment is claimed.
 - Production adoption requires deployment-specific integration, operational hardening, independent security review and institutional acceptance testing.
 
+## Zenodo publication procedure
+
+1. Keep the existing concept record `10.5281/zenodo.23976294`; create a **new version** from that record. Do not create a new unrelated record.
+2. Preserve v0.1.0 as the prior version record `10.5281/zenodo.23976295`.
+3. Merge this reviewed release-preparation PR only after fresh CI on its final head is green and the release diff is approved.
+4. Create tag `v0.2.0` on the resulting approved main commit and create the GitHub release from that exact tag.
+5. Upload or ingest the archive corresponding to that exact tagged commit into the new Zenodo version. Verify the archived filename, source commit, checksum, metadata, version number and DOI before publication.
+6. After publication, verify that the new version DOI resolves and that the concept DOI remains `10.5281/zenodo.23976294`.
+
 ## Publication checklist
 
-- [x] Source snapshot merged to `main`.
-- [x] CI completed successfully on the exact merge commit.
-- [x] Repository authorship, copyright and Apache-2.0 licensing are present.
-- [x] Zenodo metadata prepared in `.zenodo.json` for version `0.2.0`.
-- [ ] Confirm the supplied Zenodo record is the intended prior version and inspect its metadata/files.
-- [ ] Create and verify the Git tag `v0.2.0`.
-- [ ] Create the GitHub release from that exact tag.
-- [ ] Confirm Zenodo has ingested the GitHub release and that the archived files and metadata match this snapshot.
-- [ ] Review the resulting version DOI and concept DOI.
+- [x] Identify the prior Zenodo version and parent concept DOI from the supplied record metadata.
+- [x] Compare the v0.1.0 source tree with the v0.2.0 implementation baseline.
+- [x] Inspect the new institutional, identity, federation, PostgreSQL and sandbox documentation.
+- [x] Identify the 29 production API routes as not yet routed.
+- [ ] Independently download and inspect the original v0.1.0 ZIP archive (download unavailable during this audit).
+- [ ] Complete fresh CI on the final PR #9 head.
+- [ ] Complete final documentation and security-boundary review on the final release snapshot.
+- [ ] Merge PR #9 after approval.
+- [ ] Create and verify tag `v0.2.0` and GitHub release from the exact approved commit.
+- [ ] Create a new version under concept DOI `10.5281/zenodo.23976294`.
+- [ ] Verify the uploaded archive, checksum, metadata and resulting version DOI.
 
-**Do not cite this preparation branch as a published release.** The version becomes a citable Zenodo release only after the Zenodo record is published and its DOI is verified.
+**Do not cite v0.2.0 as published until the Zenodo version is published and its DOI is verified.**
