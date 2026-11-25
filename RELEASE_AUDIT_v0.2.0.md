@@ -3,7 +3,7 @@
 **Prepared by:** Joel Kagoro / release engineering review  
 **Copyright:** © 2026 Joel Kagoro  
 **Review date:** 2026-11-25  
-**Status:** Audit findings recorded; release remains unpublished and gated.
+**Status:** GitHub release published; tag, source commit and exact-commit CI verified. Zenodo version publication remains pending.
 
 ## 1. Scope and source identity
 
@@ -60,13 +60,23 @@ This verifies the current release-preparation PR head, not the eventual post-mer
 
 The v0.1.0 ZIP could not be downloaded for archive-level inspection. The final v0.2.0 archive must be built from the exact tagged commit and independently checked for filename, commit identity, file inventory and SHA-256 checksum before Zenodo publication.
 
-## 6. Release gate
+## 6. Published GitHub release verification
 
-Do not publish until:
-- The final diff and documentation changes are reviewed and approved.
-- The release tag points to the approved main commit.
-- The GitHub release archive corresponds to that exact tag.
-- A new version is created under concept DOI `10.5281/zenodo.23976294`.
-- Zenodo's published version DOI, archive, checksum, metadata and version lineage are verified.
+The GitHub release [KIN-SYS Protocol v0.2.0](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/releases/tag/v0.2.0) is published (release ID `457788861`; published 2026-11-25; not a draft or pre-release).
 
-**Current conclusion:** v0.2.0 is a substantial and documentable engineering increment, but it is not yet a published release and is not production-ready.
+- Tag: `v0.2.0`.
+- Tag target: `7c937bd1b6f29bb2d30068d30de16183469882a4`.
+- The tag resolves to the intended release-preparation merge commit. The published release and tag have not been moved or rewritten.
+- Exact-tag CI: `Protocol conformance slice`, run [45567377079](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/45567377079), completed successfully on the exact SHA. Transition tests, local HTTP smoke test, comparison/integrated reports, report verification and artifact upload all passed.
+- Exact-tag packaging: `Build portable Windows sandbox`, run [45567377009](https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL/actions/runs/45567377009), completed successfully on the exact SHA. Windows x64 bundle build, local server smoke test, archive/checksum verification and workflow artifact upload all passed.
+- The Windows bundle is a workflow artifact; it is not attached as a GitHub Release asset.
+
+## 7. Remaining Zenodo publication gate
+
+The GitHub release is published; the Zenodo version is not yet published. Before Zenodo publication:
+- Correct the repository's release-status documentation and metadata to identify the published GitHub tag and exact release commit.
+- Build/download the archive corresponding to exact tag `v0.2.0` and verify filename, source commit, file inventory and SHA-256 checksum.
+- Create a new version under concept DOI `10.5281/zenodo.23976294`, preserving v0.1.0 record `10.5281/zenodo.23976295` as the preceding version.
+- Verify the new Zenodo version DOI, deposited archive, checksum, metadata and version lineage.
+
+**Current conclusion:** v0.2.0 is a published GitHub release with its tag and exact-commit CI verified. It remains a research/reference implementation and is not production-ready. Zenodo publication and archive-level verification remain outstanding.
