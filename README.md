@@ -21,7 +21,7 @@ MINAH is an institution-owned gatekeeper deployment, not a single global service
 ## Status
 
 **Stage:** Protocol foundation / runnable local reference prototype  
-**Release candidate:** v0.1.0  
+**Release candidate:** v0.2.0 (pre-publication preparation; not yet tagged or published)  
 **Production status:** Not production-ready. The repository contains a runnable synthetic governed execution path, not a complete live KIN-SYS deployment.
 
 This is the new protocol specification baseline. Earlier KIN-SYS repositories are source material to assess, not automatically authoritative implementations. Proposed capabilities must not be described as implemented until supported by reproducible tests and evidence.
