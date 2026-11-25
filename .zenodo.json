@@ -4,9 +4,9 @@
       "name": "Kagoro, Joel"
     }
   ],
-  "title": "KIN-SYS Protocol: Provider-Neutral Governed Execution Prototype",
-  "version": "0.1.0",
-  "description": "KIN-SYS is a provider-neutral protocol architecture for governing and verifying digital instructions across institutional and jurisdictional boundaries. This 0.1.0 software release preserves a runnable local synthetic reference prototype with MINAH-first instruction ingress, identity and action-specific authority gates, CEE-controlled execution with IVM transition checks, durable local SQLite journals, explicit decision outcomes, operation inspection, and bounded recovery tooling. The repository includes reproducible tests, a process-level HTTP smoke test, paired comparison harnesses, and documented architecture and assurance limits. This is a research/reference prototype, not a production deployment: MINAH, identity and authority adapters, legal rules, institutional decisions, and payment interactions are synthetic or test doubles; no live external services or real funds are involved; distributed finality, production authentication/TLS, and production cryptographic trust infrastructure are not claimed.",
+  "title": "KIN-SYS Protocol: Institutional Deployment and Cross-Installation Federation Reference Implementation",
+  "version": "0.2.0",
+  "description": "KIN-SYS is a provider-neutral, software-first protocol architecture for governing and verifying digital instructions across institutional and jurisdictional boundaries. This 0.2.0 research/reference release records the engineering milestone merged to the main branch at commit b9385003509541cc5e014ca4a5a271323eaf3872. It extends the runnable synthetic governed-execution prototype with institutional deployment and versioned domain records; institution-owned MINAH deployment and binding lifecycle contracts; tenant-scoped identity-provider registration and OIDC adapter selection; signed actor assertions and versioned delegated-authority grants; issuer/receiver trust administration; Ed25519-signed, destination-bound cross-installation messages and acknowledgements; bounded HTTPS/mTLS transport components; PostgreSQL-backed federation inbox/outbox and replay controls; and PostgreSQL tenant-isolation policies. The repository includes reference implementations, migration scripts, architecture and security-boundary documentation, integration tests, and reproducible demonstration/report workflows. CI on the exact main merge commit completed successfully: 789 tests run, 4 skipped, 0 failures; the four skipped tests require a separately configured live OIDC test profile. This evidence is limited to the checked-in test fixtures and CI environment. This is not a production deployment or independent security certification. Institutional registries, identity providers, authority evidence, MINAH deployments, jurisdictional sources and trust/key material still include synthetic, injected or local reference components. The complete two-installation runtime is not yet proven across independent hosts and independent database services; the PostgreSQL federation fixtures use two databases on one CI PostgreSQL service and execute the installation adapters in one process. The live mTLS process-boundary test uses a minimal receiver stub rather than the full institutional runtime. Live OIDC provider tests were skipped. The 29 proposed production API routes remain draft/not routed; no real funds move; exactly-once execution across network and CEE/IVM stores is not claimed. PostgreSQL row-level security uses transaction-scoped tenant context and must be deployed with a least-privilege non-superuser role without BYPASSRLS; custom session context alone is not a boundary against arbitrary SQL executed under the same database principal. Production use requires institution-specific integration, deployment hardening, independent security review, operational controls and acceptance testing.",
   "access_right": "open",
   "license": "apache-2.0",
   "upload_type": "software",
@@ -19,6 +19,14 @@
     "distributed systems",
     "digital sovereignty",
     "protocol architecture",
-    "East Africa"
+    "East Africa",
+    "institutional identity",
+    "delegated authority",
+    "cross-installation federation",
+    "OIDC",
+    "PostgreSQL",
+    "MINAH",
+    "CEE",
+    "IVM"
   ]
 }
