@@ -11,13 +11,16 @@ repository-code: "https://github.com/joe933212-pixel/KIN-SYS-PROTOCOL"
 abstract: >-
   KIN-SYS is a provider-neutral protocol architecture for governing and
   verifying digital instructions across institutional and jurisdictional
-  boundaries. This release provides a runnable local synthetic reference
-  prototype with MINAH-first instruction ingress, identity and action-specific
-  authority gates, CEE-controlled execution with IVM transition checks,
-  durable local SQLite journals, explicit decision outcomes, operation
-  inspection, and bounded recovery tooling. It is a research/reference
-  prototype, not a production deployment. External identity, authority, legal,
-  institutional, and payment integrations are synthetic or test doubles.
+  boundaries. This research/reference release extends the MINAH-first governed
+  execution prototype with institutional deployment and lifecycle registries,
+  tenant-scoped authority grants, receiver-controlled trust and signed
+  federation, provider-neutral OIDC identity adapter contracts, PostgreSQL-
+  backed federation inbox/outbox and replay controls, and cross-installation
+  reference tests. It includes reproducible conformance evidence and explicit
+  security limitations. It is not a production deployment: identity providers,
+  legal-source verification, institutional evidence, key custody and
+  deployment infrastructure still require institution-specific integration.
+
 keywords:
   - governed execution
   - institutional coordination
