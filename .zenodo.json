@@ -5,8 +5,8 @@
     }
   ],
   "title": "KIN-SYS Protocol: Provider-Neutral Governed Execution Prototype",
-  "version": "0.1.0",
-  "description": "KIN-SYS is a provider-neutral protocol architecture for governing and verifying digital instructions across institutional and jurisdictional boundaries. This 0.1.0 software release preserves a runnable local synthetic reference prototype with MINAH-first instruction ingress, identity and action-specific authority gates, CEE-controlled execution with IVM transition checks, durable local SQLite journals, explicit decision outcomes, operation inspection, and bounded recovery tooling. The repository includes reproducible tests, a process-level HTTP smoke test, paired comparison harnesses, and documented architecture and assurance limits. This is a research/reference prototype, not a production deployment: MINAH, identity and authority adapters, legal rules, institutional decisions, and payment interactions are synthetic or test doubles; no live external services or real funds are involved; distributed finality, production authentication/TLS, and production cryptographic trust infrastructure are not claimed.",
+  "version": "0.2.0",
+  "description": "KIN-SYS is a provider-neutral protocol architecture for governing and verifying digital instructions across institutional and jurisdictional boundaries. This 0.2.0 research/reference release extends the MINAH-first governed execution prototype with institutional deployment and lifecycle registries; tenant-scoped, versioned authority grants; receiver-controlled institutional trust; issuer-signed and receiver-accepted grant provenance; provider-neutral OIDC identity adapter contracts; PostgreSQL-backed federation inbox/outbox, replay protection, retry and signed acknowledgement flows; and cross-installation reference tests. The repository includes 789 conformance tests (4 skipped, 0 failures) on the published source commit, a runnable local HTTP prototype, reproducible reports, and explicit architecture/security limitations. This is not a production deployment. Identity providers, legal-source verification, institutional evidence, key custody and external services still require institution-specific integration. The two-installation PostgreSQL tests use isolated databases but execute adapters in one process; the process-separated mTLS transport test uses a minimal receiver stub. Independent deployed hosts, live institutional OIDC, production key custody, production-grade tenant isolation, distributed finality and exactly-once external effects are not claimed.",
   "access_right": "open",
   "license": "apache-2.0",
   "upload_type": "software",
@@ -19,6 +19,14 @@
     "distributed systems",
     "digital sovereignty",
     "protocol architecture",
-    "East Africa"
+    "East Africa",
+    "institutional deployment",
+    "federated identity",
+    "OIDC",
+    "PostgreSQL",
+    "authority governance",
+    "MINAH",
+    "CEE",
+    "IVM"
   ]
 }
